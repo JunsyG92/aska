@@ -1,6 +1,21 @@
 #!/usr/bin/env node
 // Faux CLI d'agent pour les tests : son comportement dépend de FAKE_MODE ou du prompt.
 const args = process.argv.slice(2);
+if (args[0] === '--help' || args[0] === 'help') {
+  process.stdout.write(`Usage: fake [options]
+
+Options:
+  --fallback-model <model>   Modèle de secours (e.g. 'nope-fallback')
+  --model <model>            Model for the current session. Provide an alias
+                             (e.g. 'fable', 'opus', or 'sonnet') or a full name.
+  --verbose                  Override 'verbose-thing'
+`);
+  process.exit(0);
+}
+if (args[0] === '--list-models') {
+  process.stdout.write('Available models\n\nauto - Auto (current)\n\x1b[1mgpt-5.2-codex\x1b[0m - GPT-5.2 Codex\nsonnet-4.6-thinking - Claude Sonnet 4.6 Thinking\n\nTip: use --model <id>\n');
+  process.exit(0);
+}
 let stdin = '';
 process.stdin.on('data', (d) => (stdin += d));
 process.stdin.on('end', async () => {

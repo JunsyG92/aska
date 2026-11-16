@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('aska', {
   listConversations: () => ipcRenderer.invoke('aska:conv-list'),
   openConversation: (id) => ipcRenderer.invoke('aska:conv-open', id),
   deleteConversation: (id) => ipcRenderer.invoke('aska:conv-delete', id),
+  listModels: (agentId, refresh) => ipcRenderer.invoke('aska:models', { agentId, refresh: refresh === true }),
   setModel: (agentId, model) => ipcRenderer.invoke('aska:set-model', { agentId, model }),
   onRunEvent: on('aska:run-event'),
   onShown: on('aska:shown'),

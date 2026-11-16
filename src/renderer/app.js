@@ -163,6 +163,14 @@
     setMode(a.modes[(i + 1) % a.modes.length], true);
   }
 
+  // ----- choix du modèle : liste fournie par le CLI, filtrable au clavier -----
+
+  let modelItems = []; // options affichées : { id, label }
+  let modelSel = 0;
+  let modelAll = [];
+  let modelCurrent = null;
+  const MODEL_RE = /^[A-Za-z0-9][\w.:\/\[\]-]{0,79}$/;
+
   function closeModelMenu() {
     menuOpen = false;
     modelMenu.hidden = true;
@@ -178,26 +186,73 @@
     replay(modelBtn, 'swap');
   }
 
+  function highlightModel(i, scroll) {
+    const nodes = $('model-list').children;
+    if (!nodes.length) return;
+    modelSel = Math.min(Math.max(i, 0), nodes.length - 1);
+    [...nodes].forEach((n, j) => n.classList.toggle('active', j === modelSel));
+    if (scroll) nodes[modelSel].scrollIntoView({ block: 'nearest' });
+  }
+
+  function renderModels() {
+    const q = $('model-filter').value.trim();
+    const needle = q.toLowerCase();
+    const match = (m) => !needle || m.id.toLowerCase().includes(needle) || (m.label || '').toLowerCase().includes(needle);
+    modelItems = [];
+    if (!needle) modelItems.push({ id: null, label: 'Par défaut du CLI' });
+    modelItems.push(...modelAll.filter(match).slice(0, 300));
+    // Un nom absent de la liste reste utilisable, si le CLI le connaît.
+    if (q && MODEL_RE.test(q) && !modelItems.length) modelItems.push({ id: q, label: `Utiliser « ${q} »`, custom: true });
+    $('model-list').replaceChildren(
+      ...modelItems.map((m, i) => {
+        const row = el('div', 'model-opt');
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', String(m.id === modelCurrent));
+        row.append(el('span', 'model-label', m.label || ''), el('span', 'model-id', m.custom || m.id === null ? '' : m.id));
+        row.addEventListener('click', () => chooseModel(m.id));
+        row.addEventListener('mousemove', () => highlightModel(i, false));
+        return row;
+      })
+    );
+    const cur = modelItems.findIndex((m) => m.id === modelCurrent);
+    highlightModel(needle ? 0 : Math.max(cur, 0), true);
+  }
+
+  async function loadModels(refresh) {
+    const a = agent();
+    if (!a) return;
+    const btn = $('model-refresh');
+    btn.classList.add('busy');
+    $('model-note').textContent = modelAll.length ? '' : `Récupération des modèles de ${a.label}…`;
+    const res = await api.listModels(a.id, refresh);
+    btn.classList.remove('busy');
+    if (!menuOpen || agentId !== a.id) return;
+    modelAll = res.models;
+    modelCurrent = res.current;
+    $('model-note').textContent = res.fromCli
+      ? ''
+      : res.error
+        ? `Liste indisponible (${res.error}) : tapez le nom du modèle.`
+        : modelAll.length
+          ? ''
+          : `${a.label} ne publie pas sa liste : tapez le nom du modèle.`;
+    renderModels();
+  }
+
   function openModelMenu() {
     const a = agent();
     if (running || !a || !a.canPickModel) return;
     if (menuOpen) return closeModelMenu();
-    const opts = [[null, 'Par défaut du CLI'], ...a.models.map((m) => [m, m])];
-    $('model-list').replaceChildren(
-      ...opts.map(([value, label]) => {
-        const b = el('button', 'model-opt', label);
-        b.type = 'button';
-        b.setAttribute('role', 'option');
-        b.setAttribute('aria-selected', String((a.model || null) === value));
-        b.addEventListener('click', () => chooseModel(value));
-        return b;
-      })
-    );
-    $('model-custom').value = '';
+    modelAll = a.models.map((id) => ({ id, label: null }));
+    modelCurrent = a.model || null;
+    $('model-filter').value = '';
+    $('model-filter').placeholder = `Rechercher un modèle ${a.label}…`;
     menuOpen = true;
     modelMenu.hidden = false;
     setKeys();
-    (modelMenu.querySelector('[aria-selected="true"]') || modelMenu.querySelector('.model-opt')).focus();
+    renderModels();
+    $('model-filter').focus();
+    loadModels(false);
   }
 
   function autosize() {
@@ -518,18 +573,15 @@
       return;
     }
     if (menuOpen) {
-      const inField = e.target === $('model-custom');
       if (e.key === 'Escape' || (e.ctrlKey && e.shiftKey && k === 'm')) { e.preventDefault(); closeModelMenu(); }
-      else if (e.key === 'Enter' && inField) {
+      else if (e.key === 'ArrowDown') { e.preventDefault(); highlightModel(modelSel + 1, true); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); highlightModel(modelSel - 1, true); }
+      else if (e.key === 'PageDown') { e.preventDefault(); highlightModel(modelSel + 6, true); }
+      else if (e.key === 'PageUp') { e.preventDefault(); highlightModel(modelSel - 6, true); }
+      else if (e.key === 'Enter') {
         e.preventDefault();
-        const v = e.target.value.trim();
-        if (/^[A-Za-z0-9][\w.:\/\[\]-]{0,79}$/.test(v)) chooseModel(v);
-        else if (v) setStatus('Nom de modèle invalide', 'err');
-      } else if (!inField && (e.key === 'ArrowRight' || e.key === 'ArrowDown')) {
-        e.preventDefault();
-        if (document.activeElement === modelMenu.querySelector('.model-opt:last-child')) $('model-custom').focus();
-        else moveFocus('.model-opt', 1);
-      } else if (!inField && (e.key === 'ArrowLeft' || e.key === 'ArrowUp')) { e.preventDefault(); moveFocus('.model-opt', -1); }
+        if (modelItems[modelSel]) chooseModel(modelItems[modelSel].id);
+      } else if (e.key === 'Tab') e.preventDefault();
       return;
     }
     if (view === 'history') {
@@ -582,6 +634,8 @@
   agentBtn.addEventListener('click', () => { cycleAgent(1); input.focus(); });
   modeBtn.addEventListener('click', () => { cycleMode(); input.focus(); });
   modelBtn.addEventListener('click', openModelMenu);
+  $('model-filter').addEventListener('input', renderModels);
+  $('model-refresh').addEventListener('click', () => { loadModels(true); $('model-filter').focus(); });
   $('cwd').addEventListener('click', () => { if (!running) api.pickDir().then(applyState); });
   $('cwd').addEventListener('contextmenu', (e) => {
     e.preventDefault();

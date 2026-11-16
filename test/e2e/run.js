@@ -110,10 +110,12 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     // Choix du modèle : proposé par agent, mémorisé, et transmis au CLI.
     await page.keyboard.press('Control+Shift+M');
     await page.waitForSelector('#model-menu:not([hidden])');
-    assert.deepEqual(await page.locator('.model-opt').allTextContents(), ['Par défaut du CLI', 'opus', 'sonnet', 'haiku']);
+    // La liste vient du CLI lui-même (ici son aide), ajoutée aux alias connus.
+    await page.waitForFunction(() => document.querySelectorAll('.model-opt').length === 5);
+    assert.deepEqual(await page.locator('.model-opt').allTextContents(), ['Par défaut du CLI', 'opus', 'sonnet', 'haiku', 'fable']);
     await page.waitForTimeout(250);
     await shot('3-model-light');
-    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
     await page.waitForSelector('#model-menu', { state: 'hidden' });
     assert.equal(await page.textContent('#model-name'), 'opus');
@@ -123,15 +125,28 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     log = calls();
     assert.deepEqual(log[2].args.slice(-4), ['--model', 'opus', '--resume', 'sess-0001-abcd']);
     assert.match(await page.locator('.turn .meta').nth(2).textContent(), /Claude · opus/);
-    // Modèle saisi à la main (les noms évoluent plus vite que l'app).
+    // Filtrer au clavier, puis choisir.
     await page.click('#model');
-    await page.fill('#model-custom', 'claude-custom-9');
+    await page.waitForFunction(() => document.querySelectorAll('.model-opt').length === 5);
+    await page.keyboard.type('fab');
+    assert.deepEqual(await page.locator('.model-opt').allTextContents(), ['fable']);
+    await page.keyboard.press('Enter');
+    assert.equal(await page.textContent('#model-name'), 'fable');
+    // Un nom absent de la liste reste utilisable.
+    await page.click('#model');
+    await page.keyboard.type('claude-custom-9');
+    assert.deepEqual(await page.locator('.model-opt').allTextContents(), ['Utiliser « claude-custom-9 »']);
     await page.keyboard.press('Enter');
     assert.equal(await page.textContent('#model-name'), 'claude-custom-9');
     await page.click('#model');
-    assert.ok((await page.locator('.model-opt').allTextContents()).includes('claude-custom-9'));
+    await page.waitForFunction(() => document.querySelectorAll('.model-opt').length === 6);
     await page.keyboard.press('Escape');
     assert.equal(await visible(), true);
+    // Cursor publie sa liste complète, avec des libellés.
+    const cursorModels = await page.evaluate(() => window.aska.listModels('cursor'));
+    assert.deepEqual(cursorModels.models.slice(0, 2), [{ id: 'auto', label: 'Auto' }, { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' }]);
+    assert.equal(cursorModels.models.length, 3);
+    assert.equal((await page.evaluate(() => window.aska.listModels('__proto__'))).models.length, 0);
 
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.waitForTimeout(500);

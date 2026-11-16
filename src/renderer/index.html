@@ -55,9 +55,15 @@
       </section>
 
       <section id="model-menu" class="model-menu" hidden aria-label="Choix du modèle">
-        <div id="model-list" class="model-list" role="listbox"></div>
-        <input id="model-custom" type="text" spellcheck="false" autocomplete="off" maxlength="80"
-               placeholder="Autre modèle, puis Entrée" aria-label="Nom d'un autre modèle">
+        <div class="model-head">
+          <input id="model-filter" type="text" spellcheck="false" autocomplete="off" maxlength="80"
+                 placeholder="Rechercher un modèle…" aria-label="Rechercher un modèle" aria-controls="model-list">
+          <button id="model-refresh" class="win-btn" type="button" title="Actualiser la liste depuis le CLI" aria-label="Actualiser la liste">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.6 8a4.6 4.6 0 1 1-1.5-3.4M12.8 3v2.4h-2.4"/></svg>
+          </button>
+        </div>
+        <div id="model-list" class="model-list" role="listbox" aria-label="Modèles disponibles"></div>
+        <div id="model-note" class="model-note"></div>
       </section>
 
       <footer class="foot">

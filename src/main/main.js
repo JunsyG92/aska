@@ -7,6 +7,7 @@ const { pathToFileURL } = require('url');
 const { paths, loadConfig } = require('./config');
 const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('./agents');
 const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
+const { discoverModels } = require('./models');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 
@@ -37,6 +38,7 @@ let store = null; // conversations enregistrées
 let conv = null; // conversation affichée
 let picked = {}; // modèle choisi par agent : { claude: 'opus' } (absent = défaut)
 let extraModels = {}; // modèles saisis à la main, par agent
+const discovered = {}; // modèles annoncés par chaque CLI : { cursor: { models, error } }
 
 // Une session graphique n'a pas toujours le PATH du terminal : on ajoute les
 // emplacements habituels des CLI installés par l'utilisateur.
@@ -410,7 +412,34 @@ function startRun(req) {
   return { ok: true, id };
 }
 
+// Liste des modèles d'un agent : ceux annoncés par son CLI (interrogé une fois,
+// puis à la demande), complétés par la liste intégrée, la config et les saisies.
+async function listModels(req) {
+  const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
+  if (!a || !a.modelFlag) return { models: [], current: null, error: null };
+  if (a.binPath && (!discovered[a.id] || req.refresh === true)) {
+    const env = { ...sec.buildEnv(process.env, a.env, cfg.envPassthrough), PATH: searchPath() };
+    discovered[a.id] = await discoverModels(a.id, (args) => {
+      let text = '';
+      const h = runAgent(
+        { bin: a.binPath, argv: args, cwd: fsRealWorkspace(), env, stdin: '', output: 'text', timeoutMs: 12000, maxBytes: 512 * 1024 },
+        (ev) => { if (ev.type === 'text') text += ev.text; }
+      );
+      return h.done.then((r) => ({ ok: r.ok, text }));
+    }, process.env);
+  }
+  const found = discovered[a.id] || { models: [], error: null };
+  const byId = new Map();
+  for (const id of a.models || []) byId.set(id, { id, label: null });
+  for (const m of found.models) byId.set(m.id, { ...byId.get(m.id), ...m });
+  for (const id of extraModels[a.id] || []) if (!byId.has(id)) byId.set(id, { id, label: null });
+  const current = modelFor(a);
+  if (current && !byId.has(current)) byId.set(current, { id: current, label: null });
+  return { models: [...byId.values()], current, error: found.error, fromCli: found.models.length > 0 };
+}
+
 function registerIpc() {
+  handle('aska:models', listModels);
   handle('aska:state', () => publicState());
   handle('aska:run', startRun);
   handle('aska:cancel', () => {

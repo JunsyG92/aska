@@ -280,3 +280,26 @@ test('binaire : un lanceur factice (VS Code) ne passe qu\'en dernier recours', (
   assert.equal(sec.resolveBinary(['copilot'], { envPath: `${shim}:${real}`, avoid }).path, fs.realpathSync(path.join(real, 'copilot')));
   assert.equal(sec.resolveBinary(['copilot'], { envPath: shim, avoid }).path, fs.realpathSync(path.join(shim, 'copilot')));
 });
+
+test('découverte des modèles : formats de chaque CLI, entrées invalides écartées', async () => {
+  const { parseModelLines, parseHelpOption, parseCodexCache, discoverModels } = require('../src/main/models');
+  assert.deepEqual(
+    parseModelLines('Available models\n\nauto - Auto (current)\n\x1b[1mgpt-5.2-codex\x1b[0m - GPT-5.2 Codex\n--evil - Bad\nTip: use --model <id>\n'),
+    [{ id: 'auto', label: 'Auto' }, { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' }]
+  );
+  const help = `Options:\n  --fallback-model <m>  (e.g. 'nope')\n  -m, --model <model>   Set the model (choices: "claude-sonnet-4.5",\n                        "gpt-5", "--bad")\n  --no-color            Disable 'color'\n`;
+  assert.deepEqual(parseHelpOption(help).map((m) => m.id), ['claude-sonnet-4.5', 'gpt-5']);
+  assert.deepEqual(parseHelpOption('rien ici'), []);
+  assert.deepEqual(
+    parseCodexCache({ models: [{ slug: 'gpt-5.2-codex', display_name: 'GPT-5.2 Codex', visibility: 'list' }, { slug: 'interne', visibility: 'hide' }, { slug: '-x' }, null] }),
+    [{ id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' }]
+  );
+  const viaCli = await discoverModels('cursor', async (args) => ({ ok: true, text: args[0] === '--list-models' ? 'a-1 - Modèle A\n' : '' }));
+  assert.deepEqual(viaCli, { models: [{ id: 'a-1', label: 'Modèle A' }], error: null });
+  assert.match((await discoverModels('cursor', async () => ({ ok: false, text: 'not logged in' }))).error, /liste de modèles/);
+  const home = tmp();
+  fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'o-test' }] }), { mode: 0o600 });
+  assert.deepEqual((await discoverModels('codex', null, { CODEX_HOME: home })).models, [{ id: 'o-test', label: null }]);
+  assert.deepEqual((await discoverModels('codex', null, { CODEX_HOME: path.join(home, 'absent') })).models, []);
+  assert.deepEqual(await discoverModels('inconnu', null), { models: [], error: null });
+});

@@ -505,86 +505,59 @@ kbd {
 .enter { margin-bottom: 8px; }
 .panel.mini .win-btn { margin-bottom: 0; }
 
-.panel.mini .full-only, .panel.mini .model-menu { display: none; }
-.win-btn[aria-pressed='true'] { background: var(--surface-2); color: var(--text); }
-
-/* ---------- historique des conversations ---------- */
-
-.history { padding: 8px; }
-.hist-empty { padding: 18px 10px; color: var(--muted); text-align: center; }
-.hist-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 6px 8px 12px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.hist-item:hover, .hist-item:focus-visible { background: var(--surface-2); outline: 0; }
-.hist-item.current { box-shadow: inset 2px 0 0 var(--agent); }
-.hist-main { flex: 1; min-width: 0; }
-.hist-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.hist-sub { display: block; font-size: 12px; color: var(--muted); }
-.hist-del {
-  flex: none;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  color: var(--faint);
-  opacity: 0;
-}
-.hist-item:hover .hist-del, .hist-item:focus-visible .hist-del { opacity: 1; }
-.hist-del:hover { background: color-mix(in oklab, var(--err) 14%, transparent); color: var(--err); }
-.hist-del svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
-
-/* ---------- choix du modèle ---------- */
-
-.model-menu {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 9px 12px;
+.panel.mini .full-only, .panel.mini .model-menu {
+  padding: 8px;
   border-top: 1px solid var(--line);
   animation: rise 0.2s ease-out;
 }
-.model-list { display: flex; gap: 6px; flex-wrap: wrap; }
-.model-opt {
-  height: 28px;
-  padding: 0 11px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--surface-2);
-  color: var(--text);
-  font: 500 12.5px/1 var(--font);
-  cursor: pointer;
-}
-.model-opt[aria-selected='true'] {
-  background: color-mix(in oklab, var(--agent) 20%, var(--surface));
-  color: color-mix(in oklab, var(--agent) 70%, var(--text));
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--agent) 50%, transparent);
-}
-.model-opt:focus-visible, #model-custom:focus-visible { outline: 2px solid var(--agent); outline-offset: 1px; }
-#model-custom {
+.model-head { display: flex; gap: 6px; align-items: center; }
+.model-head .win-btn { margin: 0; }
+.model-head .win-btn.busy svg { animation: rot 0.8s linear infinite; }
+#model-filter {
   flex: 1;
-  min-width: 170px;
-  height: 28px;
+  min-width: 0;
+  height: 30px;
   padding: 0 10px;
   border: 0;
   border-radius: 9px;
+  outline: 0;
   background: var(--code-bg);
   color: var(--text);
-  font: 12.5px/1 var(--mono);
+  font: 13px/1 var(--font);
   user-select: text;
 }
-#model-custom::placeholder { color: var(--faint); font-family: var(--font); }
+#model-filter::placeholder { color: var(--faint); }
+#model-filter:focus-visible { box-shadow: 0 0 0 2px color-mix(in oklab, var(--agent) 55%, transparent); }
+.model-list {
+  max-height: 208px;
+  margin-top: 6px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.model-opt {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.model-opt.active { background: var(--surface-2); }
+.model-opt .model-label { font-weight: 500; }
+.model-opt .model-id { font: 12px/1.4 var(--mono); color: var(--muted); }
+.model-opt .model-label:empty { display: none; }
+.model-opt .model-label:empty + .model-id { font: 500 13px/1.5 var(--font); color: var(--text); }
+.model-opt[aria-selected='true']::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  align-self: center;
+  border-radius: 50%;
+  background: var(--agent);
+}
+.model-note { padding: 6px 10px 2px; font-size: 12px; color: var(--muted); }
+.model-note:empty { display: none; }
 
 [hidden] { display: none !important; }

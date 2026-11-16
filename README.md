@@ -81,11 +81,22 @@ masqué pendant une exécution, une notification signale la fin.
 
 ## Modèles
 
-Le modèle se choisit par agent (`Ctrl+Maj+M` ou la pastille du bas) et le choix
-est mémorisé. « Par défaut du CLI » laisse l'agent décider. Claude propose
-`opus`, `sonnet` et `haiku` ; pour les autres agents, dont les noms de modèles
-changent souvent, saisissez le nom dans le champ libre (il est ensuite proposé
-dans la liste) ou déclarez vos modèles dans la configuration avec `"models"`.
+Le modèle se choisit par agent (`Ctrl+Maj+M` ou la pastille du bas) dans une
+liste filtrable au clavier ; le choix est mémorisé. « Par défaut du CLI » laisse
+l'agent décider.
+
+La liste vient du CLI lui-même, donc elle reflète votre compte et votre version :
+
+| Agent | Source de la liste |
+| --- | --- |
+| Cursor | `cursor-agent --list-models` |
+| Copilot | les choix de `--model` dans `copilot help` |
+| Codex | le catalogue que Codex met en cache dans `~/.codex/` |
+| Claude | les alias `opus`, `sonnet`, `haiku`, plus ceux cités par `claude --help` |
+
+Le bouton ↻ réinterroge le CLI. Si un CLI ne renvoie rien, tapez le nom du
+modèle dans le champ de recherche (« Utiliser … ») ou déclarez vos modèles dans
+la configuration avec `"models"`.
 
 ## Modes de permission
 
