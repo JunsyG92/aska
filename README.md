@@ -16,7 +16,7 @@ installés et connectés sur votre machine.
 
 ## Installation
 
-Prérequis : Linux, Node.js ≥ 20, et au moins un CLI d'agent connecté
+Prérequis : Linux, Node.js ≥ 20, un accès à github.com (téléchargement d'Electron), et au moins un CLI d'agent connecté
 (`claude`, `codex`, `copilot`, `cursor-agent`).
 
 ```sh

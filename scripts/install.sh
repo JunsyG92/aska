@@ -18,8 +18,22 @@ done
 
 command -v node >/dev/null || { echo "Node.js (>= 20) est requis." >&2; exit 1; }
 ELECTRON="$ROOT/node_modules/electron/dist/electron"
-[ -x "$ELECTRON" ] || (cd "$ROOT" && npm install --no-fund --no-audit)
-[ -x "$ELECTRON" ] || { echo "Electron n'a pas pu être installé." >&2; exit 1; }
+[ -d "$ROOT/node_modules/electron" ] || (cd "$ROOT" && npm install --no-fund --no-audit)
+# Electron >= 45 ne télécharge plus son binaire pendant « npm install » : on le fait ici.
+if [ ! -x "$ELECTRON" ]; then
+  echo "Téléchargement d'Electron (environ 100 Mo)…"
+  node "$ROOT/node_modules/electron/install.js" || {
+    cat >&2 <<MSG
+
+Le téléchargement d'Electron a échoué (voir l'erreur ci-dessus). Causes fréquentes :
+  - pas d'accès à github.com (réseau, proxy ou pare-feu) ;
+  - proxy : exportez HTTPS_PROXY (et ELECTRON_GET_USE_PROXY=1) puis relancez ;
+  - miroir : ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ./scripts/install.sh
+MSG
+    exit 1
+  }
+fi
+[ -x "$ELECTRON" ] || { echo "Electron est introuvable après installation ($ELECTRON)." >&2; exit 1; }
 
 BIN="${XDG_BIN_HOME:-$HOME/.local/bin}"
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
