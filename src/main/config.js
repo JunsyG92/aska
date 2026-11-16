@@ -29,7 +29,8 @@ const DEFAULTS = {
   timeoutSec: 600,
   maxOutputKb: 2048,
   savePrompts: true,
-  hideOnBlur: true,
+  hideOnBlur: false,
+  alwaysOnTop: true,
   envPassthrough: [],
   agents: {},
 };
@@ -62,6 +63,7 @@ function loadConfig(file) {
   if (Number.isFinite(u.maxOutputKb)) cfg.maxOutputKb = Math.min(Math.max(u.maxOutputKb, 16), 16384);
   if (typeof u.savePrompts === 'boolean') cfg.savePrompts = u.savePrompts;
   if (typeof u.hideOnBlur === 'boolean') cfg.hideOnBlur = u.hideOnBlur;
+  if (typeof u.alwaysOnTop === 'boolean') cfg.alwaysOnTop = u.alwaysOnTop;
   if (Array.isArray(u.envPassthrough)) {
     cfg.envPassthrough = u.envPassthrough.filter((s) => typeof s === 'string' && /^[A-Za-z_][A-Za-z0-9_]*\*?$/.test(s));
   }

@@ -29,6 +29,8 @@
   let draft = '';
   let pendingTrust = false;
   let warnings = [];
+  let mini = false;
+  let activityText = '';
 
   const agent = () => agents.find((a) => a.id === agentId) || null;
 
@@ -59,9 +61,30 @@
     );
   }
 
+  function syncMini() {
+    $('mini-status').textContent = running ? activityText || 'En cours…' : panel.dataset.state === 'idle' ? '' : status.textContent;
+  }
+
   function setStatus(text, cls) {
     status.textContent = text || '';
     status.className = 'status' + (cls ? ' ' + cls : '');
+    syncMini();
+  }
+
+  // Réduit le panneau en pastille (ou le rétablit). L'exécution en cours continue.
+  function setMini(v) {
+    if (mini === v) return;
+    mini = v;
+    panel.classList.toggle('mini', mini);
+    $('mini-btn').title = mini ? 'Agrandir (Ctrl+M)' : 'Réduire (Ctrl+M)';
+    $('mini-btn').setAttribute('aria-label', mini ? 'Agrandir' : 'Réduire');
+    api.setMini(mini);
+    syncMini();
+    if (!mini) {
+      autosize();
+      if (pendingTrust) $('trust-once').focus();
+      else input.focus();
+    }
   }
 
   function showNotice(text, cls) {
@@ -121,6 +144,8 @@
   }
 
   function setActivity(text) {
+    activityText = text || '';
+    syncMini();
     activity.hidden = !text;
     $('activity-text').textContent = text || '';
   }
@@ -197,6 +222,7 @@
     setKeys();
     autosize();
     input.focus();
+    syncMini();
   }
 
   function onRunEvent(ev) {
@@ -259,6 +285,7 @@
     }
     setKeys();
     autosize();
+    syncMini();
   }
 
   function clearAll() {
@@ -298,6 +325,16 @@
   }
 
   document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'm') {
+      e.preventDefault();
+      setMini(!mini);
+      return;
+    }
+    if (mini) {
+      if (e.key === 'Escape') { e.preventDefault(); api.hide(); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMini(false); }
+      return;
+    }
     if (pendingTrust) {
       if (e.key === 'Escape') { e.preventDefault(); closeConfirm(); }
       else if (e.key === 'Enter') { e.preventDefault(); submit(e.shiftKey ? 'always' : 'once'); }
@@ -345,10 +382,14 @@
   $('trust-once').addEventListener('click', () => submit('once'));
   $('trust-always').addEventListener('click', () => submit('always'));
   $('trust-cancel').addEventListener('click', closeConfirm);
-  // Un clic dans la zone transparente autour du panneau referme le lanceur.
-  document.addEventListener('mousedown', (e) => {
-    if (e.target === document.body || e.target === document.documentElement) api.hide();
-  });
+  $('mini-btn').addEventListener('click', () => setMini(!mini));
+  $('close-btn').addEventListener('click', () => api.hide());
+
+  // La fenêtre suit la taille du panneau (réduit, agrandi, réponse qui s'allonge).
+  new ResizeObserver(() => {
+    const pad = 2 * parseFloat(getComputedStyle(document.body).paddingLeft);
+    api.resize({ w: panel.offsetWidth + pad, h: panel.offsetHeight + pad });
+  }).observe(panel);
 
   // ---------- cycle d'affichage ----------
 
@@ -359,6 +400,7 @@
   });
   api.onShown((s) => {
     applyState(s);
+    setMini(false);
     panel.classList.remove('out', 'in');
     void panel.offsetWidth;
     panel.classList.add('in');

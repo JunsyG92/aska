@@ -13,6 +13,7 @@
     <div class="glow" aria-hidden="true"></div>
     <div class="surface">
       <header class="bar">
+        <span class="grip" title="Déplacer" aria-hidden="true"></span>
         <button id="agent" class="agent" type="button" title="Changer d'agent (Tab)">
           <span class="orb" aria-hidden="true"><i></i></span>
           <span id="agent-name" class="agent-name">…</span>
@@ -20,6 +21,13 @@
         <textarea id="input" rows="1" spellcheck="false" autocomplete="off"
                   placeholder="Demandez une action…" aria-label="Votre demande"></textarea>
         <kbd id="enter-hint" class="enter">⏎</kbd>
+        <span id="mini-status" class="mini-status"></span>
+        <button id="mini-btn" class="win-btn" type="button" title="Réduire (Ctrl+M)" aria-label="Réduire">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path class="i-min" d="M4 8h8"/><path class="i-max" d="M4 6.5 8 10.5 12 6.5"/></svg>
+        </button>
+        <button id="close-btn" class="win-btn" type="button" title="Masquer (Échap)" aria-label="Masquer">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>
+        </button>
       </header>
 
       <section id="confirm" class="confirm" hidden role="alertdialog" aria-labelledby="confirm-text">

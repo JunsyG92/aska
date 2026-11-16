@@ -21,7 +21,7 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
   wrap('claude', 'stream');
   wrap('codex', ''); // comportement choisi par une balise [mode] dans le prompt
   fs.mkdirSync(path.join(home, '.config', 'aska'), { recursive: true });
-  fs.writeFileSync(path.join(home, '.config', 'aska', 'config.json'), JSON.stringify({ hideOnBlur: false, shortcut: false }), { mode: 0o600 });
+  fs.writeFileSync(path.join(home, '.config', 'aska', 'config.json'), JSON.stringify({ shortcut: false }), { mode: 0o600 });
 
   const env = { ...process.env, HOME: home, PATH: `${bin}:/usr/bin:/bin`, SECRET_TOKEN: 'ne-doit-pas-fuiter' };
   for (const k of ['XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_DATA_HOME']) delete env[k];
@@ -30,6 +30,7 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
   const app = await electron.launch({ executablePath: require(path.join(ROOT, 'node_modules', 'electron')), args, env, cwd: ROOT });
   const page = await app.firstWindow();
   const shot = (name) => page.screenshot({ path: path.join(OUT, name + '.png'), omitBackground: true });
+  const size = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
   const visible = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible());
 
   try {
@@ -42,7 +43,7 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     // L'interface est bien isolée de Node.
     assert.deepEqual(
       await page.evaluate(() => [typeof require, typeof process, Object.keys(window.aska).sort().join()]),
-      ['undefined', 'undefined', 'cancel,copy,getState,hide,onRunEvent,onShown,onWillHide,pickDir,resetDir,run']
+      ['undefined', 'undefined', 'cancel,copy,getState,hide,onRunEvent,onShown,onWillHide,pickDir,resetDir,resize,run,setMini']
     );
     // Le processus principal revalide tout ce que l'interface envoie.
     const bad = await page.evaluate(async () => [
@@ -55,6 +56,14 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     assert.match(bad[1].error, /autonome est désactivé/);
     assert.match(bad[2].error, /Mode inconnu/);
     assert.match(bad[3].error, /invalide/);
+
+    // Fenêtre fixe : elle reste affichée quand elle perd le focus, et épouse le panneau.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit('blur'));
+    await page.waitForTimeout(300);
+    assert.equal(await visible(), true);
+    const idle = await size();
+    assert.equal(idle[0], 748);
+    assert.ok(idle[1] < 150, `hauteur au repos ${idle[1]}`);
 
     for (const scheme of ['light', 'dark']) {
       await page.emulateMedia({ colorScheme: scheme });
@@ -78,6 +87,20 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     assert.match(await page.textContent('#notice'), /2 action\(s\) refusée\(s\).*Bash, Edit/);
     assert.match(await page.textContent('#status'), /Terminé en/);
     await shot('3-done-light');
+    const full = await size();
+    assert.ok(full[1] > 300, `hauteur avec réponse ${full[1]}`);
+
+    // Réduire en pastille (Ctrl+M), puis rétablir : la réponse est toujours là.
+    await page.keyboard.press('Control+m');
+    await page.waitForTimeout(400);
+    const small = await size();
+    assert.ok(small[0] < 400 && small[1] < 90, `pastille ${small}`);
+    assert.match(await page.textContent('#mini-status'), /Terminé en/);
+    await shot('3-mini-light');
+    await page.click('#mini-btn');
+    await page.waitForTimeout(500);
+    assert.deepEqual(await size(), full);
+    assert.match(await page.textContent('#output'), /trois points/);
     await page.emulateMedia({ colorScheme: 'dark' });
     await shot('3-done-dark');
 

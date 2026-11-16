@@ -12,8 +12,8 @@ const { runAgent } = require('./runner');
 const P = paths();
 const INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
 const INDEX_URL = pathToFileURL(INDEX).href;
-const WIN_W = 800;
-const WIN_H = 620;
+const WIN_W = 748; // taille initiale ; la fenêtre épouse ensuite le panneau
+const WIN_H = 110;
 
 // Portail GlobalShortcuts : raccourci global sous Wayland quand le bureau le propose.
 app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal');
@@ -29,6 +29,9 @@ let runSeq = 0;
 let dialogOpen = false;
 let shortcutOk = false;
 let quitting = false;
+let mini = false; // panneau réduit en pastille
+let savedPos = null; // position choisie par l'utilisateur
+let saveTimer = null;
 
 // Une session graphique n'a pas toujours le PATH du terminal : on ajoute les
 // emplacements habituels des CLI installés par l'utilisateur.
@@ -56,6 +59,8 @@ function loadEverything() {
   if (!cwd) {
     const st = sec.readOwnedJson(P.state);
     const saved = st.data && typeof st.data.cwd === 'string' ? st.data.cwd : null;
+    const pos = st.data && st.data.pos;
+    if (pos && Number.isInteger(pos.x) && Number.isInteger(pos.y)) savedPos = { x: pos.x, y: pos.y };
     cwd = saved && !sec.checkWorkdir(saved, 'read').error ? saved : P.workspace;
   }
 }
@@ -66,6 +71,12 @@ function fsRealWorkspace() {
   } catch {
     return P.workspace;
   }
+}
+
+function saveState() {
+  try {
+    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos }));
+  } catch { /* l'état est un confort, pas une nécessité */ }
 }
 
 const tilde = (p) => {
@@ -107,12 +118,12 @@ function createWindow() {
     frame: false,
     transparent: true,
     resizable: false,
-    movable: false,
+    movable: true,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    alwaysOnTop: true,
+    alwaysOnTop: cfg.alwaysOnTop,
     hasShadow: false,
     title: 'Aska',
     icon: path.join(__dirname, '..', '..', 'assets', 'aska.svg'),
@@ -128,7 +139,15 @@ function createWindow() {
     },
   });
   win.setMenu(null);
-  win.setAlwaysOnTop(true, 'pop-up-menu');
+  if (cfg.alwaysOnTop) win.setAlwaysOnTop(true, 'floating');
+  win.setVisibleOnAllWorkspaces(true);
+  // La position choisie en déplaçant la fenêtre est conservée.
+  win.on('moved', () => {
+    const [x, y] = win.getPosition();
+    savedPos = { x, y };
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveState, 400);
+  });
 
   // L'interface ne charge que son fichier local : ni navigation, ni fenêtre, ni webview.
   win.webContents.on('will-navigate', (e) => e.preventDefault());
@@ -150,14 +169,21 @@ function createWindow() {
 
 function showWindow() {
   if (!win) return;
-  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  const { x, y, width, height } = display.workArea;
-  win.setBounds({
-    x: Math.round(x + (width - WIN_W) / 2),
-    y: Math.round(y + Math.max(40, height * 0.16)),
-    width: WIN_W,
-    height: WIN_H,
-  });
+  if (!win.isVisible()) {
+    const [w, h] = win.getSize();
+    let pos = null;
+    if (savedPos) {
+      // On ne réutilise la position mémorisée que si elle est encore sur un écran.
+      const wa = screen.getDisplayMatching({ ...savedPos, width: w, height: h }).workArea;
+      const inside = savedPos.x + 80 > wa.x && savedPos.x < wa.x + wa.width - 80 && savedPos.y >= wa.y && savedPos.y < wa.y + wa.height - 40;
+      if (inside) pos = savedPos;
+    }
+    if (!pos) {
+      const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+      pos = { x: Math.round(wa.x + (wa.width - WIN_W) / 2), y: Math.round(wa.y + Math.max(40, wa.height * 0.16)) };
+    }
+    win.setPosition(pos.x, pos.y);
+  }
   win.show();
   win.focus();
   win.webContents.send('aska:shown', publicState());
@@ -174,7 +200,7 @@ function hideWindow() {
 }
 
 function toggleWindow() {
-  if (win && win.isVisible() && win.isFocused()) hideWindow();
+  if (win && win.isVisible() && win.isFocused() && !mini) hideWindow();
   else showWindow();
 }
 
@@ -301,13 +327,27 @@ function registerIpc() {
     return true;
   });
   handle('aska:hide', () => hideWindow());
+  handle('aska:set-mini', (v) => {
+    mini = v === true;
+  });
+  // La fenêtre épouse le panneau : aucune zone transparente ne bloque les clics autour.
+  handle('aska:resize', (size) => {
+    if (!size || !Number.isFinite(size.w) || !Number.isFinite(size.h)) return;
+    const w = Math.round(Math.min(Math.max(size.w, 120), 900));
+    const h = Math.round(Math.min(Math.max(size.h, 40), 800));
+    const [cw, ch] = win.getSize();
+    if (cw === w && ch === h) return;
+    win.setResizable(true);
+    win.setSize(w, h);
+    win.setResizable(false);
+  });
   handle('aska:copy', (text) => {
     if (typeof text === 'string' && text.length < 5_000_000) clipboard.writeText(text);
     return true;
   });
   handle('aska:reset-dir', () => {
     cwd = P.workspace;
-    sec.writePrivate(P.state, JSON.stringify({ cwd }));
+    saveState();
     return publicState();
   });
   handle('aska:pick-dir', async () => {
@@ -322,7 +362,7 @@ function registerIpc() {
         const d = sec.checkWorkdir(r.filePaths[0], 'read');
         if (!d.error) {
           cwd = d.path;
-          sec.writePrivate(P.state, JSON.stringify({ cwd }));
+          saveState();
         }
       }
     } finally {

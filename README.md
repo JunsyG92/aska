@@ -4,9 +4,12 @@ Un raccourci clavier, un champ de saisie, et votre demande part vers l'agent IA
 de votre choix **via son CLI officiel** : Claude Code, Codex, GitHub Copilot ou
 Cursor. La réponse s'affiche en direct dans le même panneau.
 
-| Sombre | Clair |
-| --- | --- |
-| ![Aska en thème sombre](docs/sombre.png) | ![Aska en thème clair](docs/clair.png) |
+Le panneau est une petite fenêtre fixe : elle reste au premier plan à l'endroit
+où vous la posez, et se réduit en pastille d'un clic.
+
+| Sombre | Clair | Réduit |
+| --- | --- | --- |
+| ![Aska en thème sombre](docs/sombre.png) | ![Aska en thème clair](docs/clair.png) | ![Aska réduit en pastille](docs/reduit.png) |
 
 Aska n'appelle aucune API et ne stocke aucune clé : il pilote les CLI déjà
 installés et connectés sur votre machine.
@@ -45,11 +48,17 @@ mettez `"shortcut": false` dans la configuration.
 | `Ctrl+O` | choisir le dossier de travail (clic droit sur le dossier : retour à l'espace temporaire) |
 | `↑` / `↓` | historique des demandes |
 | `Ctrl+Maj+C` | copier la réponse · `Ctrl+L` : effacer |
-| `Échap` | annuler l'exécution en cours, sinon fermer |
+| `Ctrl+M` | réduire en pastille / agrandir (ou le bouton `–`) |
+| `Échap` | annuler l'exécution en cours, sinon masquer la fenêtre |
+
+La fenêtre reste affichée quand vous travaillez ailleurs. Déplacez-la par la
+poignée à gauche ou par la barre du bas : sa position est mémorisée. Réduite,
+la pastille indique l'agent et l'état de la demande ; l'exécution continue. Le
+raccourci global la rétablit, ou la masque si elle est déjà active.
 
 Le thème suit celui du système (clair/sombre), et les animations sont
 désactivées si le système demande de réduire les mouvements. Si le panneau est
-fermé pendant une exécution, une notification signale la fin.
+masqué pendant une exécution, une notification signale la fin.
 
 ## Modes de permission
 
@@ -119,7 +128,8 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
   "timeoutSec": 600,
   "maxOutputKb": 2048,
   "savePrompts": true,
-  "hideOnBlur": true,
+  "hideOnBlur": false,
+  "alwaysOnTop": true,
   "envPassthrough": [],
   "agents": {
     "claude": { "model": "sonnet", "extraArgs": ["--max-turns", "20"] },
@@ -136,6 +146,10 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
   }
 }
 ```
+
+`hideOnBlur: true` redonne un comportement de lanceur éphémère (la fenêtre se
+masque dès qu'elle perd le focus) ; `alwaysOnTop: false` la laisse passer
+derrière les autres fenêtres.
 
 Un agent personnalisé (comme `gemini` ci-dessus) déclare son binaire en chemin
 absolu et les arguments de chaque mode (`read`, `edit`, `auto`) ; `prompt` vaut

@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('aska', {
   resetDir: () => ipcRenderer.invoke('aska:reset-dir'),
   copy: (text) => ipcRenderer.invoke('aska:copy', text),
   hide: () => ipcRenderer.invoke('aska:hide'),
+  resize: (size) => ipcRenderer.invoke('aska:resize', size),
+  setMini: (v) => ipcRenderer.invoke('aska:set-mini', v),
   onRunEvent: on('aska:run-event'),
   onShown: on('aska:shown'),
   onWillHide: on('aska:will-hide'),
