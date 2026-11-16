@@ -33,6 +33,16 @@ jobs:
       - name: Test de bout en bout (Windows)
         if: ${{ always() && runner.os == 'Windows' }}
         run: npm run test:e2e
+      - name: Installation (Windows)
+        if: ${{ always() && runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          ./scripts/install.ps1 -NoAutostart
+          $programs = [Environment]::GetFolderPath('Programs')
+          if (-not (Test-Path (Join-Path $programs 'Aska.lnk'))) { throw 'raccourci du menu Démarrer absent' }
+          if (-not (Test-Path (Join-Path $env:APPDATA 'aska\config.json'))) { throw 'configuration absente' }
+          if (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'aska\bin\aska.cmd'))) { throw 'commande aska absente' }
+          Write-Host 'Installation OK'
       - name: Captures d'écran
         if: always()
         uses: actions/upload-artifact@v4

@@ -4,11 +4,20 @@ const path = require('path');
 const { readOwnedJson } = require('./security');
 const { MODE_ORDER } = require('./agents');
 
-function paths(env = process.env, home = os.homedir()) {
+function paths(env = process.env, home = os.homedir(), platform = process.platform) {
   const abs = (v, fallback) => (v && path.isAbsolute(v) ? v : fallback);
-  const configDir = path.join(abs(env.XDG_CONFIG_HOME, path.join(home, '.config')), 'aska');
-  const stateDir = path.join(abs(env.XDG_STATE_HOME, path.join(home, '.local', 'state')), 'aska');
-  const dataDir = path.join(abs(env.XDG_DATA_HOME, path.join(home, '.local', 'share')), 'aska');
+  let configDir, stateDir, dataDir;
+  if (platform === 'win32') {
+    // Windows : configuration dans %APPDATA% (itinérant), état et données dans %LOCALAPPDATA%.
+    configDir = path.join(abs(env.APPDATA, path.join(home, 'AppData', 'Roaming')), 'aska');
+    const local = path.join(abs(env.LOCALAPPDATA, path.join(home, 'AppData', 'Local')), 'aska');
+    stateDir = path.join(local, 'state');
+    dataDir = local;
+  } else {
+    configDir = path.join(abs(env.XDG_CONFIG_HOME, path.join(home, '.config')), 'aska');
+    stateDir = path.join(abs(env.XDG_STATE_HOME, path.join(home, '.local', 'state')), 'aska');
+    dataDir = path.join(abs(env.XDG_DATA_HOME, path.join(home, '.local', 'share')), 'aska');
+  }
   return {
     configDir,
     stateDir,

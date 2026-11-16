@@ -10,6 +10,7 @@ const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./convers
 const { discoverModels } = require('./models');
 const sec = require('./security');
 const { runAgent } = require('./runner');
+const { resolveLaunch, buildCommand } = require('./launch');
 
 const P = paths();
 const INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
@@ -44,10 +45,41 @@ const discovered = {}; // modèles annoncés par chaque CLI : { cursor: { models
 // emplacements habituels des CLI installés par l'utilisateur.
 function searchPath() {
   const home = os.homedir();
-  const extra = ['.local/bin', 'bin', '.npm-global/bin', '.bun/bin', '.volta/bin'].map((d) => path.join(home, d));
-  const parts = (process.env.PATH || '').split(':').filter((d) => d && path.isAbsolute(d));
-  for (const d of [...extra, '/usr/local/bin']) if (!parts.includes(d)) parts.push(d);
-  return parts.join(':');
+  let extra;
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    extra = [
+      path.join(appData, 'npm'), // npm i -g
+      path.join(home, '.local', 'bin'), // installateur natif de Claude Code
+      path.join(local, 'cursor-agent'),
+      path.join(home, '.bun', 'bin'),
+      path.join(local, 'Volta', 'bin'),
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs'),
+    ];
+  } else {
+    extra = ['.local/bin', 'bin', '.npm-global/bin', '.bun/bin', '.volta/bin'].map((d) => path.join(home, d));
+    extra.push('/usr/local/bin');
+  }
+  const parts = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d));
+  for (const d of extra) if (!parts.includes(d)) parts.push(d);
+  return parts.join(path.delimiter);
+}
+
+// Environnement transmis à un agent : filtré, avec le PATH élargi ci-dessus.
+function agentEnv(agent) {
+  return sec.setEnvVar(sec.buildEnv(process.env, agent.env, cfg.envPassthrough), 'PATH', searchPath());
+}
+
+// Lance une commande d'agent (Windows : sans cmd.exe pour les lanceurs npm).
+function launchAgent(agent, argv, opts, onEvent) {
+  let cmd;
+  try {
+    cmd = buildCommand(agent.launch, argv);
+  } catch (e) {
+    return { cancel() {}, done: Promise.resolve({ ok: false, reason: 'spawn-error', error: e.message, durationMs: 0, stderrTail: '' }) };
+  }
+  return runAgent({ ...opts, bin: cmd.command, argv: cmd.args, verbatim: cmd.verbatim, env: agentEnv(agent) }, onEvent);
 }
 
 function loadEverything() {
@@ -60,6 +92,13 @@ function loadEverything() {
     const r = sec.resolveBinary(agent.bin, { override: agent.binOverride, envPath: searchPath(), avoid: agent.avoidPath });
     agent.binPath = r.path || null;
     agent.binError = r.error || null;
+    if (agent.binPath) {
+      const l = resolveLaunch(agent.binPath, { envPath: searchPath() });
+      if (l.error) {
+        agent.binPath = null;
+        agent.binError = l.error;
+      } else agent.launch = l;
+    }
   }
   trust = new sec.TrustStore(P.trust);
   sec.ensurePrivateDir(P.workspace);
@@ -343,12 +382,11 @@ function startRun(req) {
 
   const id = ++runSeq;
   const startedAt = new Date().toISOString();
-  const handleRun = runAgent(
+  const handleRun = launchAgent(
+    agent,
+    inv.argv,
     {
-      bin: agent.binPath,
-      argv: inv.argv,
       cwd: dir.path,
-      env: { ...sec.buildEnv(process.env, agent.env, cfg.envPassthrough), PATH: searchPath() },
       stdin: inv.stdin,
       output: agent.output,
       timeoutMs: cfg.timeoutSec * 1000,
@@ -431,11 +469,12 @@ async function listModels(req) {
   const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
   if (!a || !a.modelFlag) return { models: [], current: null, error: null };
   if (a.binPath && (!discovered[a.id] || req.refresh === true)) {
-    const env = { ...sec.buildEnv(process.env, a.env, cfg.envPassthrough), PATH: searchPath() };
     discovered[a.id] = await discoverModels(a.id, (args) => {
       let text = '';
-      const h = runAgent(
-        { bin: a.binPath, argv: args, cwd: fsRealWorkspace(), env, stdin: '', output: 'text', timeoutMs: 12000, maxBytes: 512 * 1024 },
+      const h = launchAgent(
+        a,
+        args,
+        { cwd: fsRealWorkspace(), stdin: '', output: 'text', timeoutMs: 12000, maxBytes: 512 * 1024 },
         (ev) => { if (ev.type === 'text') text += ev.text; }
       );
       return h.done.then((r) => ({ ok: r.ok, text }));
@@ -580,6 +619,9 @@ if (!app.requestSingleInstanceLock()) {
       toggleWindow();
     }
   });
+
+  // Windows : identité de l'application, nécessaire aux notifications.
+  if (process.platform === 'win32') app.setAppUserModelId('aska');
 
   app.whenReady().then(() => {
     if (wants('--quit')) return app.quit();

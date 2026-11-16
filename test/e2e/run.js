@@ -10,6 +10,10 @@ const { _electron: electron } = require('playwright');
 const ROOT = path.join(__dirname, '..', '..');
 const OUT = path.join(__dirname, 'out');
 const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
+const WIN = process.platform === 'win32';
+const POSIX = !WIN;
+const { paths } = require(path.join(ROOT, 'src', 'main', 'config'));
+const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
@@ -18,17 +22,54 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
   const callLog = path.join(home, 'calls.jsonl');
   fs.mkdirSync(bin, { mode: 0o755 });
   // Les faux CLI notent leurs arguments et leur stdin : on vérifie ce qu'Aska leur envoie vraiment.
-  const wrap = (name, mode) =>
-    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\nFAKE_LOG="${callLog}" FAKE_MODE=${mode} FAKE_DELAY=\${FAKE_DELAY:-25} exec "${process.execPath}" "${FAKE}" "$@"\n`, { mode: 0o755 });
+  // Chaque faux CLI est un petit script node, lancé comme le serait le vrai :
+  // via un script shell sous Linux, via un lanceur npm (.cmd) sous Windows.
+  const pkg = path.join(bin, 'node_modules', 'fake-agents');
+  fs.mkdirSync(pkg, { recursive: true });
+  const wrap = (name, mode) => {
+    const entry = path.join(pkg, `${name}.js`);
+    fs.writeFileSync(entry, [
+      `process.env.FAKE_LOG = ${JSON.stringify(callLog)};`,
+      `process.env.FAKE_MODE = ${JSON.stringify(mode)};`,
+      "process.env.FAKE_DELAY = process.env.FAKE_DELAY || '25';",
+      `require(${JSON.stringify(FAKE)});`,
+    ].join('\n'));
+    if (WIN) {
+      // Format exact des lanceurs générés par npm (cmd-shim).
+      fs.writeFileSync(path.join(bin, `${name}.cmd`), [
+        '@ECHO off', 'GOTO start', ':find_dp0', 'SET dp0=%~dp0', 'EXIT /b', ':start', 'SETLOCAL', 'CALL :find_dp0', '',
+        'IF EXIST "%dp0%\\node.exe" (', '  SET "_prog=%dp0%\\node.exe"', ') ELSE (', '  SET "_prog=node"', '  SET PATHEXT=%PATHEXT:;.JS;=;%', ')', '',
+        `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\fake-agents\\${name}.js" %*`, '',
+      ].join('\r\n'));
+    } else {
+      fs.writeFileSync(path.join(bin, name), `#!/bin/sh\nexec "${process.execPath}" "${entry}" "$@"\n`, { mode: 0o755 });
+    }
+  };
   wrap('claude', 'stream');
   wrap('cursor-agent', 'stream');
   wrap('codex', ''); // comportement choisi par une balise [mode] dans le prompt
-  fs.mkdirSync(path.join(home, '.config', 'aska'), { recursive: true });
-  fs.writeFileSync(path.join(home, '.config', 'aska', 'config.json'), JSON.stringify({ shortcut: false }), { mode: 0o600 });
   const calls = () => fs.readFileSync(callLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 
-  const env = { ...process.env, HOME: home, PATH: `${bin}:/usr/bin:/bin`, SECRET_TOKEN: 'ne-doit-pas-fuiter' };
-  for (const k of ['XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_DATA_HOME']) delete env[k];
+  // Environnement de l'app : dossier personnel et PATH isolés (Windows : profil et AppData).
+  const env = { ...process.env, SECRET_TOKEN: 'ne-doit-pas-fuiter' };
+  const setVar = (k, v) => {
+    for (const x of Object.keys(env)) if (x.toUpperCase() === k.toUpperCase()) delete env[x];
+    if (v !== undefined) env[k] = v;
+  };
+  for (const k of ['XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_DATA_HOME']) setVar(k);
+  if (WIN) {
+    const sys32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+    setVar('USERPROFILE', home);
+    setVar('APPDATA', path.join(home, 'AppData', 'Roaming'));
+    setVar('LOCALAPPDATA', path.join(home, 'AppData', 'Local'));
+    setVar('PATH', [bin, path.dirname(process.execPath), sys32].join(';'));
+  } else {
+    setVar('HOME', home);
+    setVar('PATH', `${bin}:/usr/bin:/bin`);
+  }
+  const P = paths(env, home);
+  fs.mkdirSync(P.configDir, { recursive: true });
+  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false }), { mode: 0o600 });
   const args = [ROOT];
   if (process.env.ASKA_E2E_NO_SANDBOX === '1') args.unshift('--no-sandbox');
   const app = await electron.launch({ executablePath: require(path.join(ROOT, 'node_modules', 'electron')), args, env, cwd: ROOT });
@@ -165,9 +206,8 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     log = calls();
     assert.deepEqual(log[3].args, ['exec', '--skip-git-repo-check', '--color', 'never', '--sandbox', 'read-only', '-']);
     assert.match(log[3].stdin, /<historique>[\s\S]*\[Utilisateur\]\nRésume main\.js \(deny\)[\s\S]*\[Assistant — Claude\][\s\S]*trois[\s\S]*Et le fichier preload \?[\s\S]*<\/historique>[\s\S]*Nouvelle demande de l'utilisateur :\n<img src=x onerror=alert\(1\)> \[echo\]$/);
-    const lastOut = await page.locator('.turn .output').nth(3).textContent();
-    assert.ok(!lastOut.includes('SECRET_TOKEN'), 'env non filtré');
-    assert.ok(lastOut.includes(fs.realpathSync(path.join(home, '.local/share/aska/workspace'))));
+    assert.ok(!log[3].env.includes('SECRET_TOKEN'), 'env non filtré');
+    assert.ok(samePath(log[3].cwd, fs.realpathSync(P.workspace)), `dossier de travail : ${log[3].cwd}`);
     assert.equal(await page.locator('.thread img').count(), 0);
 
     // Échec remonté dans le fil, sans perdre la conversation.
@@ -327,23 +367,23 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     assert.deepEqual(await page.locator('.hist-title').allTextContents(), ['Résume main.js (deny)']);
     await page.keyboard.press('Escape');
     assert.equal(await visible(), true);
-    const convDir = path.join(home, '.local/state/aska/conversations');
+    const convDir = P.conversations;
     const files = fs.readdirSync(convDir);
     assert.equal(files.length, 1);
-    assert.equal(fs.statSync(path.join(convDir, files[0])).mode & 0o777, 0o600);
+    if (POSIX) assert.equal(fs.statSync(path.join(convDir, files[0])).mode & 0o777, 0o600);
     assert.equal(JSON.parse(fs.readFileSync(path.join(convDir, files[0]), 'utf8')).turns.length, 7);
 
     // Rappel des messages (↑) et journal d'audit privé.
     await page.keyboard.press('ArrowUp');
     assert.equal(await page.inputValue('#input'), 'On reprend');
     await page.fill('#input', '');
-    const logFile = path.join(home, '.local/state/aska/history.jsonl');
+    const logFile = P.audit;
     const audit = fs.readFileSync(logFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     assert.equal(audit.length, 9);
     assert.equal(audit[5].result, 'cancel');
     assert.equal(audit[5].mode, 'edit');
     assert.ok(audit.every((a) => !JSON.stringify(a.argv).includes('historique')));
-    assert.equal(fs.statSync(logFile).mode & 0o777, 0o600);
+    if (POSIX) assert.equal(fs.statSync(logFile).mode & 0o777, 0o600);
 
     // Échap masque la fenêtre ; une seconde instance (« aska --toggle ») la rouvre, fil intact.
     await page.keyboard.press('Escape');

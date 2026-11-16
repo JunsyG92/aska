@@ -2,7 +2,9 @@
 // Lance un CLI d'agent sans shell, diffuse sa sortie, et garantit son arrêt
 // (annulation, délai dépassé, sortie trop volumineuse).
 
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
+
+const WIN = process.platform === 'win32';
 const { StringDecoder } = require('string_decoder');
 
 // Séquences ANSI/OSC et caractères de contrôle (hors \n et \t).
@@ -132,7 +134,7 @@ function createTextParser(emit) {
 /**
  * @returns {{ cancel: () => void, done: Promise<object> }}
  */
-function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600000, maxBytes = 2 * 1024 * 1024 }, onEvent) {
+function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600000, maxBytes = 2 * 1024 * 1024, verbatim = false }, onEvent) {
   const started = Date.now();
   let reason = null;
   let bytes = 0;
@@ -150,7 +152,11 @@ function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600
       cwd,
       env,
       shell: false,
-      detached: true, // groupe de processus dédié : on peut tuer toute la descendance
+      // Linux : groupe de processus dédié, pour tuer toute la descendance.
+      // Windows : « detached » ouvrirait une console ; l'arbre est tué par taskkill.
+      detached: !WIN,
+      windowsHide: true,
+      windowsVerbatimArguments: verbatim,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (e) {
@@ -160,7 +166,18 @@ function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600
     };
   }
 
+  let treeKilled = false;
   const killGroup = (sig) => {
+    if (WIN) {
+      // Windows n'a pas de signaux : on termine l'arbre de processus d'un coup.
+      if (treeKilled || !child.pid) return;
+      treeKilled = true;
+      const sys = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
+      execFile(`${sys}\\System32\\taskkill.exe`, ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {
+        try { child.kill(); } catch { /* déjà terminé */ }
+      });
+      return;
+    }
     try {
       process.kill(-child.pid, sig);
     } catch {

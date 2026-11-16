@@ -25,7 +25,10 @@ process.stdin.on('end', async () => {
   const mode = process.env.FAKE_MODE || (tags.length ? tags[tags.length - 1][1] : 'text');
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const j = (o) => process.stdout.write(JSON.stringify(o) + '\n');
-  if (process.env.FAKE_LOG) require('fs').appendFileSync(process.env.FAKE_LOG, JSON.stringify({ args, stdin }) + '\n');
+  if (process.env.FAKE_LOG) {
+    const entry = { args, stdin, cwd: process.cwd(), env: Object.keys(process.env) };
+    require('fs').appendFileSync(process.env.FAKE_LOG, JSON.stringify(entry) + '\n');
+  }
   if (mode === 'echo') {
     process.stdout.write(JSON.stringify({ args, stdin, env: Object.keys(process.env).sort(), cwd: process.cwd() }));
   } else if (mode === 'hang') {

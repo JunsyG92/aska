@@ -6,9 +6,17 @@ const os = require('os');
 const path = require('path');
 
 const uid = () => (typeof process.getuid === 'function' ? process.getuid() : -1);
+// Sous Windows, propriétaire et droits POSIX n'existent pas (fs.stat les invente) :
+// ces vérifications y sont sans objet. Le profil utilisateur Windows (AppData…)
+// n'est par défaut accessible qu'à son propriétaire et aux administrateurs.
+const POSIX = process.platform !== 'win32';
+// Comparaison de chemins : insensible à la casse sous Windows.
+const norm = (p) => (POSIX ? p : p.toLowerCase());
+const within = (child, parent) => norm(child) === norm(parent) || norm(child).startsWith(norm(parent).replace(/[\\/]+$/, '') + path.sep);
 
 /** Un fichier/dossier est « sûr » s'il appartient à root ou à l'utilisateur et n'est pas modifiable par les autres. */
 function checkOwnedNotWritable(p, { allowSticky = false } = {}) {
+  if (!POSIX) return null;
   const st = fs.statSync(p);
   if (st.uid !== 0 && st.uid !== uid()) return `${p} appartient à un autre utilisateur`;
   const worldWritable = (st.mode & 0o002) !== 0;
@@ -22,15 +30,23 @@ function checkOwnedNotWritable(p, { allowSticky = false } = {}) {
  * Refuse les entrées PATH relatives et tout binaire qu'un autre utilisateur
  * pourrait remplacer.
  */
-function resolveBinary(names, { override, envPath = process.env.PATH || '', avoid } = {}) {
+// Extensions essayées sous Windows, dans l'ordre. Un nom sans extension n'y est
+// jamais retenu : npm pose à côté du « .cmd » un script shell pour Git Bash.
+const WIN_EXT = ['.exe', '.cmd', '.bat', '.com'];
+
+function resolveBinary(names, { override, envPath = process.env.PATH || '', avoid, platform = process.platform } = {}) {
   const candidates = [];
   if (override) {
     if (!path.isAbsolute(override)) return { error: `"bin" doit être un chemin absolu (${override})` };
     candidates.push(override);
   } else {
-    for (const dir of envPath.split(':')) {
+    const delimiter = platform === 'win32' ? ';' : ':';
+    for (const dir of envPath.split(delimiter)) {
       if (!dir || !path.isAbsolute(dir)) continue; // « . » ou chemin relatif dans PATH : ignoré
-      for (const name of names) candidates.push(path.join(dir, name));
+      for (const name of names) {
+        if (platform === 'win32') for (const ext of WIN_EXT) candidates.push(path.join(dir, name + ext));
+        else candidates.push(path.join(dir, name));
+      }
     }
     // Les emplacements « à éviter » (lanceurs factices) passent en dernier recours.
     if (avoid) candidates.sort((a, b) => Number(avoid.test(a)) - Number(avoid.test(b)));
@@ -67,14 +83,30 @@ function resolveBinary(names, { override, envPath = process.env.PATH || '', avoi
 // Variables transmises à tous les agents. Tout le reste de l'environnement
 // (jetons cloud, mots de passe exportés…) est retiré.
 const BASE_ENV = [
+  // Windows (les noms y sont insensibles à la casse : « Path », « SystemRoot »…)
+  ...(POSIX ? [] : [
+    'SystemRoot', 'SystemDrive', 'windir', 'ComSpec', 'PATHEXT', 'OS', 'TEMP', 'TMP',
+    'USERPROFILE', 'USERNAME', 'USERDOMAIN', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
+    'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'CommonProgramFiles',
+    'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER',
+  ]),
   'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LANGUAGE', 'LC_*', 'TZ', 'TMPDIR',
   'XDG_*', 'DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS',
   'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
   'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
 ];
 
-function matchPattern(name, pattern) {
-  return pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern;
+function matchPattern(name, pattern, caseless = !POSIX) {
+  const n = caseless ? name.toUpperCase() : name;
+  const p = caseless ? pattern.toUpperCase() : pattern;
+  return p.endsWith('*') ? n.startsWith(p.slice(0, -1)) : n === p;
+}
+
+/** Remplace une variable d'environnement, en retirant ses variantes de casse (Windows : « Path » et « PATH »). */
+function setEnvVar(env, name, value) {
+  for (const k of Object.keys(env)) if (k.toUpperCase() === name.toUpperCase()) delete env[k];
+  env[name] = value;
+  return env;
 }
 
 function buildEnv(source, agentPatterns = [], extraPatterns = []) {
@@ -88,6 +120,19 @@ function buildEnv(source, agentPatterns = [], extraPatterns = []) {
   return env;
 }
 
+function windowsSystemDirs(env = process.env) {
+  const pick = (name, fallback) => {
+    const k = Object.keys(env).find((x) => x.toUpperCase() === name.toUpperCase());
+    return k && path.isAbsolute(env[k]) ? env[k] : fallback;
+  };
+  return [
+    pick('SystemRoot', 'C:\\Windows'),
+    pick('ProgramFiles', 'C:\\Program Files'),
+    pick('ProgramFiles(x86)', 'C:\\Program Files (x86)'),
+    pick('ProgramData', 'C:\\ProgramData'),
+  ];
+}
+
 const SYSTEM_DIRS = ['/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/boot', '/var', '/sys', '/proc', '/dev', '/run', '/root', '/snap'];
 
 /** Valide le dossier de travail. En mode écriture, refuse les dossiers trop larges ou système. */
@@ -99,19 +144,20 @@ function checkWorkdir(dir, mode, home = os.homedir(), ownDirs = []) {
   } catch {
     return { error: `Dossier introuvable : ${dir}` };
   }
-  if (mode !== 'read' && !ownDirs.includes(real)) {
+  if (mode !== 'read' && !ownDirs.some((d) => norm(d) === norm(real))) {
     const realHome = (() => { try { return fs.realpathSync(home); } catch { return home; } })();
-    if (real === '/') return { error: 'Écriture refusée à la racine du système' };
-    if (real === realHome) {
+    if (path.parse(real).root === real) return { error: 'Écriture refusée à la racine du système' };
+    if (norm(real) === norm(realHome)) {
       return { error: 'Écriture refusée dans votre dossier personnel entier : choisissez un dossier de projet (Ctrl+O)' };
     }
-    const inHome = real.startsWith(realHome + path.sep);
-    if (!inHome && SYSTEM_DIRS.some((d) => real === d || real.startsWith(d + path.sep))) {
+    const inHome = within(real, realHome);
+    const system = POSIX ? SYSTEM_DIRS : windowsSystemDirs();
+    if (!inHome && system.some((d) => within(real, d))) {
       return { error: `Écriture refusée dans un dossier système (${real})` };
     }
-    const rel = path.relative(realHome, real);
-    if (inHome && /^\.(ssh|gnupg|config|local|aws|kube|docker)(\/|$)/.test(rel)) {
-      return { error: `Écriture refusée dans un dossier sensible (~/${rel})` };
+    const first = inHome ? path.relative(realHome, real).split(path.sep)[0] : '';
+    if (inHome && /^(\.(ssh|gnupg|config|local|aws|azure|kube|docker)|appdata)$/i.test(first)) {
+      return { error: `Écriture refusée dans un dossier sensible (~${path.sep}${path.relative(realHome, real)})` };
     }
   }
   return { path: real };
@@ -137,8 +183,8 @@ function readOwnedJson(file) {
     return { missing: true };
   }
   if (st.isSymbolicLink()) st = fs.statSync(file);
-  if (st.uid !== uid()) return { error: `${file} n'appartient pas à l'utilisateur courant` };
-  if (st.mode & 0o022) {
+  if (POSIX && st.uid !== uid()) return { error: `${file} n'appartient pas à l'utilisateur courant` };
+  if (POSIX && st.mode & 0o022) {
     return { error: `${file} est modifiable par d'autres utilisateurs (chmod 600 requis)` };
   }
   try {
@@ -159,7 +205,7 @@ class TrustStore {
     }
   }
   isTrusted(real) {
-    for (const d of this.dirs) if (real === d || real.startsWith(d + path.sep)) return true;
+    for (const d of this.dirs) if (within(real, d)) return true;
     return false;
   }
   add(real) {
@@ -199,5 +245,5 @@ function readRecentPrompts(file, limit = 50) {
 
 module.exports = {
   resolveBinary, buildEnv, checkWorkdir, readOwnedJson, writePrivate, ensurePrivateDir,
-  TrustStore, appendAudit, readRecentPrompts, BASE_ENV,
+  TrustStore, appendAudit, readRecentPrompts, BASE_ENV, setEnvVar, within,
 };

@@ -61,7 +61,7 @@ const BUILTIN = {
     bin: ['copilot'],
     // VS Code installe un faux « copilot » qui ne fait que proposer l'installation :
     // on ne le retient que si aucun vrai CLI n'est trouvé.
-    avoidPath: /github\.copilot|\.vscode|[\/]Code[\/]/i,
+    avoidPath: /github\.copilot|\.vscode|[\\/]Code[\\/]/i,
     prompt: 'arg',
     promptFlag: '-p',
     output: 'text',
