@@ -24,6 +24,7 @@ Prérequis : Linux, Node.js ≥ 20, un accès à github.com (téléchargement d'
 ```sh
 git clone <ce dépôt> && cd aska
 ./scripts/install.sh                    # X11 : raccourci global Ctrl+Alt+Espace
+                                        # (Ubuntu 24.04+ : propose de régler le bac à sable, sudo)
 ./scripts/install.sh --gnome-shortcut   # GNOME/Wayland : raccourci enregistré dans GNOME
 aska --hidden &                         # ou reconnectez-vous (démarrage automatique)
 ```
@@ -167,6 +168,13 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
   dans la configuration sans attendre une mise à jour.
 
 ## Dépannage
+
+- **Ubuntu 24.04+ : « The SUID sandbox helper binary was found, but is not
+  configured correctly » (arrêt par SIGTRAP)** : Ubuntu bloque le bac à sable
+  d'Electron. Lancez `./scripts/install.sh --sandbox-fix` : il installe un profil
+  AppArmor (`/etc/apparmor.d/aska`, mot de passe sudo demandé) qui autorise ce bac
+  à sable pour le seul binaire d'Electron d'Aska. Si vous déplacez le dossier
+  d'Aska, relancez la commande. Ne lancez pas Aska avec `--no-sandbox`.
 
 - **« GitHub Copilot CLI was not found »** : la commande `copilot` trouvée est le
   lanceur installé par VS Code, pas le CLI. Installez le vrai CLI

@@ -4,14 +4,18 @@
 # Options :
 #   --gnome-shortcut   enregistre Ctrl+Alt+Espace → « aska --toggle » dans GNOME (utile sous Wayland)
 #   --no-autostart     ne lance pas Aska à l'ouverture de session
+#   --sandbox-fix      (Ubuntu 24.04+) installe sans demander le profil AppArmor du bac à sable
+#   --no-sandbox-fix   ne touche pas au système : la commande à lancer est seulement affichée
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GNOME=0; AUTOSTART=1
+GNOME=0; AUTOSTART=1; SANDBOX_FIX=ask
 for a in "$@"; do
   case "$a" in
     --gnome-shortcut) GNOME=1 ;;
     --no-autostart) AUTOSTART=0 ;;
+    --sandbox-fix) SANDBOX_FIX=yes ;;
+    --no-sandbox-fix) SANDBOX_FIX=no ;;
     *) echo "Option inconnue : $a" >&2; exit 2 ;;
   esac
 done
@@ -42,6 +46,18 @@ mkdir -p "$BIN" "$APPS"
 
 cat > "$BIN/aska" <<LAUNCHER
 #!/bin/sh
+# Lanceur Aska (généré par scripts/install.sh).
+SANDBOX="$ROOT/node_modules/electron/dist/chrome-sandbox"
+# Ubuntu 24.04+ : sans profil AppArmor ni assistant setuid, Electron s'arrête
+# brutalement (SIGTRAP). On l'explique plutôt que de planter en silence.
+if [ "\$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ] \\
+   && [ ! -e /etc/apparmor.d/aska ] \\
+   && [ "\$(stat -c '%U:%a' "\$SANDBOX" 2>/dev/null)" != "root:4755" ]; then
+  MSG="Le bac à sable d'Electron n'est pas configuré sur ce système. Relancez : $ROOT/scripts/install.sh --sandbox-fix"
+  echo "\$MSG" >&2
+  command -v notify-send >/dev/null && notify-send "Aska ne peut pas démarrer" "\$MSG"
+  exit 1
+fi
 exec "$ELECTRON" "$ROOT" "\$@"
 LAUNCHER
 chmod 755 "$BIN/aska"
@@ -101,16 +117,60 @@ if [ "$GNOME" = 1 ]; then
   fi
 fi
 
-# Le bac à sable de Chromium doit rester actif : on explique comment, sans jamais le désactiver.
-SANDBOX="$ROOT/node_modules/electron/dist/chrome-sandbox"
+# Le bac à sable de Chromium doit rester actif. Ubuntu 24.04+ interdit par défaut
+# les espaces de noms non privilégiés dont il a besoin : la méthode recommandée
+# par Ubuntu est un profil AppArmor qui les autorise pour ce seul binaire.
 RESTRICT="$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)"
-if [ "$RESTRICT" = 1 ] && [ "$(stat -c '%U:%a' "$SANDBOX" 2>/dev/null)" != "root:4755" ]; then
-  cat <<MSG
+PROFILE=/etc/apparmor.d/aska
+SANDBOX="$ROOT/node_modules/electron/dist/chrome-sandbox"
+REAL_ELECTRON="$(readlink -f "$ELECTRON")"
+if [ "$RESTRICT" = 1 ]; then
+  WANT="$(printf '%s\n' \
+    '# Aska : autorise Electron à créer les espaces de noms de son bac à sable.' \
+    '# Généré par scripts/install.sh, supprimable sans risque (sudo rm /etc/apparmor.d/aska).' \
+    'abi <abi/4.0>,' \
+    'include <tunables/global>' \
+    '' \
+    "profile aska \"$REAL_ELECTRON\" flags=(unconfined) {" \
+    '  userns,' \
+    '  include if exists <local/aska>' \
+    '}')"
+  if [ -e "$PROFILE" ] && [ "$(cat "$PROFILE")" = "$WANT" ]; then
+    : # déjà en place pour ce dossier
+  else
+    APPLY=no
+    if [ "$SANDBOX_FIX" = yes ]; then
+      APPLY=yes
+    elif [ "$SANDBOX_FIX" = ask ] && [ -t 0 ]; then
+      echo
+      echo "Ubuntu 24.04+ bloque le bac à sable d'Electron. Pour qu'Aska démarre, ce script"
+      echo "peut installer un profil AppArmor dans $PROFILE (mot de passe sudo demandé)."
+      printf "L'installer maintenant ? [O/n] "
+      read -r REPLY
+      case "$REPLY" in [nN]*) ;; *) APPLY=yes ;; esac
+    fi
+    if [ "$APPLY" = yes ] && command -v apparmor_parser >/dev/null; then
+      TMP="$(mktemp)"
+      printf '%s\n' "$WANT" > "$TMP"
+      if sudo install -m 644 -o root -g root "$TMP" "$PROFILE" && sudo apparmor_parser -r "$PROFILE"; then
+        echo "Profil AppArmor installé : le bac à sable d'Electron est actif."
+      else
+        echo "L'installation du profil AppArmor a échoué." >&2
+        APPLY=failed
+      fi
+      rm -f "$TMP"
+    fi
+    if [ "$APPLY" != yes ]; then
+      cat <<MSG
 
-Votre système restreint les espaces de noms non privilégiés (Ubuntu 24.04+).
-Pour que le bac à sable d'Electron fonctionne, lancez une fois :
-  sudo chown root:root "$SANDBOX" && sudo chmod 4755 "$SANDBOX"
+Ubuntu 24.04+ bloque le bac à sable d'Electron : Aska ne démarrera pas tant que
+ce n'est pas réglé. Au choix :
+  - relancer ce script avec : ./scripts/install.sh --sandbox-fix   (recommandé)
+  - ou, à refaire après chaque « npm install » :
+      sudo chown root:root "$SANDBOX" && sudo chmod 4755 "$SANDBOX"
 MSG
+    fi
+  fi
 fi
 
 echo
