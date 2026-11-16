@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell } = require('electron');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -440,6 +440,20 @@ async function listModels(req) {
 
 function registerIpc() {
   handle('aska:models', listModels);
+  // Lien cliqué dans une réponse : ouvert dans le navigateur, jamais dans Aska,
+  // et seulement en http(s) (pas de file:, javascript:, etc.).
+  handle('aska:open-url', (url) => {
+    if (typeof url !== 'string' || url.length > 2000) return false;
+    let u;
+    try {
+      u = new URL(url);
+    } catch {
+      return false;
+    }
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    shell.openExternal(u.href);
+    return true;
+  });
   handle('aska:state', () => publicState());
   handle('aska:run', startRun);
   handle('aska:cancel', () => {

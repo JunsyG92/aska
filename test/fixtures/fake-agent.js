@@ -21,7 +21,7 @@ process.stdin.on('data', (d) => (stdin += d));
 process.stdin.on('end', async () => {
   const prompt = stdin || args[args.length - 1] || '';
   // La balise [mode] est lue dans la dernière demande (le prompt peut contenir l'historique).
-  const tags = [...prompt.matchAll(/\[(echo|hang|flood|fail|stream|text)\]/g)];
+  const tags = [...prompt.matchAll(/\[(echo|hang|flood|fail|stream|text|md)\]/g)];
   const mode = process.env.FAKE_MODE || (tags.length ? tags[tags.length - 1][1] : 'text');
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const j = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -38,6 +38,36 @@ process.stdin.on('end', async () => {
   } else if (mode === 'fail') {
     process.stderr.write('\x1b[31mauth error: not logged in\x1b[0m\n');
     process.exit(3);
+  } else if (mode === 'md') {
+    process.stdout.write([
+      '## Comparatif',
+      '',
+      'Un texte en *italique*, en **gras**, ~~barré~~, avec `du code` et un [lien vers la doc](https://example.com/doc?a=1).',
+      'Lien nu : https://example.org/page. Piège : [clic](javascript:alert(1)) et <b>pas de HTML</b>.',
+      '',
+      '| Agent | Bac à sable | Note |',
+      '| :-- | :-: | --: |',
+      '| Codex | oui | **9** |',
+      '| Cursor | non | 6 |',
+      '',
+      '> Une citation',
+      '> sur deux lignes',
+      '',
+      '1. Premier point',
+      '   - sous-point `a`',
+      '   - sous-point b',
+      '2. Second point',
+      '',
+      '- [x] fait',
+      '- [ ] à faire',
+      '',
+      '---',
+      '',
+      '```bash',
+      'npm test   # tout passe',
+      '```',
+      '',
+    ].join('\n'));
   } else if (mode === 'stream') {
     const resumed = args.includes('--resume');
     const chosen = args.includes('--model') ? args[args.indexOf('--model') + 1] : 'fake-model-1';

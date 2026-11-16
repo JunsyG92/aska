@@ -399,7 +399,8 @@
     switch (ev.type) {
       case 'text':
         live.text += ev.text;
-        if (!renderTimer) renderTimer = setTimeout(renderLive, 45);
+        // Plus la réponse est longue, moins on la redessine souvent.
+        if (!renderTimer) renderTimer = setTimeout(renderLive, Math.min(400, 45 + live.text.length / 400));
         break;
       case 'activity':
         setActivity(ev.text);
@@ -517,6 +518,22 @@
     const focus = (nextId && historyBox.querySelector(`[data-id="${nextId}"]`)) || historyBox.querySelector('.hist-item');
     if (focus) focus.focus();
   }
+
+  // Dans le fil : liens ouverts dans le navigateur, bouton « Copier » des blocs de code.
+  thread.addEventListener('click', (e) => {
+    const a = e.target.closest('a.md-link');
+    if (a) {
+      e.preventDefault();
+      api.openUrl(a.href);
+      return;
+    }
+    const btn = e.target.closest('.code-copy');
+    if (btn) {
+      api.copy(btn.closest('.codeblock').querySelector('pre code').textContent);
+      btn.textContent = 'Copié';
+      setTimeout(() => { btn.textContent = 'Copier'; }, 1400);
+    }
+  });
 
   historyBox.addEventListener('click', (e) => {
     const item = e.target.closest('.hist-item');

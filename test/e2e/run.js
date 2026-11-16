@@ -216,6 +216,44 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
     await send('Deuxième sujet [text]');
     await settled('done');
+
+    // Markdown complet dans le fil, sans jamais interpréter de HTML.
+    await send('Montre du markdown [md]');
+    await settled('running');
+    await settled('done');
+    const md = page.locator('.turn').nth(1).locator('.output');
+    assert.equal(await md.locator('h4').textContent(), 'Comparatif');
+    assert.deepEqual(await md.locator('p').first().locator('em, strong, del, code').allTextContents(), ['italique', 'gras', 'barré', 'du code']);
+    assert.deepEqual(await md.locator('th').allTextContents(), ['Agent', 'Bac à sable', 'Note']);
+    assert.deepEqual(await md.locator('tbody tr').nth(0).locator('td').allTextContents(), ['Codex', 'oui', '9']);
+    assert.equal(await md.locator('td').nth(2).getAttribute('data-align'), 'right');
+    assert.equal(await md.locator('blockquote p').textContent(), 'Une citation\nsur deux lignes');
+    assert.deepEqual(await md.locator('ol > li > ul > li').allTextContents(), ['sous-point a', 'sous-point b']);
+    assert.equal(await md.locator('ol > li').count(), 2);
+    assert.equal(await md.locator('li.task .check.on').count(), 1);
+    assert.equal(await md.locator('li.task').count(), 2);
+    assert.equal(await md.locator('hr').count(), 1);
+    assert.equal(await md.locator('.code-lang').textContent(), 'bash');
+    assert.deepEqual(await md.locator('a.md-link').allTextContents(), ['lien vers la doc', 'https://example.org/page']);
+    assert.equal(await md.locator('b').count(), 0);
+    // Un lien non http(s) reste du texte, tout comme le HTML.
+    assert.match(await md.textContent(), /Piège : clic\)? et <b>pas de HTML<\/b>/);
+    // Un lien s'ouvre dans le navigateur (http/https seulement), pas dans la fenêtre.
+    await app.evaluate(({ shell }) => { global.__opened = []; shell.openExternal = async (u) => { global.__opened.push(u); }; });
+    await md.locator('a.md-link').first().click();
+    await page.evaluate(() => Promise.all([window.aska.openUrl('file:///etc/passwd'), window.aska.openUrl('javascript:alert(1)')]));
+    assert.deepEqual(await app.evaluate(() => global.__opened), ['https://example.com/doc?a=1']);
+    assert.match(page.url(), /^file:.*index\.html$/);
+    await md.locator('.code-copy').click();
+    assert.equal(await app.evaluate(({ clipboard }) => clipboard.readText()), 'npm test   # tout passe');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(500);
+    await shot('7-markdown-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.waitForTimeout(300);
+    await shot('7-markdown-light');
+    await page.focus('#input');
+
     await page.keyboard.press('Control+h');
     await page.waitForSelector('.hist-item');
     assert.deepEqual(await page.locator('.hist-title').allTextContents(), ['Deuxième sujet [text]', 'Résume main.js (deny)']);
@@ -262,7 +300,7 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     await page.fill('#input', '');
     const logFile = path.join(home, '.local/state/aska/history.jsonl');
     const audit = fs.readFileSync(logFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    assert.equal(audit.length, 8);
+    assert.equal(audit.length, 9);
     assert.equal(audit[5].result, 'cancel');
     assert.equal(audit[5].mode, 'edit');
     assert.ok(audit.every((a) => !JSON.stringify(a.argv).includes('historique')));

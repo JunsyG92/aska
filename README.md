@@ -67,6 +67,10 @@ masqué pendant une exécution, une notification signale la fin.
 
 ## Conversations
 
+Les réponses sont rendues en Markdown : titres, listes imbriquées et cases à
+cocher, tableaux, citations, liens, gras, italique, barré, et blocs de code avec
+un bouton « Copier ».
+
 - **Suite de discussion** : avec Claude, Aska reprend la session du CLI
   (`--resume`), qui garde tout le contexte, outils compris. Avec les autres
   agents, ou si vous changez d'agent en cours de fil, les échanges précédents
@@ -142,7 +146,9 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
 **Application**
 - Interface en bac à sable, sans Node (`contextIsolation`, `sandbox`), CSP stricte,
   aucune ressource distante, navigation et nouvelles fenêtres bloquées.
-- La sortie des agents est affichée comme du texte (jamais comme du HTML), sans lien cliquable.
+- La sortie des agents est rendue en Markdown sans jamais interpréter de HTML ni charger
+  d'image distante. Seuls les liens `http(s)` sont cliquables : ils s'ouvrent dans votre
+  navigateur, et leur destination réelle s'affiche au survol.
 - Chaque appel de l'interface est revalidé par le processus principal.
 - `config.json` est ignoré s'il est modifiable par un autre utilisateur.
 - Journal d'audit privé (`~/.local/state/aska/history.jsonl`, 0600) : date, agent,

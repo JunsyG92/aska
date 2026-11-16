@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('aska', {
   resetDir: () => ipcRenderer.invoke('aska:reset-dir'),
   copy: (text) => ipcRenderer.invoke('aska:copy', text),
   hide: () => ipcRenderer.invoke('aska:hide'),
+  openUrl: (url) => ipcRenderer.invoke('aska:open-url', url),
   resize: (size) => ipcRenderer.invoke('aska:resize', size),
   setMini: (v) => ipcRenderer.invoke('aska:set-mini', v),
   newConversation: () => ipcRenderer.invoke('aska:conv-new'),
