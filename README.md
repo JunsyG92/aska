@@ -29,6 +29,32 @@ git clone <ce dépôt> && cd aska
 aska --hidden &                         # ou reconnectez-vous (démarrage automatique)
 ```
 
+### Windows 10 / 11
+
+Prérequis : Node.js ≥ 20 et au moins un CLI d'agent connecté. Aucun droit
+administrateur n'est nécessaire.
+
+```powershell
+git clone <ce dépôt>; cd aska
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1   # -NoAutostart pour ne pas le lancer à l'ouverture de session
+```
+
+Le script crée un raccourci « Aska » dans le menu Démarrer, lance Aska en
+arrière-plan à l'ouverture de session, et pose une commande `aska` dans
+`%LOCALAPPDATA%\aska\bin` (à ajouter au `PATH` pour `aska --quit`, `aska --reload`).
+La configuration est dans `%APPDATA%\aska\config.json`.
+
+Différences avec Linux :
+- Les CLI installés par npm sont des lanceurs `.cmd`. Aska lit le lanceur et
+  exécute directement `node.exe` sur le script visé, sans passer par `cmd.exe`, qui
+  interpréterait `%`, `&`, `^`… dans le texte de vos demandes. Un `.cmd` d'un autre
+  format n'est accepté que pour des arguments sans risque ; pour un agent qui
+  reçoit la demande en argument (Copilot, Cursor), indiquez alors son `.exe` avec
+  `"bin"` dans la configuration.
+- Les vérifications de propriétaire et de droits (`600`) des fichiers n'existent
+  pas sous Windows : Aska s'appuie sur la protection par défaut du profil
+  utilisateur (`AppData`).
+
 Sous Wayland, une application ne peut pas toujours capter un raccourci global.
 Si `Ctrl+Alt+Espace` ne répond pas, associez la commande `aska --toggle` à un
 raccourci dans les paramètres clavier de votre bureau (KDE, Sway, Hyprland…) et
