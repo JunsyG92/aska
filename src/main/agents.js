@@ -59,6 +59,9 @@ const BUILTIN = {
     label: 'Copilot',
     color: '#8250df',
     bin: ['copilot'],
+    // VS Code installe un faux « copilot » qui ne fait que proposer l'installation :
+    // on ne le retient que si aucun vrai CLI n'est trouvé.
+    avoidPath: /github\.copilot|\.vscode|[\/]Code[\/]/i,
     prompt: 'arg',
     promptFlag: '-p',
     output: 'text',
@@ -81,7 +84,10 @@ const BUILTIN = {
   cursor: {
     label: 'Cursor',
     color: '#3b82f6',
-    bin: ['cursor-agent'],
+    bin: ['cursor-agent', 'agent'],
+    // Sans interface, le CLI Cursor exige qu'on lui confirme la confiance dans le
+    // dossier. Aska ne passe ce flag qu'après votre accord (ou dans son dossier vide).
+    trustFlag: '--trust',
     prompt: 'arg',
     output: 'stream-json',
     base: ['-p', '--output-format', 'stream-json'],
@@ -102,6 +108,7 @@ const DANGEROUS_ARG = [
   /^--dangerously/i,
   /^--allow-dangerously/i,
   /^--yolo$/i,
+  /^--trust$/i,
   /^--force$/i,
   /^-f$/,
   /^--allow-all/i,
@@ -195,7 +202,7 @@ function resolveAgents(userAgents = {}) {
  * Construit argv (sans shell). Le prompt est soit envoyé sur stdin, soit passé
  * comme un argument unique ; il n'est jamais interprété par un shell.
  */
-function buildInvocation(agent, mode, prompt, { model, resume } = {}) {
+function buildInvocation(agent, mode, prompt, { model, resume, trusted } = {}) {
   const modeArgs = agent.modes[mode];
   if (!modeArgs) throw new Error(`${agent.label} ne propose pas le mode « ${MODES[mode]?.label || mode} »`);
   if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Prompt vide');
@@ -205,6 +212,7 @@ function buildInvocation(agent, mode, prompt, { model, resume } = {}) {
   if (resume != null && !SESSION_RE.test(resume)) throw new Error('Identifiant de session invalide');
 
   const argv = [...(agent.base || []), ...modeArgs];
+  if (trusted && agent.trustFlag) argv.push(agent.trustFlag);
   const chosen = model === undefined ? agent.model : model; // null = modèle par défaut du CLI
   if (chosen && agent.modelFlag) argv.push(agent.modelFlag, chosen);
   if (resume && agent.resumeFlag) argv.push(agent.resumeFlag, resume);

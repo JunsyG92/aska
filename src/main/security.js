@@ -22,7 +22,7 @@ function checkOwnedNotWritable(p, { allowSticky = false } = {}) {
  * Refuse les entrées PATH relatives et tout binaire qu'un autre utilisateur
  * pourrait remplacer.
  */
-function resolveBinary(names, { override, envPath = process.env.PATH || '' } = {}) {
+function resolveBinary(names, { override, envPath = process.env.PATH || '', avoid } = {}) {
   const candidates = [];
   if (override) {
     if (!path.isAbsolute(override)) return { error: `"bin" doit être un chemin absolu (${override})` };
@@ -32,6 +32,8 @@ function resolveBinary(names, { override, envPath = process.env.PATH || '' } = {
       if (!dir || !path.isAbsolute(dir)) continue; // « . » ou chemin relatif dans PATH : ignoré
       for (const name of names) candidates.push(path.join(dir, name));
     }
+    // Les emplacements « à éviter » (lanceurs factices) passent en dernier recours.
+    if (avoid) candidates.sort((a, b) => Number(avoid.test(a)) - Number(avoid.test(b)));
   }
   let lastError = null;
   for (const cand of candidates) {

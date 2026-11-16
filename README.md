@@ -104,6 +104,9 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
   Cursor il n'est pas isolé par un bac à sable : réservez-le aux dossiers jetables.
 - Aucun mode n'utilise `--dangerously-skip-permissions`, `--yolo` ou équivalent,
   et ces options sont refusées si on les ajoute dans `extraArgs`.
+- Cursor exige, sans interface, qu'on lui confirme la confiance dans le dossier
+  (`--trust`). Aska le fait d'office dans son dossier vide ; ailleurs, il vous demande
+  d'abord votre accord, même en lecture seule.
 - Quand Claude signale des actions refusées, Aska l'affiche et propose de changer de mode.
 
 ## Sécurité
@@ -143,6 +146,16 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
   (seul Codex isole réellement par bac à sable).
 - Les options des CLI Copilot et Cursor évoluent vite ; si l'une change, corrigez-la
   dans la configuration sans attendre une mise à jour.
+
+## Dépannage
+
+- **« GitHub Copilot CLI was not found »** : la commande `copilot` trouvée est le
+  lanceur installé par VS Code, pas le CLI. Installez le vrai CLI
+  (`npm i -g @github/copilot`, puis `copilot` une fois dans un terminal pour vous
+  connecter). S'il est installé ailleurs que dans le `PATH` de votre session
+  (nvm, par exemple), indiquez son chemin : `"agents": { "copilot": { "bin": "/chemin/absolu/copilot" } }`.
+- **Un agent n'apparaît pas** : même cause, son binaire n'est pas dans le `PATH`
+  de la session graphique. Donnez son chemin avec `"bin"`, puis `aska --reload`.
 
 ## Configuration
 

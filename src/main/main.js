@@ -55,7 +55,7 @@ function loadEverything() {
   agents = a.agents;
   warnings = [...c.warnings, ...a.warnings];
   for (const agent of Object.values(agents)) {
-    const r = sec.resolveBinary(agent.bin, { override: agent.binOverride, envPath: searchPath() });
+    const r = sec.resolveBinary(agent.bin, { override: agent.binOverride, envPath: searchPath(), avoid: agent.avoidPath });
     agent.binPath = r.path || null;
     agent.binError = r.error || null;
   }
@@ -294,9 +294,14 @@ function startRun(req) {
   if (dir.error) return { error: dir.error };
 
   // Écrire dans un dossier demande l'accord explicite de l'utilisateur.
-  if (mode !== 'read' && !trust.isTrusted(dir.path)) {
+  // Certains CLI (Cursor) exigent en plus qu'on se porte garant du contenu du
+  // dossier, même en lecture : même accord, sauf dans le dossier vide d'Aska.
+  const contentTrust = !!agent.trustFlag && dir.path !== fsRealWorkspace();
+  if ((mode !== 'read' || contentTrust) && !trust.isTrusted(dir.path)) {
     if (trustChoice === 'always') trust.add(dir.path);
-    else if (trustChoice !== 'once') return { needsTrust: true, cwd: tilde(dir.path), agent: agent.label, mode };
+    else if (trustChoice !== 'once') {
+      return { needsTrust: true, cwd: tilde(dir.path), agent: agent.label, mode, reason: mode !== 'read' ? 'write' : 'content' };
+    }
   }
 
   // Suite de conversation : reprise native si le CLI a déjà tout le fil en
@@ -308,7 +313,7 @@ function startRun(req) {
 
   let inv;
   try {
-    inv = buildInvocation(agent, mode, fullPrompt, { model, resume });
+    inv = buildInvocation(agent, mode, fullPrompt, { model, resume, trusted: true });
   } catch (e) {
     return { error: e.message };
   }

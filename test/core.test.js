@@ -258,3 +258,25 @@ test('conversations : enregistrement privé, liste, réouverture, suppression', 
   off.save(o);
   assert.deepEqual(off.list(), []);
 });
+
+test('Cursor : --trust ajouté seulement une fois la confiance établie, jamais via extraArgs', () => {
+  const { agents, warnings } = resolveAgents({ cursor: { extraArgs: ['--trust'] } });
+  assert.deepEqual(agents.cursor.extraArgs, []);
+  assert.equal(warnings.length, 1);
+  assert.ok(!buildInvocation(agents.cursor, 'read', 'x').argv.includes('--trust'));
+  assert.deepEqual(buildInvocation(agents.cursor, 'read', 'x', { trusted: true }).argv, ['-p', '--output-format', 'stream-json', '--mode', 'ask', '--trust', 'x']);
+  assert.ok(!buildInvocation(agents.claude, 'read', 'x', { trusted: true }).argv.includes('--trust'));
+});
+
+test('binaire : un lanceur factice (VS Code) ne passe qu\'en dernier recours', () => {
+  const d = tmp();
+  const shim = path.join(d, 'github.copilot-chat');
+  const real = path.join(d, 'real');
+  for (const dir of [shim, real]) {
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'copilot'), '#!/bin/sh\n', { mode: 0o755 });
+  }
+  const avoid = BUILTIN.copilot.avoidPath;
+  assert.equal(sec.resolveBinary(['copilot'], { envPath: `${shim}:${real}`, avoid }).path, fs.realpathSync(path.join(real, 'copilot')));
+  assert.equal(sec.resolveBinary(['copilot'], { envPath: shim, avoid }).path, fs.realpathSync(path.join(shim, 'copilot')));
+});

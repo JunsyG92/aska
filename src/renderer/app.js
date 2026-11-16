@@ -301,7 +301,10 @@
       pendingTrust = { prompt };
       confirmBox.dataset.mode = res.mode;
       const what = res.mode === 'auto' ? 'modifier des fichiers et lancer des commandes' : 'modifier des fichiers';
-      $('confirm-text').textContent = `Autoriser ${res.agent} à ${what} dans « ${res.cwd} » ?`;
+      $('confirm-text').textContent =
+        res.reason === 'content'
+          ? `${res.agent} demande de faire confiance au contenu de « ${res.cwd} » : il lira sa configuration et pourra exécuter du code qui s'y trouve. Continuer ?`
+          : `Autoriser ${res.agent} à ${what} dans « ${res.cwd} » ?`;
       confirmBox.hidden = false;
       $('trust-once').focus();
       setKeys();

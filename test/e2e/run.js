@@ -21,6 +21,7 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
   const wrap = (name, mode) =>
     fs.writeFileSync(path.join(bin, name), `#!/bin/sh\nFAKE_LOG="${callLog}" FAKE_MODE=${mode} FAKE_DELAY=\${FAKE_DELAY:-25} exec "${process.execPath}" "${FAKE}" "$@"\n`, { mode: 0o755 });
   wrap('claude', 'stream');
+  wrap('cursor-agent', 'stream');
   wrap('codex', ''); // comportement choisi par une balise [mode] dans le prompt
   fs.mkdirSync(path.join(home, '.config', 'aska'), { recursive: true });
   fs.writeFileSync(path.join(home, '.config', 'aska', 'config.json'), JSON.stringify({ shortcut: false }), { mode: 0o600 });
@@ -215,6 +216,8 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     // Reprise d'une ancienne conversation avec Claude : d'autres agents ont parlé
     // depuis, donc le contexte complet est réinjecté plutôt que la vieille session.
     await page.keyboard.press('Tab');
+    assert.equal(await page.textContent('#agent-name'), 'Cursor');
+    await page.keyboard.press('Tab');
     assert.equal(await page.textContent('#agent-name'), 'Claude');
     await send('On reprend');
     await settled('running');
@@ -264,6 +267,13 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     await page.waitForTimeout(300);
     assert.match(page.url(), /^file:.*index\.html$/);
     assert.equal((await app.windows()).length, 1);
+
+    // Cursor exige --trust sans interface : accordé d'office dans le dossier vide d'Aska.
+    const before = calls().length;
+    assert.equal((await page.evaluate(() => window.aska.run({ agentId: 'cursor', mode: 'read', prompt: 'salut' }))).ok, true);
+    await page.waitForTimeout(1500);
+    const cur = calls()[before];
+    assert.deepEqual(cur.args.slice(0, 6), ['-p', '--output-format', 'stream-json', '--mode', 'ask', '--trust']);
 
     console.log('E2E OK — captures dans', OUT);
   } finally {
