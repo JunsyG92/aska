@@ -49,7 +49,7 @@ mettez `"shortcut": false` dans la configuration.
 | `Maj+Tab` | mode de permission suivant |
 | `Ctrl+Maj+M` | choisir le modèle de l'agent |
 | `Ctrl+N` | nouvelle conversation |
-| `Ctrl+H` | conversations enregistrées (`Entrée` ouvrir, `Suppr` supprimer) |
+| `Ctrl+H` | conversations enregistrées : taper pour rechercher, `Entrée` ouvrir, `Suppr` deux fois pour supprimer |
 | `Ctrl+O` | choisir le dossier de travail (clic droit sur le dossier : retour à l'espace temporaire) |
 | `↑` / `↓` | rappeler un message déjà envoyé |
 | `Ctrl+Maj+C` | copier la dernière réponse |
@@ -80,7 +80,9 @@ un bouton « Copier ».
   poursuivre une discussion commencée avec Claude.
 - **Historique** : chaque conversation est enregistrée dans
   `~/.local/state/aska/conversations/` (fichiers privés, 200 au plus) et se
-  rouvre avec `Ctrl+H`, dans son dossier de travail d'origine.
+  rouvre avec `Ctrl+H`, dans son dossier de travail d'origine. La liste est
+  regroupée par date, avec un aperçu de la dernière réponse, les agents
+  impliqués et une recherche (titres, aperçus, agents, dossiers).
   `"savePrompts": false` désactive tout enregistrement.
 
 ## Modèles

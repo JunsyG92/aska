@@ -14,7 +14,15 @@
     <div class="surface">
       <section id="result" class="result">
         <div class="result-inner">
-          <div id="history" class="history" hidden role="listbox" aria-label="Conversations enregistrées"></div>
+          <div id="history" class="history" hidden>
+            <div class="hist-head">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.3"/><path d="M10.3 10.3 13.5 13.5"/></svg>
+              <input id="hist-search" type="text" spellcheck="false" autocomplete="off" maxlength="80"
+                     placeholder="Rechercher dans les conversations…" aria-label="Rechercher dans les conversations" aria-controls="hist-list">
+              <span id="hist-count" class="hist-count"></span>
+            </div>
+            <div id="hist-list" class="hist-list" role="listbox" aria-label="Conversations enregistrées"></div>
+          </div>
           <div id="thread" class="thread" tabindex="-1" aria-live="polite"></div>
           <div id="activity" class="activity" hidden><span class="spinner" aria-hidden="true"></span><span id="activity-text"></span></div>
           <div id="notice" class="notice" hidden></div>

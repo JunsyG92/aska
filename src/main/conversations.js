@@ -16,6 +16,20 @@ function titleOf(prompt) {
   return t.length > 70 ? t.slice(0, 69) + '…' : t;
 }
 
+/** Début de la dernière réponse, débarrassé de la syntaxe Markdown, pour la liste. */
+function previewOf(turns) {
+  const last = [...turns].reverse().find((t) => t.answer && t.answer.trim());
+  if (!last) return '';
+  const t = last.answer
+    .replace(/```[\s\S]*?(```|$)/g, ' ')
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[*_`~|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return t.length > 140 ? t.slice(0, 139) + '…' : t;
+}
+
 class ConversationStore {
   constructor(dir, { persist = true, max = 200 } = {}) {
     this.dir = dir;
@@ -75,6 +89,9 @@ class ConversationStore {
         updatedAt: c.updatedAt,
         turns: c.turns.length,
         agents: [...new Set(c.turns.map((t) => t.label || t.agent))],
+        agentIds: [...new Set(c.turns.map((t) => t.agent))],
+        cwd: typeof c.cwd === 'string' ? c.cwd : null,
+        preview: previewOf(c.turns),
       });
     }
     return out.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));

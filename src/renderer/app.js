@@ -60,7 +60,7 @@
       : pendingTrust || menuOpen
         ? []
         : view === 'history'
-          ? [['↑ ↓', 'choisir'], ['Suppr', 'supprimer'], ['Échap', 'retour']]
+          ? [['↑ ↓', 'choisir'], ['⏎', 'ouvrir'], ['Suppr', 'supprimer'], ['Échap', 'retour']]
           : [['Tab', 'agent'], ['⇧ Tab', 'mode']];
     keys.replaceChildren(
       ...items.map(([k, label]) => {
@@ -449,39 +449,103 @@
 
   // ---------- historique des conversations ----------
 
-  const dateFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const histList = $('hist-list');
+  const histSearch = $('hist-search');
+  let histAll = [];
+  let histShown = [];
+  let histSel = 0;
+  let histConfirm = null; // id en attente de confirmation de suppression
 
-  function fillHistory(list) {
-    if (!list.length) {
-      historyBox.replaceChildren(el('div', 'hist-empty', 'Aucune conversation enregistrée pour le moment.'));
+  const timeFmt = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const dayFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' });
+  const yearFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+  const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+  // Regroupe par ancienneté et choisit le format de date le plus court qui reste clair.
+  function whenOf(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return { group: 'Plus ancien', time: '' };
+    const days = Math.round((dayStart(new Date()) - dayStart(d)) / 86400000);
+    if (days <= 0) return { group: "Aujourd'hui", time: timeFmt.format(d) };
+    if (days === 1) return { group: 'Hier', time: timeFmt.format(d) };
+    if (days < 7) return { group: '7 derniers jours', time: dayFmt.format(d) };
+    if (days < 30) return { group: '30 derniers jours', time: dayFmt.format(d) };
+    return { group: 'Plus ancien', time: d.getFullYear() === new Date().getFullYear() ? dayFmt.format(d) : yearFmt.format(d) };
+  }
+
+  function armDelete(id) {
+    histConfirm = id;
+    histList.querySelectorAll('.hist-item').forEach((r) => {
+      const on = r.dataset.id === id;
+      r.classList.toggle('arming', on);
+      r.querySelector('.hist-del').textContent = on ? 'Confirmer la suppression' : 'Supprimer';
+    });
+  }
+
+  function highlightHist(i, scroll) {
+    const rows = histList.querySelectorAll('.hist-item');
+    if (!rows.length) return;
+    histSel = Math.min(Math.max(i, 0), rows.length - 1);
+    rows.forEach((r, j) => {
+      r.classList.toggle('active', j === histSel);
+      r.setAttribute('aria-selected', String(j === histSel));
+    });
+    if (histConfirm && histShown[histSel].id !== histConfirm) armDelete(null);
+    if (scroll) {
+      if (histSel === 0) histList.scrollTop = 0;
+      else rows[histSel].scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function renderHistory() {
+    const q = histSearch.value.trim().toLowerCase();
+    histShown = histAll.filter(
+      (c) => !q || [c.title, c.preview, c.cwd || '', ...c.agents.map((a) => a.label)].some((t) => t.toLowerCase().includes(q))
+    );
+    const n = histAll.length;
+    $('hist-count').textContent = !n ? '' : q ? `${histShown.length} sur ${n}` : `${n} conversation${n > 1 ? 's' : ''}`;
+    histConfirm = null;
+    if (!histShown.length) {
+      const empty = el('div', 'hist-empty');
+      empty.append(
+        el('b', null, n ? 'Aucun résultat' : 'Aucune conversation pour le moment'),
+        n ? `Rien ne correspond à « ${histSearch.value.trim()} ».` : 'Vos échanges apparaîtront ici dès le premier message envoyé.'
+      );
+      histList.replaceChildren(empty);
       return;
     }
-    historyBox.replaceChildren(
-      ...list.map((c) => {
-        const item = el('div', 'hist-item' + (c.id === convId ? ' current' : ''));
-        item.tabIndex = 0;
-        item.setAttribute('role', 'option');
-        item.dataset.id = c.id;
-        const main = el('span', 'hist-main');
-        const when = c.updatedAt ? dateFmt.format(new Date(c.updatedAt)) : '';
-        main.append(
-          el('span', 'hist-title', c.title),
-          el('span', 'hist-sub', `${when} · ${c.agents.join(', ')} · ${c.turns} message${c.turns > 1 ? 's' : ''}`)
-        );
-        const del = el('span', 'hist-del');
-        del.title = 'Supprimer cette conversation';
-        del.setAttribute('role', 'button');
-        del.setAttribute('aria-label', 'Supprimer');
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('viewBox', '0 0 16 16');
-        const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        p.setAttribute('d', 'M4.5 4.5l7 7M11.5 4.5l-7 7');
-        svg.append(p);
-        del.append(svg);
-        item.append(main, del);
-        return item;
-      })
-    );
+    const nodes = [];
+    let group = null;
+    histShown.forEach((c, i) => {
+      const w = whenOf(c.updatedAt);
+      if (w.group !== group) {
+        group = w.group;
+        nodes.push(el('div', 'hist-group', group));
+      }
+      const row = el('div', 'hist-item' + (c.id === convId ? ' current' : ''));
+      row.setAttribute('role', 'option');
+      row.dataset.id = c.id;
+      const dots = el('span', 'dots');
+      for (const a of c.agents) {
+        const d = el('i');
+        d.style.setProperty('--c', a.color);
+        dots.append(d);
+      }
+      const sub = el('div', 'hist-sub');
+      const facts = [c.agents.map((a) => a.label).join(', '), `${c.turns} message${c.turns > 1 ? 's' : ''}`, c.cwd].filter(Boolean);
+      sub.append(dots, el('span', null, facts.join(' · ')));
+      const del = el('button', 'hist-del', 'Supprimer');
+      del.type = 'button';
+      del.tabIndex = -1;
+      row.append(el('div', 'hist-title', c.title), el('div', 'hist-time', w.time));
+      if (c.preview) row.append(el('div', 'hist-preview', c.preview));
+      row.append(sub, del);
+      row.addEventListener('mousemove', () => { if (histSel !== i) highlightHist(i, false); });
+      nodes.push(row);
+    });
+    histList.replaceChildren(...nodes);
+    const cur = histShown.findIndex((c) => c.id === convId);
+    highlightHist(q ? 0 : Math.max(cur, 0), true);
   }
 
   async function showHistory(on) {
@@ -490,11 +554,13 @@
     $('hist-btn').setAttribute('aria-pressed', String(on));
     historyBox.hidden = !on;
     thread.hidden = on;
+    panel.classList.toggle('in-history', on); // le pied ne garde que les raccourcis de la liste
     if (on) {
       setStatus('');
-      fillHistory(await api.listConversations());
-      const first = historyBox.querySelector('.hist-item.current') || historyBox.querySelector('.hist-item');
-      if (first) first.focus();
+      histSearch.value = '';
+      histAll = await api.listConversations();
+      renderHistory();
+      histSearch.focus();
     } else {
       scrollEnd(true);
       input.focus();
@@ -510,14 +576,25 @@
     showHistory(false);
   }
 
-  async function deleteConversation(item) {
-    const next = item.nextElementSibling || item.previousElementSibling;
-    const nextId = next ? next.dataset.id : null;
-    fillHistory(await api.deleteConversation(item.dataset.id));
+  // Suppression en deux temps : la première demande arme, la seconde confirme.
+  async function deleteConversation(id) {
+    if (histConfirm !== id) return armDelete(id);
+    const keep = histSel;
+    histAll = await api.deleteConversation(id);
     applyState(await api.getState());
-    const focus = (nextId && historyBox.querySelector(`[data-id="${nextId}"]`)) || historyBox.querySelector('.hist-item');
-    if (focus) focus.focus();
+    renderHistory();
+    highlightHist(Math.min(keep, histShown.length - 1), true);
+    histSearch.focus();
   }
+
+  histSearch.addEventListener('input', renderHistory);
+  histList.addEventListener('click', (e) => {
+    const row = e.target.closest('.hist-item');
+    if (!row) return;
+    if (e.target.closest('.hist-del')) deleteConversation(row.dataset.id);
+    else openConversation(row.dataset.id);
+    histSearch.focus();
+  });
 
   // Dans le fil : liens ouverts dans le navigateur, bouton « Copier » des blocs de code.
   thread.addEventListener('click', (e) => {
@@ -533,13 +610,6 @@
       btn.textContent = 'Copié';
       setTimeout(() => { btn.textContent = 'Copier'; }, 1400);
     }
-  });
-
-  historyBox.addEventListener('click', (e) => {
-    const item = e.target.closest('.hist-item');
-    if (!item) return;
-    if (e.target.closest('.hist-del')) deleteConversation(item);
-    else openConversation(item.dataset.id);
   });
 
   // ---------- clavier ----------
@@ -602,13 +672,27 @@
       return;
     }
     if (view === 'history') {
-      const item = e.target.closest ? e.target.closest('.hist-item') : null;
-      if (e.key === 'Escape' || (e.ctrlKey && k === 'h')) { e.preventDefault(); showHistory(false); }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); moveFocus('.hist-item', 1); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); moveFocus('.hist-item', -1); }
-      else if (e.key === 'Enter' && item) { e.preventDefault(); openConversation(item.dataset.id); }
-      else if (e.key === 'Delete' && item) { e.preventDefault(); deleteConversation(item); }
-      else if (e.ctrlKey && k === 'n') { e.preventDefault(); newConversation(); }
+      const sel = histShown[histSel];
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (histConfirm) armDelete(null);
+        else if (histSearch.value) { histSearch.value = ''; renderHistory(); }
+        else showHistory(false);
+      } else if (e.ctrlKey && k === 'h') { e.preventDefault(); showHistory(false); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); highlightHist(histSel + 1, true); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); highlightHist(histSel - 1, true); }
+      else if (e.key === 'PageDown') { e.preventDefault(); highlightHist(histSel + 5, true); }
+      else if (e.key === 'PageUp') { e.preventDefault(); highlightHist(histSel - 5, true); }
+      else if (e.key === 'Enter' && sel) {
+        e.preventDefault();
+        if (histConfirm === sel.id) deleteConversation(sel.id);
+        else openConversation(sel.id);
+      } else if (e.key === 'Delete' && sel && histSearch.selectionStart === histSearch.value.length) {
+        // « Suppr » vise la conversation quand il n'y a plus rien à effacer dans la recherche.
+        e.preventDefault();
+        deleteConversation(sel.id);
+      } else if (e.ctrlKey && k === 'n') { e.preventDefault(); newConversation(); }
+      else if (e.key === 'Tab') e.preventDefault();
       return;
     }
     if (e.key === 'Escape') {

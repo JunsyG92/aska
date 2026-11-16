@@ -122,6 +122,19 @@ function publicTurn(t) {
   };
 }
 
+// Liste des conversations pour l'interface : couleurs d'agents et dossier lisible.
+function publicList() {
+  return store.list().map((c) => ({
+    id: c.id,
+    title: c.title,
+    updatedAt: c.updatedAt,
+    turns: c.turns,
+    preview: c.preview,
+    cwd: c.cwd ? tilde(c.cwd) : null,
+    agents: c.agents.map((label, i) => ({ label, color: agents[c.agentIds[i]] ? agents[c.agentIds[i]].color : '#888888' })),
+  }));
+}
+
 function publicState() {
   const list = Object.values(agents).map((a) => ({
     id: a.id,
@@ -465,7 +478,7 @@ function registerIpc() {
     if (!current) conv = store.create(cwd);
     return publicState();
   });
-  handle('aska:conv-list', () => store.list());
+  handle('aska:conv-list', () => publicList());
   handle('aska:conv-open', (cid) => {
     if (current) return publicState();
     const c = store.load(cid);
@@ -480,10 +493,10 @@ function registerIpc() {
     return publicState();
   });
   handle('aska:conv-delete', (cid) => {
-    if (current && conv.id === cid) return store.list();
+    if (current && conv.id === cid) return publicList();
     store.delete(cid);
     if (conv.id === cid) conv = store.create(cwd);
-    return store.list();
+    return publicList();
   });
   handle('aska:set-model', (req) => {
     const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;

@@ -205,6 +205,9 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     const small = await bounds();
     assert.ok(small.width < 400 && small.height < 90, `pastille ${JSON.stringify(small)}`);
     assert.equal(await page.textContent('#mini-status'), 'Annulé');
+    assert.equal(await page.isVisible('#hist-btn'), false);
+    assert.equal(await page.isVisible('#new-btn'), false);
+    assert.ok(small.width < 300, `pastille trop large : ${small.width}`);
     await shot('5-mini-light');
     await page.click('#mini-btn');
     await page.waitForTimeout(500);
@@ -257,9 +260,36 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
     await page.keyboard.press('Control+h');
     await page.waitForSelector('.hist-item');
     assert.deepEqual(await page.locator('.hist-title').allTextContents(), ['Deuxième sujet [text]', 'Résume main.js (deny)']);
-    assert.match(await page.locator('.hist-sub').nth(1).textContent(), /Claude, Codex · 6 messages/);
+    assert.match(await page.locator('.hist-sub').nth(1).textContent(), /Claude, Codex · 6 messages · Espace temporaire/);
+    assert.equal(await page.locator('.hist-item').nth(1).locator('.dots i').count(), 2);
+    assert.equal(await page.textContent('.hist-group'), "Aujourd'hui");
+    assert.equal(await page.textContent('#hist-count'), '2 conversations');
+    assert.match(await page.locator('.hist-time').first().textContent(), /^\d\d:\d\d$/);
+    // L'aperçu reprend la dernière réponse, sans syntaxe Markdown.
+    assert.match(await page.locator('.hist-preview').first().textContent(), /^Comparatif Un texte en italique, en gras, barré, avec du code et un lien vers la doc\./);
+    assert.ok(await page.locator('.hist-item.current').first().evaluate((n) => n.classList.contains('active')));
+    // La mise en page tient : chaque ligne occupe toute la largeur, sans débordement.
+    const box = await page.locator('.hist-item').first().boundingBox();
+    assert.ok(box.width > 650 && box.height < 90, `ligne d'historique ${JSON.stringify(box)}`);
+    // Recherche : dans les titres, les aperçus et les agents.
+    await page.keyboard.type('claude');
+    assert.deepEqual(await page.locator('.hist-title').allTextContents(), ['Résume main.js (deny)']);
+    assert.equal(await page.textContent('#hist-count'), '1 sur 2');
+    await page.fill('#hist-search', 'zzz');
+    assert.match(await page.textContent('.hist-empty'), /Aucun résultat/);
+    await page.keyboard.press('Escape'); // vide la recherche, ne ferme pas la liste
+    assert.equal(await page.locator('.hist-item').count(), 2);
     await page.waitForTimeout(300);
     await shot('6-history-light');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Delete');
+    await page.waitForTimeout(450);
+    await shot('6-history-dark');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('ArrowUp');
+    await page.emulateMedia({ colorScheme: 'light' });
+    assert.equal(await page.isVisible('#mode'), false);
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 6);
@@ -283,9 +313,18 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
 
     await page.keyboard.press('Control+h');
     await page.waitForSelector('.hist-item');
-    await page.locator('.hist-item', { hasText: 'Deuxième sujet' }).focus();
+    // Suppression en deux temps, annulable.
+    await page.keyboard.type('Deuxième');
     await page.keyboard.press('Delete');
-    await page.waitForFunction(() => document.querySelectorAll('.hist-item').length === 1);
+    assert.equal(await page.textContent('.hist-item.arming .hist-del'), 'Confirmer la suppression');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.hist-item.arming').count(), 0);
+    assert.equal(await page.locator('.hist-item').count(), 1);
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Delete');
+    await page.waitForFunction(() => document.querySelector('#hist-count').textContent === '0 sur 1');
+    await page.keyboard.press('Escape');
+    assert.deepEqual(await page.locator('.hist-title').allTextContents(), ['Résume main.js (deny)']);
     await page.keyboard.press('Escape');
     assert.equal(await visible(), true);
     const convDir = path.join(home, '.local/state/aska/conversations');
