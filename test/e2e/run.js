@@ -407,6 +407,20 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     const cur = calls()[before];
     assert.deepEqual(cur.args.slice(0, 6), ['-p', '--output-format', 'stream-json', '--mode', 'ask', '--trust']);
 
+    // « Nouvelle conversation » depuis le menu de l'icône de la barre système :
+    // la fenêtre masquée réapparaît avec un fil vide (même chemin que Ctrl+N).
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length > 0);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    assert.equal(await visible(), false);
+    await app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows()[0];
+      w.show();
+      w.webContents.send('aska:new-conversation');
+    });
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
+    assert.equal(await visible(), true);
+
     console.log('E2E OK — captures dans', OUT);
   } finally {
     await app.close().catch(() => {});

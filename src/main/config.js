@@ -41,6 +41,7 @@ const DEFAULTS = {
   savePrompts: true,
   hideOnBlur: false,
   alwaysOnTop: true,
+  tray: true,
   envPassthrough: [],
   agents: {},
 };
@@ -74,6 +75,7 @@ function loadConfig(file) {
   if (typeof u.savePrompts === 'boolean') cfg.savePrompts = u.savePrompts;
   if (typeof u.hideOnBlur === 'boolean') cfg.hideOnBlur = u.hideOnBlur;
   if (typeof u.alwaysOnTop === 'boolean') cfg.alwaysOnTop = u.alwaysOnTop;
+  if (typeof u.tray === 'boolean') cfg.tray = u.tray;
   if (Array.isArray(u.envPassthrough)) {
     cfg.envPassthrough = u.envPassthrough.filter((s) => typeof s === 'string' && /^[A-Za-z_][A-Za-z0-9_]*\*?$/.test(s));
   }

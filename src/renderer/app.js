@@ -759,6 +759,7 @@
   // ---------- cycle d'affichage ----------
 
   api.onRunEvent(onRunEvent);
+  api.onNewConversation(() => newConversation()); // menu de l'icône de la barre système
   api.onWillHide(() => {
     panel.classList.remove('in');
     panel.classList.add('out');

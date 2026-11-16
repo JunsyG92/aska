@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell, Tray, Menu, nativeImage } = require('electron');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -11,6 +11,7 @@ const { discoverModels } = require('./models');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand } = require('./launch');
+const { createTray } = require('./tray');
 
 const P = paths();
 const INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
@@ -27,7 +28,8 @@ let agents = {};
 let warnings = [];
 let trust = null;
 let cwd = null;
-let current = null; // exécution en cours : { id, handle }
+let current = null; // exécution en cours : { id, handle, label }
+let tray = null; // icône de la barre système
 let runSeq = 0;
 let dialogOpen = false;
 let shortcutOk = false;
@@ -252,6 +254,8 @@ function createWindow() {
   win.on('blur', () => {
     if (cfg.hideOnBlur && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
   });
+  win.on('show', refreshTray);
+  win.on('hide', refreshTray);
   win.on('close', (e) => {
     if (!quitting) {
       e.preventDefault();
@@ -298,6 +302,45 @@ function hideWindow() {
 function toggleWindow() {
   if (win && win.isVisible() && win.isFocused() && !mini) hideWindow();
   else showWindow();
+}
+
+// ---------- icône de la barre système ----------
+
+function refreshTray() {
+  if (tray) tray.update({ running: !!current, agentLabel: current && current.label, visible: !!win && win.isVisible() });
+}
+
+function setupTray() {
+  if (!cfg.tray) {
+    if (tray) tray.destroy();
+    tray = null;
+    return;
+  }
+  if (tray) return refreshTray();
+  try {
+    tray = createTray({ Tray, Menu, nativeImage }, {
+      // Le menu enlève le focus à la fenêtre : on se fie seulement à sa visibilité.
+      toggle: () => (win && win.isVisible() ? hideWindow() : showWindow()),
+      new: () => {
+        if (current || !win) return;
+        showWindow();
+        // Même chemin que Ctrl+N dans l'interface.
+        win.webContents.send('aska:new-conversation');
+      },
+      cancel: () => {
+        if (current) current.handle.cancel();
+      },
+      quit: () => {
+        quitting = true;
+        app.quit();
+      },
+    });
+  } catch (e) {
+    tray = null;
+    warnings.push(`Icône de la barre système indisponible : ${e.message}`);
+    return;
+  }
+  refreshTray();
 }
 
 function registerShortcut() {
@@ -401,10 +444,12 @@ function startRun(req) {
       if (ev.type !== 'session') send({ id, ...ev });
     }
   );
-  current = { id, handle: handleRun };
+  current = { id, handle: handleRun, label: agent.label };
+  refreshTray();
 
   handleRun.done.then((res) => {
     current = null;
+    refreshTray();
     const ok = res.ok && !streamError;
     turn.status = ok ? 'ok' : res.reason === 'cancel' ? 'cancel' : 'error';
     turn.durationMs = res.durationMs;
@@ -615,6 +660,7 @@ if (!app.requestSingleInstanceLock()) {
     } else if (secondArgv.includes('--reload')) {
       loadEverything();
       registerShortcut();
+      setupTray();
     } else {
       toggleWindow();
     }
@@ -633,6 +679,7 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc();
     registerShortcut();
     createWindow();
+    setupTray();
     win.webContents.once('did-finish-load', () => {
       if (!wants('--hidden')) showWindow();
     });
@@ -647,6 +694,9 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true;
     if (current) current.handle.cancel();
   });
-  app.on('will-quit', () => globalShortcut.unregisterAll());
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
+    if (tray) tray.destroy();
+  });
   app.on('window-all-closed', () => {}); // l'app reste résidente
 }

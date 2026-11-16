@@ -10,6 +10,7 @@ const sec = require('../src/main/security');
 const { loadConfig } = require('../src/main/config');
 const { runAgent, createStreamJsonParser, clean } = require('../src/main/runner');
 const { ConversationStore, buildContextPrompt } = require('../src/main/conversations');
+const { trayModel, createTray, ICONS, ICON_DIR } = require('../src/main/tray');
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-agent.js');
 const WIN = process.platform === 'win32';
@@ -410,4 +411,83 @@ test('Windows : un autre .cmd passe par cmd.exe seulement avec des arguments san
   }
   // Sous Linux, rien de tout cela : le binaire est lancé tel quel.
   assert.deepEqual(resolveLaunch('/usr/bin/outil', { platform: 'linux' }), { command: '/usr/bin/outil', prefix: [], viaCmd: false });
+});
+
+test('icône de la barre système : état, info-bulle et menu', () => {
+  const idle = trayModel({ running: false, visible: false });
+  assert.equal(idle.icon, 'idle');
+  assert.equal(idle.tooltip, 'Aska');
+  const item = (m, id) => m.items.find((it) => it.id === id);
+  assert.equal(item(idle, 'toggle').label, 'Afficher Aska');
+  assert.equal(item(idle, 'new').enabled, true);
+  assert.equal(item(idle, 'cancel').enabled, false);
+  assert.equal(item(idle, 'quit').enabled, true);
+
+  const busy = trayModel({ running: true, agentLabel: 'Claude', visible: true });
+  assert.equal(busy.icon, 'running');
+  assert.equal(busy.tooltip, 'Aska : Claude en cours…');
+  assert.equal(item(busy, 'toggle').label, 'Masquer Aska');
+  // Pas de changement de conversation pendant une exécution, mais on peut l'annuler.
+  assert.equal(item(busy, 'new').enabled, false);
+  assert.equal(item(busy, 'cancel').enabled, true);
+
+  // Les icônes déclarées existent, en taille normale et haute densité.
+  for (const f of Object.values(ICONS)) {
+    assert.ok(fs.existsSync(path.join(ICON_DIR, f)), f);
+    assert.ok(fs.existsSync(path.join(ICON_DIR, f.replace('.png', '@2x.png'))), f);
+  }
+});
+
+test('icône de la barre système : menu relié aux actions, mis à jour seulement si besoin', () => {
+  const log = [];
+  class FakeTray {
+    constructor(img) { this.img = img; this.handlers = {}; this.destroyed = false; log.push(['new', img]); }
+    on(ev, fn) { this.handlers[ev] = fn; }
+    setImage(img) { this.img = img; }
+    setToolTip(t) { this.tip = t; }
+    setContextMenu(m) { this.menu = m; log.push(['menu']); }
+    isDestroyed() { return this.destroyed; }
+    destroy() { this.destroyed = true; }
+  }
+  let tray;
+  const electron = {
+    Tray: class extends FakeTray { constructor(i) { super(i); tray = this; } },
+    Menu: { buildFromTemplate: (t) => t },
+    nativeImage: { createFromPath: (p) => path.basename(p) },
+  };
+  const called = [];
+  const actions = Object.fromEntries(['toggle', 'new', 'cancel', 'quit'].map((k) => [k, () => called.push(k)]));
+  const t = createTray(electron, actions);
+
+  t.update({ running: false, visible: false });
+  assert.equal(tray.img, 'tray.png');
+  assert.equal(tray.tip, 'Aska');
+  const menus = () => log.filter((l) => l[0] === 'menu').length;
+  assert.equal(menus(), 1);
+  t.update({ running: false, visible: false });
+  assert.equal(menus(), 1, 'état inchangé : menu non reconstruit');
+
+  t.update({ running: true, agentLabel: 'Codex', visible: false });
+  assert.equal(tray.img, 'tray-running.png');
+  assert.equal(tray.tip, 'Aska : Codex en cours…');
+  assert.equal(menus(), 2);
+
+  // Chaque entrée appelle son action ; le clic sur l'icône affiche ou masque.
+  for (const it of tray.menu) if (it.click) it.click();
+  tray.handlers.click();
+  assert.deepEqual(called, ['toggle', 'new', 'cancel', 'quit', 'toggle']);
+
+  t.destroy();
+  t.destroy();
+  assert.equal(tray.destroyed, true);
+});
+
+test('configuration : icône de la barre système activée par défaut, désactivable', () => {
+  const d = tmp();
+  const f = path.join(d, 'config.json');
+  assert.equal(loadConfig(path.join(d, 'absent.json')).config.tray, true);
+  fs.writeFileSync(f, JSON.stringify({ tray: false }), { mode: 0o600 });
+  assert.equal(loadConfig(f).config.tray, false);
+  fs.writeFileSync(f, JSON.stringify({ tray: 'non' }), { mode: 0o600 });
+  assert.equal(loadConfig(f).config.tray, true);
 });

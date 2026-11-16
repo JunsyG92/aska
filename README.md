@@ -88,6 +88,14 @@ poignée à gauche ou par la barre du bas : sa position est mémorisée. Réduit
 la pastille indique l'agent et l'état de la demande ; l'exécution continue. Le
 raccourci global la rétablit, ou la masque si elle est déjà active.
 
+Tant qu'Aska tourne, son icône est visible dans la barre système (en haut à
+droite sous GNOME). Une pastille verte s'y ajoute pendant qu'un agent travaille,
+et l'info-bulle indique lequel. Son menu permet d'afficher ou masquer le panneau,
+d'ouvrir une nouvelle conversation, d'annuler l'exécution en cours et de quitter
+Aska. Sous GNOME, un clic ouvre ce menu et un double-clic affiche ou masque
+directement le panneau ; ailleurs, le clic gauche affiche ou masque le panneau
+et le clic droit ouvre le menu. `"tray": false` dans la configuration la retire.
+
 Le thème suit celui du système (clair/sombre), et les animations sont
 désactivées si le système demande de réduire les mouvements. Si le panneau est
 masqué pendant une exécution, une notification signale la fin.
@@ -207,6 +215,10 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
   (`npm i -g @github/copilot`, puis `copilot` une fois dans un terminal pour vous
   connecter). S'il est installé ailleurs que dans le `PATH` de votre session
   (nvm, par exemple), indiquez son chemin : `"agents": { "copilot": { "bin": "/chemin/absolu/copilot" } }`.
+- **L'icône n'apparaît pas dans la barre du haut (GNOME)** : GNOME n'affiche ces
+  icônes qu'avec l'extension *AppIndicator and KStatusNotifierItem Support*.
+  Ubuntu l'active par défaut ; ailleurs (Fedora, Debian…), installez-la
+  (`gnome-shell-extension-appindicator`), puis reconnectez-vous.
 - **Un agent n'apparaît pas** : même cause, son binaire n'est pas dans le `PATH`
   de la session graphique. Donnez son chemin avec `"bin"`, puis `aska --reload`.
 
@@ -225,6 +237,7 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
   "savePrompts": true,
   "hideOnBlur": false,
   "alwaysOnTop": true,
+  "tray": true,
   "envPassthrough": [],
   "agents": {
     "claude": { "model": "sonnet", "extraArgs": ["--max-turns", "20"] },
@@ -244,7 +257,7 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
 
 `hideOnBlur: true` redonne un comportement de lanceur éphémère (la fenêtre se
 masque dès qu'elle perd le focus) ; `alwaysOnTop: false` la laisse passer
-derrière les autres fenêtres.
+derrière les autres fenêtres. `tray: false` retire l'icône de la barre système.
 
 Un agent personnalisé (comme `gemini` ci-dessus) déclare son binaire en chemin
 absolu et les arguments de chaque mode (`read`, `edit`, `auto`) ; `prompt` vaut
@@ -257,4 +270,5 @@ npm install
 npm start                               # lance l'app
 npm test                                # tests unitaires (sécurité, exécution, analyse du flux)
 xvfb-run -a npm run test:e2e            # test de bout en bout avec de faux CLI
+./scripts/tray-icons.sh                 # régénère les icônes de la barre système (rsvg-convert)
 ```

@@ -28,4 +28,5 @@ contextBridge.exposeInMainWorld('aska', {
   onRunEvent: on('aska:run-event'),
   onShown: on('aska:shown'),
   onWillHide: on('aska:will-hide'),
+  onNewConversation: on('aska:new-conversation'),
 });
