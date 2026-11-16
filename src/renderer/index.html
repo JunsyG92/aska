@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="light dark">
+  <title>Aska</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="panel" class="panel" data-state="idle" aria-label="Aska">
+    <div class="glow" aria-hidden="true"></div>
+    <div class="surface">
+      <header class="bar">
+        <button id="agent" class="agent" type="button" title="Changer d'agent (Tab)">
+          <span class="orb" aria-hidden="true"><i></i></span>
+          <span id="agent-name" class="agent-name">…</span>
+        </button>
+        <textarea id="input" rows="1" spellcheck="false" autocomplete="off"
+                  placeholder="Demandez une action…" aria-label="Votre demande"></textarea>
+        <kbd id="enter-hint" class="enter">⏎</kbd>
+      </header>
+
+      <section id="confirm" class="confirm" hidden role="alertdialog" aria-labelledby="confirm-text">
+        <p id="confirm-text"></p>
+        <div class="confirm-actions">
+          <button id="trust-once" type="button" class="primary">Autoriser une fois <kbd>⏎</kbd></button>
+          <button id="trust-always" type="button">Toujours pour ce dossier <kbd>⇧⏎</kbd></button>
+          <button id="trust-cancel" type="button" class="ghost">Annuler <kbd>Échap</kbd></button>
+        </div>
+      </section>
+
+      <section id="result" class="result" aria-live="polite">
+        <div class="result-inner">
+          <div id="output" class="output" tabindex="-1"></div>
+          <div id="activity" class="activity" hidden><span class="spinner" aria-hidden="true"></span><span id="activity-text"></span></div>
+          <div id="notice" class="notice" hidden></div>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <button id="cwd" type="button" class="chip" title="Dossier de travail (Ctrl+O)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4.5a1 1 0 0 1 1-1h3.2l1.3 1.5h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+          <span id="cwd-name"></span>
+        </button>
+        <button id="mode" type="button" class="chip mode" title="Mode de permission (Maj+Tab)">
+          <span class="mode-dot" aria-hidden="true"></span><span id="mode-name"></span>
+        </button>
+        <span id="status" class="status"></span>
+        <span class="keys" id="keys"></span>
+      </footer>
+    </div>
+  </main>
+  <script src="markdown.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

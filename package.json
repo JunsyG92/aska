@@ -1,0 +1,16 @@
+{
+  "name": "aska",
+  "version": "0.1.0",
+  "description": "Lanceur Linux : un raccourci, un champ, et vos agents IA en CLI (Claude, Codex, Copilot, Cursor).",
+  "main": "src/main/main.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/core.test.js",
+    "test:e2e": "node test/e2e/run.js"
+  },
+  "devDependencies": {
+    "electron": "^45.3.3"
+  }
+}
