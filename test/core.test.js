@@ -270,6 +270,12 @@ test('conversations : enregistrement privé, liste, réouverture, suppression', 
   if (POSIX) assert.equal(fs.statSync(path.join(d, c.id + '.json')).mode & 0o777, 0o600);
   const [item] = store.list();
   assert.equal(item.turns, 1);
+  // Aperçu : texte de la dernière réponse, sans syntaxe Markdown ni tableau.
+  const pv = store.create('/p');
+  pv.turns.push({ agent: 'a', prompt: 'q', answer: '## Titre\n\nUn **texte** avec `code`.\n\n| A | B |\n| :-- | --: |\n| 1 | 2 |\n\n```js\nx()\n```\nFin.' });
+  store.save(pv);
+  assert.equal(store.list().find((c) => c.id === pv.id).preview, 'Titre Un texte avec code. Fin.');
+  store.delete(pv.id);
   assert.ok(item.title.startsWith('Explique le module') && item.title.length <= 70);
   const back = store.load(c.id);
   assert.equal(back.turns[0].status, 'error');
