@@ -2,14 +2,16 @@
 
 Un raccourci clavier, un champ de saisie, et votre demande part vers l'agent IA
 de votre choix **via son CLI officiel** : Claude Code, Codex, GitHub Copilot ou
-Cursor. La réponse s'affiche en direct dans le même panneau.
+Cursor. La réponse s'affiche en direct, et la discussion se poursuit comme dans
+un chat : chaque message s'ajoute au fil, avec le contexte des précédents.
 
 Le panneau est une petite fenêtre fixe : elle reste au premier plan à l'endroit
 où vous la posez, et se réduit en pastille d'un clic.
 
-| Sombre | Clair | Réduit |
-| --- | --- | --- |
-| ![Aska en thème sombre](docs/sombre.png) | ![Aska en thème clair](docs/clair.png) | ![Aska réduit en pastille](docs/reduit.png) |
+| Sombre | Clair |
+| --- | --- |
+| ![Fil de conversation, thème sombre](docs/sombre.png) | ![Choix du modèle, thème clair](docs/clair.png) |
+| ![Historique des conversations](docs/historique.png) | ![Aska réduit en pastille](docs/reduit.png) |
 
 Aska n'appelle aucune API et ne stocke aucune clé : il pilote les CLI déjà
 installés et connectés sur votre machine.
@@ -42,12 +44,15 @@ mettez `"shortcut": false` dans la configuration.
 
 | Touche | Action |
 | --- | --- |
-| `Entrée` | envoyer · `Maj+Entrée` : nouvelle ligne |
+| `Entrée` | envoyer (le champ se vide, le message rejoint le fil) · `Maj+Entrée` : nouvelle ligne |
 | `Tab` | agent suivant |
 | `Maj+Tab` | mode de permission suivant |
+| `Ctrl+Maj+M` | choisir le modèle de l'agent |
+| `Ctrl+N` | nouvelle conversation |
+| `Ctrl+H` | conversations enregistrées (`Entrée` ouvrir, `Suppr` supprimer) |
 | `Ctrl+O` | choisir le dossier de travail (clic droit sur le dossier : retour à l'espace temporaire) |
-| `↑` / `↓` | historique des demandes |
-| `Ctrl+Maj+C` | copier la réponse · `Ctrl+L` : effacer |
+| `↑` / `↓` | rappeler un message déjà envoyé |
+| `Ctrl+Maj+C` | copier la dernière réponse |
 | `Ctrl+M` | réduire en pastille / agrandir (ou le bouton `–`) |
 | `Échap` | annuler l'exécution en cours, sinon masquer la fenêtre |
 
@@ -59,6 +64,28 @@ raccourci global la rétablit, ou la masque si elle est déjà active.
 Le thème suit celui du système (clair/sombre), et les animations sont
 désactivées si le système demande de réduire les mouvements. Si le panneau est
 masqué pendant une exécution, une notification signale la fin.
+
+## Conversations
+
+- **Suite de discussion** : avec Claude, Aska reprend la session du CLI
+  (`--resume`), qui garde tout le contexte, outils compris. Avec les autres
+  agents, ou si vous changez d'agent en cours de fil, les échanges précédents
+  sont réinjectés dans la demande (les plus récents d'abord, dans la limite
+  d'environ 24 000 caractères).
+- **Changer d'agent en cours de route** est donc possible : Codex peut
+  poursuivre une discussion commencée avec Claude.
+- **Historique** : chaque conversation est enregistrée dans
+  `~/.local/state/aska/conversations/` (fichiers privés, 200 au plus) et se
+  rouvre avec `Ctrl+H`, dans son dossier de travail d'origine.
+  `"savePrompts": false` désactive tout enregistrement.
+
+## Modèles
+
+Le modèle se choisit par agent (`Ctrl+Maj+M` ou la pastille du bas) et le choix
+est mémorisé. « Par défaut du CLI » laisse l'agent décider. Claude propose
+`opus`, `sonnet` et `haiku` ; pour les autres agents, dont les noms de modèles
+changent souvent, saisissez le nom dans le champ libre (il est ensuite proposé
+dans la liste) ou déclarez vos modèles dans la configuration avec `"models"`.
 
 ## Modes de permission
 
@@ -105,7 +132,9 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
 - Chaque appel de l'interface est revalidé par le processus principal.
 - `config.json` est ignoré s'il est modifiable par un autre utilisateur.
 - Journal d'audit privé (`~/.local/state/aska/history.jsonl`, 0600) : date, agent,
-  mode, dossier, commande, résultat. `"savePrompts": false` pour ne pas y écrire les demandes.
+  mode, dossier, commande, résultat. `"savePrompts": false` pour ne pas y écrire les
+  demandes ni enregistrer les conversations.
+- Les noms de modèle et identifiants de session sont validés avant d'atteindre la ligne de commande.
 
 **Limites à connaître**
 - Aska ne demande pas d'approbation action par action : la granularité est celle
@@ -133,7 +162,7 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
   "envPassthrough": [],
   "agents": {
     "claude": { "model": "sonnet", "extraArgs": ["--max-turns", "20"] },
-    "codex": { "bin": "/home/moi/.npm-global/bin/codex" },
+    "codex": { "bin": "/home/moi/.npm-global/bin/codex", "models": ["nom-du-modele-a", "nom-du-modele-b"] },
     "copilot": { "enabled": false },
     "gemini": {
       "label": "Gemini",

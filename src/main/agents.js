@@ -32,6 +32,8 @@ const BUILTIN = {
       auto: ['--permission-mode', 'auto'],
     },
     modelFlag: '--model',
+    models: ['opus', 'sonnet', 'haiku'],
+    resumeFlag: '--resume', // reprise native : le CLI retrouve tout le contexte du fil
     env: ['ANTHROPIC_*', 'CLAUDE_*'],
     install: 'npm i -g @anthropic-ai/claude-code',
   },
@@ -117,6 +119,10 @@ function isDangerousArg(arg) {
   return DANGEROUS_ARG.some((re) => re.test(arg));
 }
 
+const MODEL_RE = /^[A-Za-z0-9][\w.:\/\[\]-]{0,79}$/;
+const SESSION_RE = /^[A-Za-z0-9][\w-]{7,79}$/;
+const isModel = (m) => typeof m === 'string' && MODEL_RE.test(m);
+
 const isStrArray = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string' && !s.includes('\0'));
 
 /** Fusionne les agents intégrés avec la config utilisateur (déjà validée en intégrité). */
@@ -134,7 +140,7 @@ function resolveAgents(userAgents = {}) {
     if (user.enabled === false) continue;
     let agent;
     if (base) {
-      agent = { ...base, id, modes: { ...base.modes } };
+      agent = { ...base, id, modes: { ...base.modes }, models: [...(base.models || [])] };
     } else {
       // Agent personnalisé : entièrement décrit par l'utilisateur.
       if (!user.bin || !user.modes || typeof user.modes !== 'object') {
@@ -159,12 +165,15 @@ function resolveAgents(userAgents = {}) {
         modes,
         tail: isStrArray(user.tail) ? user.tail : [],
         modelFlag: typeof user.modelFlag === 'string' ? user.modelFlag : undefined,
+        models: [],
         env: isStrArray(user.env) ? user.env : [],
         custom: true,
       };
     }
     if (typeof user.bin === 'string') agent.binOverride = user.bin;
-    if (typeof user.model === 'string' && /^[\w.:\/-]{1,80}$/.test(user.model)) agent.model = user.model;
+    if (isModel(user.model)) agent.model = user.model;
+    if (Array.isArray(user.models)) agent.models = user.models.filter(isModel).slice(0, 30);
+    if (agent.model && !agent.models.includes(agent.model)) agent.models.unshift(agent.model);
     agent.extraArgs = [];
     if (user.extraArgs !== undefined) {
       if (!isStrArray(user.extraArgs)) {
@@ -186,14 +195,19 @@ function resolveAgents(userAgents = {}) {
  * Construit argv (sans shell). Le prompt est soit envoyé sur stdin, soit passé
  * comme un argument unique ; il n'est jamais interprété par un shell.
  */
-function buildInvocation(agent, mode, prompt) {
+function buildInvocation(agent, mode, prompt, { model, resume } = {}) {
   const modeArgs = agent.modes[mode];
   if (!modeArgs) throw new Error(`${agent.label} ne propose pas le mode « ${MODES[mode]?.label || mode} »`);
   if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Prompt vide');
   if (prompt.includes('\0')) throw new Error('Prompt invalide');
 
+  if (model != null && !isModel(model)) throw new Error('Nom de modèle invalide');
+  if (resume != null && !SESSION_RE.test(resume)) throw new Error('Identifiant de session invalide');
+
   const argv = [...(agent.base || []), ...modeArgs];
-  if (agent.model && agent.modelFlag) argv.push(agent.modelFlag, agent.model);
+  const chosen = model === undefined ? agent.model : model; // null = modèle par défaut du CLI
+  if (chosen && agent.modelFlag) argv.push(agent.modelFlag, chosen);
+  if (resume && agent.resumeFlag) argv.push(agent.resumeFlag, resume);
   argv.push(...(agent.extraArgs || []));
 
   let stdin = null;
@@ -216,4 +230,4 @@ function buildInvocation(agent, mode, prompt) {
   return { argv, stdin, logArgv };
 }
 
-module.exports = { MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, isDangerousArg };
+module.exports = { MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, isDangerousArg, isModel };

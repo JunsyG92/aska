@@ -44,6 +44,7 @@ function createStreamJsonParser(emit) {
     switch (o.type) {
       case 'system':
         if (o.subtype === 'init' && o.model) emit({ type: 'meta', model: String(o.model) });
+        if (typeof o.session_id === 'string') emit({ type: 'session', id: o.session_id });
         break;
       case 'stream_event': {
         const e = o.event || {};
@@ -74,6 +75,7 @@ function createStreamJsonParser(emit) {
         break;
       }
       case 'result': {
+        if (typeof o.session_id === 'string') emit({ type: 'session', id: o.session_id });
         const denials = Array.isArray(o.permission_denials) ? o.permission_denials : [];
         if (denials.length) {
           emit({ type: 'denied', count: denials.length, tools: [...new Set(denials.map((d) => String(d.tool_name || '?')))].slice(0, 5) });

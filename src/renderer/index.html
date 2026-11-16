@@ -12,6 +12,15 @@
   <main id="panel" class="panel" data-state="idle" aria-label="Aska">
     <div class="glow" aria-hidden="true"></div>
     <div class="surface">
+      <section id="result" class="result">
+        <div class="result-inner">
+          <div id="history" class="history" hidden role="listbox" aria-label="Conversations enregistrées"></div>
+          <div id="thread" class="thread" tabindex="-1" aria-live="polite"></div>
+          <div id="activity" class="activity" hidden><span class="spinner" aria-hidden="true"></span><span id="activity-text"></span></div>
+          <div id="notice" class="notice" hidden></div>
+        </div>
+      </section>
+
       <header class="bar">
         <span class="grip" title="Déplacer" aria-hidden="true"></span>
         <button id="agent" class="agent" type="button" title="Changer d'agent (Tab)">
@@ -19,11 +28,17 @@
           <span id="agent-name" class="agent-name">…</span>
         </button>
         <textarea id="input" rows="1" spellcheck="false" autocomplete="off"
-                  placeholder="Demandez une action…" aria-label="Votre demande"></textarea>
+                  placeholder="Demandez une action…" aria-label="Votre message"></textarea>
         <kbd id="enter-hint" class="enter">⏎</kbd>
         <span id="mini-status" class="mini-status"></span>
+        <button id="hist-btn" class="win-btn full-only" type="button" title="Conversations (Ctrl+H)" aria-label="Conversations">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.2"/><path d="M8 5.2V8l2 1.3"/></svg>
+        </button>
+        <button id="new-btn" class="win-btn full-only" type="button" title="Nouvelle conversation (Ctrl+N)" aria-label="Nouvelle conversation">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
+        </button>
         <button id="mini-btn" class="win-btn" type="button" title="Réduire (Ctrl+M)" aria-label="Réduire">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path class="i-min" d="M4 8h8"/><path class="i-max" d="M4 6.5 8 10.5 12 6.5"/></svg>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path class="i-min" d="M4 8h8"/><path class="i-max" d="M4 9.5 8 5.5 12 9.5"/></svg>
         </button>
         <button id="close-btn" class="win-btn" type="button" title="Masquer (Échap)" aria-label="Masquer">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>
@@ -39,12 +54,10 @@
         </div>
       </section>
 
-      <section id="result" class="result" aria-live="polite">
-        <div class="result-inner">
-          <div id="output" class="output" tabindex="-1"></div>
-          <div id="activity" class="activity" hidden><span class="spinner" aria-hidden="true"></span><span id="activity-text"></span></div>
-          <div id="notice" class="notice" hidden></div>
-        </div>
+      <section id="model-menu" class="model-menu" hidden aria-label="Choix du modèle">
+        <div id="model-list" class="model-list" role="listbox"></div>
+        <input id="model-custom" type="text" spellcheck="false" autocomplete="off" maxlength="80"
+               placeholder="Autre modèle, puis Entrée" aria-label="Nom d'un autre modèle">
       </section>
 
       <footer class="foot">
@@ -54,6 +67,10 @@
         </button>
         <button id="mode" type="button" class="chip mode" title="Mode de permission (Maj+Tab)">
           <span class="mode-dot" aria-hidden="true"></span><span id="mode-name"></span>
+        </button>
+        <button id="model" type="button" class="chip" title="Modèle (Ctrl+Maj+M)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 13.4 4.9v6.2L8 14.2 2.6 11.1V4.9zM2.8 5 8 8l5.2-3M8 8v6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+          <span id="model-name"></span>
         </button>
         <span id="status" class="status"></span>
         <span class="keys" id="keys"></span>

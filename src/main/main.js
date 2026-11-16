@@ -5,7 +5,8 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, buildInvocation } = require('./agents');
+const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('./agents');
+const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 
@@ -30,8 +31,12 @@ let dialogOpen = false;
 let shortcutOk = false;
 let quitting = false;
 let mini = false; // panneau réduit en pastille
-let savedPos = null; // position choisie par l'utilisateur
+let savedPos = null; // ancrage choisi par l'utilisateur : bord gauche et bord BAS de la fenêtre
 let saveTimer = null;
+let store = null; // conversations enregistrées
+let conv = null; // conversation affichée
+let picked = {}; // modèle choisi par agent : { claude: 'opus' } (absent = défaut)
+let extraModels = {}; // modèles saisis à la main, par agent
 
 // Une session graphique n'a pas toujours le PATH du terminal : on ajoute les
 // emplacements habituels des CLI installés par l'utilisateur.
@@ -59,10 +64,19 @@ function loadEverything() {
   if (!cwd) {
     const st = sec.readOwnedJson(P.state);
     const saved = st.data && typeof st.data.cwd === 'string' ? st.data.cwd : null;
+    const d = st.data || {};
+    for (const [k, v] of Object.entries(d.models && typeof d.models === 'object' ? d.models : {})) {
+      if (Object.hasOwn(agents, k) && isModel(v)) picked[k] = v;
+    }
+    for (const [k, v] of Object.entries(d.extraModels && typeof d.extraModels === 'object' ? d.extraModels : {})) {
+      if (Object.hasOwn(agents, k) && Array.isArray(v)) extraModels[k] = v.filter(isModel).slice(0, 12);
+    }
     const pos = st.data && st.data.pos;
-    if (pos && Number.isInteger(pos.x) && Number.isInteger(pos.y)) savedPos = { x: pos.x, y: pos.y };
+    if (pos && Number.isInteger(pos.x) && Number.isInteger(pos.bottom)) savedPos = { x: pos.x, bottom: pos.bottom };
     cwd = saved && !sec.checkWorkdir(saved, 'read').error ? saved : P.workspace;
   }
+  store = new ConversationStore(P.conversations, { persist: cfg.savePrompts });
+  if (!conv) conv = store.create(cwd);
 }
 
 function fsRealWorkspace() {
@@ -75,7 +89,7 @@ function fsRealWorkspace() {
 
 function saveState() {
   try {
-    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos }));
+    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels }));
   } catch { /* l'état est un confort, pas une nécessité */ }
 }
 
@@ -84,6 +98,27 @@ const tilde = (p) => {
   if (p === P.workspace || p === fsRealWorkspace()) return 'Espace temporaire';
   return p === home ? '~' : p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p;
 };
+
+// Modèle utilisé pour un agent : choix dans l'interface, sinon config, sinon défaut du CLI.
+function modelFor(a) {
+  return picked[a.id] || a.model || null;
+}
+
+function publicTurn(t) {
+  const a = agents[t.agent];
+  return {
+    agentId: t.agent,
+    label: t.label || t.agent,
+    color: a ? a.color : '#888888',
+    model: t.model || null,
+    mode: t.mode,
+    prompt: t.prompt,
+    answer: t.answer,
+    status: t.status,
+    notice: t.notice || null,
+    durationMs: t.durationMs || 0,
+  };
+}
 
 function publicState() {
   const list = Object.values(agents).map((a) => ({
@@ -94,6 +129,9 @@ function publicState() {
     error: a.binError,
     install: a.install || null,
     modes: MODE_ORDER.filter((m) => a.modes[m] && (m !== 'auto' || cfg.allowAutoMode)),
+    canPickModel: !!a.modelFlag,
+    models: [...new Set([...(a.models || []), ...(extraModels[a.id] || [])])],
+    model: modelFor(a),
   }));
   return {
     agents: list,
@@ -107,6 +145,8 @@ function publicState() {
     warnings,
     history: cfg.savePrompts ? sec.readRecentPrompts(P.audit) : [],
     running: !!current,
+    conversation: { id: conv.id, title: conv.title, turns: conv.turns.map(publicTurn) },
+    historyEnabled: cfg.savePrompts,
   };
 }
 
@@ -143,8 +183,8 @@ function createWindow() {
   win.setVisibleOnAllWorkspaces(true);
   // La position choisie en déplaçant la fenêtre est conservée.
   win.on('moved', () => {
-    const [x, y] = win.getPosition();
-    savedPos = { x, y };
+    const b = win.getBounds();
+    savedPos = { x: b.x, bottom: b.y + b.height };
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveState, 400);
   });
@@ -174,13 +214,15 @@ function showWindow() {
     let pos = null;
     if (savedPos) {
       // On ne réutilise la position mémorisée que si elle est encore sur un écran.
-      const wa = screen.getDisplayMatching({ ...savedPos, width: w, height: h }).workArea;
-      const inside = savedPos.x + 80 > wa.x && savedPos.x < wa.x + wa.width - 80 && savedPos.y >= wa.y && savedPos.y < wa.y + wa.height - 40;
-      if (inside) pos = savedPos;
+      const top = savedPos.bottom - h;
+      const wa = screen.getDisplayMatching({ x: savedPos.x, y: top, width: w, height: h }).workArea;
+      const inside = savedPos.x + 80 > wa.x && savedPos.x < wa.x + wa.width - 80 && top >= wa.y && savedPos.bottom <= wa.y + wa.height + 40;
+      if (inside) pos = { x: savedPos.x, y: top };
     }
     if (!pos) {
+      // Par défaut : centré, la saisie vers les deux tiers de l'écran ; le fil grandit vers le haut.
       const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
-      pos = { x: Math.round(wa.x + (wa.width - WIN_W) / 2), y: Math.round(wa.y + Math.max(40, wa.height * 0.16)) };
+      pos = { x: Math.round(wa.x + (wa.width - w) / 2), y: Math.round(wa.y + wa.height * 0.68) - h };
     }
     win.setPosition(pos.x, pos.y);
   }
@@ -246,7 +288,7 @@ function startRun(req) {
   if (mode === 'auto' && !cfg.allowAutoMode) {
     return { error: 'Le mode autonome est désactivé ("allowAutoMode": true dans la configuration pour l\'activer)' };
   }
-  if (typeof prompt !== 'string' || prompt.length > 100000) return { error: 'Prompt invalide' };
+  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 100000) return { error: 'Prompt invalide' };
 
   const dir = sec.checkWorkdir(cwd, mode, os.homedir(), [fsRealWorkspace()]);
   if (dir.error) return { error: dir.error };
@@ -257,12 +299,27 @@ function startRun(req) {
     else if (trustChoice !== 'once') return { needsTrust: true, cwd: tilde(dir.path), agent: agent.label, mode };
   }
 
+  // Suite de conversation : reprise native si le CLI a déjà tout le fil en
+  // session (même agent, même dossier), sinon le contexte est réinjecté.
+  const sess = conv.sessions[agent.id];
+  const resume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length ? sess.id : null;
+  const fullPrompt = resume ? prompt : buildContextPrompt(conv.turns, prompt);
+  const model = modelFor(agent);
+
   let inv;
   try {
-    inv = buildInvocation(agent, mode, prompt);
+    inv = buildInvocation(agent, mode, fullPrompt, { model, resume });
   } catch (e) {
     return { error: e.message };
   }
+
+  const thread = conv;
+  const turn = { agent: agent.id, label: agent.label, model, mode, prompt, answer: '', status: 'running', ts: new Date().toISOString() };
+  thread.turns.push(turn);
+  thread.cwd = dir.path;
+  let sessionId = null;
+  let streamError = null;
+  let denied = null;
 
   const id = ++runSeq;
   const startedAt = new Date().toISOString();
@@ -277,12 +334,44 @@ function startRun(req) {
       timeoutMs: cfg.timeoutSec * 1000,
       maxBytes: cfg.maxOutputKb * 1024,
     },
-    (ev) => send({ id, ...ev })
+    (ev) => {
+      if (ev.type === 'text' && turn.answer.length < MAX_ANSWER) turn.answer += ev.text;
+      else if (ev.type === 'session') sessionId = ev.id;
+      else if (ev.type === 'meta' && ev.model) turn.model = ev.model;
+      else if (ev.type === 'error') streamError = ev.text;
+      else if (ev.type === 'denied') denied = ev;
+      if (ev.type !== 'session') send({ id, ...ev });
+    }
   );
   current = { id, handle: handleRun };
 
   handleRun.done.then((res) => {
     current = null;
+    const ok = res.ok && !streamError;
+    turn.status = ok ? 'ok' : res.reason === 'cancel' ? 'cancel' : 'error';
+    turn.durationMs = res.durationMs;
+    if (!ok && res.reason !== 'cancel') {
+      turn.notice = {
+        kind: 'error',
+        text: [
+          {
+            timeout: `Arrêté : délai de ${cfg.timeoutSec} s dépassé`,
+            overflow: 'Arrêté : sortie trop volumineuse',
+            'spawn-error': `Lancement impossible : ${res.error}`,
+          }[res.reason] || streamError || `Le CLI s'est terminé avec le code ${res.code}`,
+          (res.stderrTail || '').slice(-1500),
+        ].filter(Boolean).join('\n\n'),
+      };
+    } else if (ok && denied) {
+      turn.notice = {
+        kind: 'warn',
+        text: `${denied.count} action(s) refusée(s) par le mode « ${MODES[mode].label} » (${denied.tools.join(', ')}). Maj+Tab pour changer de mode, puis relancez.`,
+      };
+    }
+    // La session du CLI ne « couvre » le fil que si ce tour a réussi.
+    if (ok && sessionId && agent.resumeFlag) thread.sessions[agent.id] = { id: sessionId, cwd: dir.path, upTo: thread.turns.length };
+    else if (!ok) delete thread.sessions[agent.id];
+    store.save(thread);
     sec.appendAudit(P.audit, {
       ts: startedAt,
       agent: agent.id,
@@ -290,6 +379,8 @@ function startRun(req) {
       cwd: dir.path,
       bin: agent.binPath,
       argv: inv.logArgv,
+      conversation: thread.id,
+      model: turn.model,
       prompt: cfg.savePrompts ? prompt : undefined,
       result: res.reason,
       code: res.code ?? null,
@@ -298,17 +389,12 @@ function startRun(req) {
     send({
       id,
       type: 'end',
-      ok: res.ok,
-      reason: res.reason,
-      code: res.code ?? null,
-      error: res.error || null,
-      stderr: res.ok ? '' : (res.stderrTail || '').slice(-1500),
-      durationMs: res.durationMs,
-      timeoutSec: cfg.timeoutSec,
+      turn: publicTurn(turn),
+      title: thread.title,
     });
     if (win && !win.isVisible() && res.reason !== 'cancel' && Notification.isSupported()) {
       const n = new Notification({
-        title: res.ok ? `${agent.label} a terminé` : `${agent.label} : échec`,
+        title: ok ? `${agent.label} a terminé` : `${agent.label} : échec`,
         body: prompt.slice(0, 120),
         silent: true,
       });
@@ -327,6 +413,43 @@ function registerIpc() {
     return true;
   });
   handle('aska:hide', () => hideWindow());
+  handle('aska:conv-new', () => {
+    if (!current) conv = store.create(cwd);
+    return publicState();
+  });
+  handle('aska:conv-list', () => store.list());
+  handle('aska:conv-open', (cid) => {
+    if (current) return publicState();
+    const c = store.load(cid);
+    if (c) {
+      conv = c;
+      // On retrouve le dossier de la conversation : la reprise de session en dépend.
+      if (typeof c.cwd === 'string' && !sec.checkWorkdir(c.cwd, 'read').error) {
+        cwd = c.cwd;
+        saveState();
+      }
+    }
+    return publicState();
+  });
+  handle('aska:conv-delete', (cid) => {
+    if (current && conv.id === cid) return store.list();
+    store.delete(cid);
+    if (conv.id === cid) conv = store.create(cwd);
+    return store.list();
+  });
+  handle('aska:set-model', (req) => {
+    const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
+    if (!a || !a.modelFlag) return publicState();
+    if (req.model === null) delete picked[a.id];
+    else if (isModel(req.model)) {
+      picked[a.id] = req.model;
+      if (!(a.models || []).includes(req.model)) {
+        extraModels[a.id] = [req.model, ...(extraModels[a.id] || []).filter((m) => m !== req.model)].slice(0, 12);
+      }
+    }
+    saveState();
+    return publicState();
+  });
   handle('aska:set-mini', (v) => {
     mini = v === true;
   });
@@ -335,10 +458,13 @@ function registerIpc() {
     if (!size || !Number.isFinite(size.w) || !Number.isFinite(size.h)) return;
     const w = Math.round(Math.min(Math.max(size.w, 120), 900));
     const h = Math.round(Math.min(Math.max(size.h, 40), 800));
-    const [cw, ch] = win.getSize();
-    if (cw === w && ch === h) return;
+    const b = win.getBounds();
+    if (b.width === w && b.height === h) return;
+    // Le bord bas reste en place : la zone de saisie ne bouge pas quand le fil s'allonge.
+    const wa = screen.getDisplayMatching(b).workArea;
+    const y = Math.max(wa.y, b.y + b.height - h);
     win.setResizable(true);
-    win.setSize(w, h);
+    win.setBounds({ x: b.x, y, width: w, height: h });
     win.setResizable(false);
   });
   handle('aska:copy', (text) => {

@@ -9,6 +9,7 @@ const { resolveAgents, buildInvocation, isDangerousArg, BUILTIN } = require('../
 const sec = require('../src/main/security');
 const { loadConfig } = require('../src/main/config');
 const { runAgent, createStreamJsonParser, clean } = require('../src/main/runner');
+const { ConversationStore, buildContextPrompt } = require('../src/main/conversations');
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-agent.js');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'aska-test-'));
@@ -199,4 +200,61 @@ test('exécution : binaire inexistant', async () => {
   const { h } = run({ bin: '/nonexistent/agent' });
   const res = await h.done;
   assert.equal(res.reason, 'spawn-error');
+});
+
+test('modèle et reprise de session : validés avant d\'atteindre la ligne de commande', () => {
+  const { agents } = resolveAgents({ codex: { models: ['gpt-x', '--bad', 'o3'] } });
+  const inv = buildInvocation(agents.claude, 'read', 'x', { model: 'opus', resume: 'sess-0001-abcd' });
+  assert.deepEqual(inv.argv.slice(-4), ['--model', 'opus', '--resume', 'sess-0001-abcd']);
+  assert.ok(!buildInvocation(agents.claude, 'read', 'x', { model: null }).argv.includes('--model'));
+  assert.throws(() => buildInvocation(agents.claude, 'read', 'x', { model: '--dangerously-skip-permissions' }), /modèle invalide/);
+  assert.throws(() => buildInvocation(agents.claude, 'read', 'x', { resume: '--yolo' }), /session invalide/);
+  assert.ok(!buildInvocation(agents.codex, 'read', 'x', { resume: 'sess-0001-abcd' }).argv.includes('sess-0001-abcd'));
+  assert.deepEqual(agents.codex.models, ['gpt-x', 'o3']);
+  assert.deepEqual(agents.claude.models, ['opus', 'sonnet', 'haiku']);
+});
+
+test('contexte réinjecté : tours précédents, budget respecté', () => {
+  assert.equal(buildContextPrompt([], 'salut'), 'salut');
+  const turns = [
+    { agent: 'claude', label: 'Claude', prompt: 'Q1', answer: 'R1' },
+    { agent: 'codex', label: 'Codex', prompt: 'Q2', answer: '' },
+  ];
+  const p = buildContextPrompt(turns, 'Q3');
+  assert.match(p, /<historique>\n\[Utilisateur\]\nQ1\n\n\[Assistant — Claude\]\nR1\n\n\[Utilisateur\]\nQ2[\s\S]*interrompue[\s\S]*<\/historique>[\s\S]*Nouvelle demande de l'utilisateur :\nQ3$/);
+  const big = Array.from({ length: 30 }, (_, i) => ({ agent: 'a', prompt: `Q${i}`, answer: 'x'.repeat(3000) }));
+  const q = buildContextPrompt(big, 'fin', 10000);
+  assert.ok(q.length < 11000 && q.includes('Q29') && !q.includes('Q0\n'));
+});
+
+test('conversations : enregistrement privé, liste, réouverture, suppression', () => {
+  const d = path.join(tmp(), 'conv');
+  const store = new ConversationStore(d, { max: 2 });
+  const c = store.create('/proj');
+  store.save(c);
+  assert.deepEqual(store.list(), []); // rien tant qu'il n'y a pas de tour
+  c.turns.push({ agent: 'claude', label: 'Claude', prompt: 'Explique  le\nmodule ' + 'x'.repeat(100), answer: 'ok', status: 'running' });
+  store.save(c);
+  assert.equal(fs.statSync(path.join(d, c.id + '.json')).mode & 0o777, 0o600);
+  const [item] = store.list();
+  assert.equal(item.turns, 1);
+  assert.ok(item.title.startsWith('Explique le module') && item.title.length <= 70);
+  const back = store.load(c.id);
+  assert.equal(back.turns[0].status, 'error');
+  assert.equal(store.load('../../etc/passwd'), null);
+  assert.throws(() => store.file('../x'), /invalide/);
+  for (let i = 0; i < 3; i++) {
+    const n = store.create('/p');
+    n.turns.push({ agent: 'codex', prompt: 'p' + i, answer: '' });
+    store.save(n);
+  }
+  assert.equal(store.list().length, 2); // purge des plus anciennes
+  const id = store.list()[0].id;
+  store.delete(id);
+  assert.ok(!store.list().some((x) => x.id === id));
+  const off = new ConversationStore(path.join(d, 'off'), { persist: false });
+  const o = off.create('/p');
+  o.turns.push({ agent: 'a', prompt: 'p', answer: '' });
+  off.save(o);
+  assert.deepEqual(off.list(), []);
 });
