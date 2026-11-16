@@ -12,6 +12,7 @@
     "test:e2e": "node test/e2e/run.js"
   },
   "devDependencies": {
-    "electron": "^45.3.3"
+    "electron": "^45.3.3",
+    "playwright": "1.63.0"
   }
 }
