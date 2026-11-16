@@ -411,3 +411,23 @@ test('Windows : un autre .cmd passe par cmd.exe seulement avec des arguments san
   // Sous Linux, rien de tout cela : le binaire est lancé tel quel.
   assert.deepEqual(resolveLaunch('/usr/bin/outil', { platform: 'linux' }), { command: '/usr/bin/outil', prefix: [], viaCmd: false });
 });
+
+test('aska --help : options, raccourcis, agents détectés et fichiers ; --version', () => {
+  const { execFileSync } = require('child_process');
+  const home = tmp();
+  const bin = tmp();
+  fs.writeFileSync(path.join(bin, exe('claude')), WIN ? '@echo off\r\n' : '#!/bin/sh\n', { mode: 0o755 });
+  const env = WIN
+    ? { ...baseEnv(), USERPROFILE: home, APPDATA: path.join(home, 'R'), LOCALAPPDATA: path.join(home, 'L'), PATH: bin, NO_COLOR: '1' }
+    : { ...baseEnv(), HOME: home, PATH: bin, NO_COLOR: '1' };
+  for (const k of Object.keys(env)) if (/^XDG_/.test(k)) delete env[k];
+  const cli = path.join(__dirname, '..', 'src', 'cli.js');
+  const out = execFileSync(process.execPath, [cli, '--help'], { env, encoding: 'utf8' });
+  for (const expected of ['Usage : aska [option]', '--toggle', '--hidden', '--reload', '--quit', 'Ctrl+Alt+Espace', 'Lecture seule', 'Fichiers']) {
+    assert.ok(out.includes(expected), `« ${expected} » absent de l'aide`);
+  }
+  assert.match(out, new RegExp(`✓ Claude\\s+${fs.realpathSync(path.join(bin, exe('claude'))).replace(/[\\.]/g, '\\$&')}`));
+  assert.match(out, /✗ Codex\s+introuvable dans le PATH\n\s+installer : npm i -g @openai\/codex/);
+  assert.ok(!/\x1b\[/.test(out), 'pas de couleurs hors terminal');
+  assert.match(execFileSync(process.execPath, [cli, '--version'], { env, encoding: 'utf8' }), /^aska \d+\.\d+\.\d+\n$/);
+});

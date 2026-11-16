@@ -66,6 +66,8 @@ mettez `"shortcut": false` dans la configuration.
 | `aska --hidden` | démarre en arrière-plan |
 | `aska --reload` | relit la configuration |
 | `aska --quit` | quitte |
+| `aska --help` | aide : options, raccourcis, agents détectés (et pourquoi un agent manque), fichiers |
+| `aska --version` | version |
 
 ## Utilisation
 

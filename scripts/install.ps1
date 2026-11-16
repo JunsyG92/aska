@@ -68,7 +68,21 @@ if ($NoAutostart) {
 # Commande « aska » (aska --quit, aska --reload…).
 $binDir = Join-Path $env:LOCALAPPDATA 'aska\bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-Set-Content -Encoding ASCII -Path (Join-Path $binDir 'aska.cmd') -Value "@`"$Electron`" `"$Root`" %*"
+# Aide et version dans le terminal ; sinon Aska est lancé sans bloquer le terminal.
+$launcher = @"
+@echo off
+for %%A in (%*) do (
+  if /i "%%~A"=="--help" goto cli
+  if /i "%%~A"=="-h" goto cli
+  if /i "%%~A"=="--version" goto cli
+  if /i "%%~A"=="-v" goto cli
+)
+start "" "$Electron" "$Root" %*
+exit /b
+:cli
+node "$Root\src\cli.js" %*
+"@
+Set-Content -Encoding ASCII -Path (Join-Path $binDir 'aska.cmd') -Value $launcher
 
 # Configuration par défaut (n'écrase jamais une configuration existante).
 $confDir = Join-Path $env:APPDATA 'aska'

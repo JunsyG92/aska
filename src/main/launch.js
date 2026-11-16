@@ -98,4 +98,35 @@ function buildCommand(launch, argv) {
   return { command: comspec, args: ['/d', '/s', '/c', `""${launch.command}" ${args.join(' ')}"`], verbatim: true };
 }
 
-module.exports = { resolveLaunch, buildCommand, parseNpmShim, findOnPath, WIN };
+/**
+ * PATH élargi : une session graphique n'a pas toujours le PATH du terminal, on
+ * ajoute donc les emplacements habituels des CLI installés par l'utilisateur.
+ */
+function extendedPath({ env = process.env, home = require('os').homedir(), platform = process.platform } = {}) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const get = (name) => {
+    const k = Object.keys(env).find((x) => x.toUpperCase() === name.toUpperCase());
+    return k ? env[k] : undefined;
+  };
+  let extra;
+  if (platform === 'win32') {
+    const appData = get('APPDATA') || p.join(home, 'AppData', 'Roaming');
+    const local = get('LOCALAPPDATA') || p.join(home, 'AppData', 'Local');
+    extra = [
+      p.join(appData, 'npm'), // npm i -g
+      p.join(home, '.local', 'bin'), // installateur natif de Claude Code
+      p.join(local, 'cursor-agent'),
+      p.join(home, '.bun', 'bin'),
+      p.join(local, 'Volta', 'bin'),
+      p.join(get('ProgramFiles') || 'C:\\Program Files', 'nodejs'),
+    ];
+  } else {
+    extra = ['.local/bin', 'bin', '.npm-global/bin', '.bun/bin', '.volta/bin'].map((d) => p.join(home, d));
+    extra.push('/usr/local/bin');
+  }
+  const parts = (get('PATH') || '').split(p.delimiter).filter((d) => d && p.isAbsolute(d));
+  for (const d of extra) if (!parts.includes(d)) parts.push(d);
+  return parts.join(p.delimiter);
+}
+
+module.exports = { resolveLaunch, buildCommand, parseNpmShim, findOnPath, extendedPath, WIN };

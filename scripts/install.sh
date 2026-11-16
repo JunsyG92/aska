@@ -47,6 +47,14 @@ mkdir -p "$BIN" "$APPS"
 cat > "$BIN/aska" <<LAUNCHER
 #!/bin/sh
 # Lanceur Aska (généré par scripts/install.sh).
+# Aide et version : répondues dans le terminal, sans démarrer l'interface.
+for ARG in "\$@"; do
+  case "\$ARG" in
+    -h|--help|-v|-V|--version)
+      if command -v node >/dev/null; then exec node "$ROOT/src/cli.js" "\$@"; fi
+      ELECTRON_RUN_AS_NODE=1 exec "$ELECTRON" "$ROOT/src/cli.js" "\$@" ;;
+  esac
+done
 SANDBOX="$ROOT/node_modules/electron/dist/chrome-sandbox"
 # Ubuntu 24.04+ : sans profil AppArmor ni assistant setuid, Electron s'arrête
 # brutalement (SIGTRAP). On l'explique plutôt que de planter en silence.

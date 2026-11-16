@@ -42,6 +42,11 @@ jobs:
           if (-not (Test-Path (Join-Path $programs 'Aska.lnk'))) { throw 'raccourci du menu Démarrer absent' }
           if (-not (Test-Path (Join-Path $env:APPDATA 'aska\config.json'))) { throw 'configuration absente' }
           if (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'aska\bin\aska.cmd'))) { throw 'commande aska absente' }
+          $help = & (Join-Path $env:LOCALAPPDATA 'aska\bin\aska.cmd') --help | Out-String
+          Write-Host $help
+          if ($help -notmatch 'Usage : aska') { throw 'aska --help ne répond pas' }
+          $version = & (Join-Path $env:LOCALAPPDATA 'aska\bin\aska.cmd') --version | Out-String
+          if ($version -notmatch '^aska \d') { throw 'aska --version ne répond pas' }
           Write-Host 'Installation OK'
       - name: Captures d'écran
         if: always()

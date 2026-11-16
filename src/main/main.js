@@ -10,7 +10,8 @@ const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./convers
 const { discoverModels } = require('./models');
 const sec = require('./security');
 const { runAgent } = require('./runner');
-const { resolveLaunch, buildCommand } = require('./launch');
+const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
+const { wantsCliOutput, printCli } = require('../cli');
 
 const P = paths();
 const INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
@@ -41,30 +42,8 @@ let picked = {}; // modèle choisi par agent : { claude: 'opus' } (absent = déf
 let extraModels = {}; // modèles saisis à la main, par agent
 const discovered = {}; // modèles annoncés par chaque CLI : { cursor: { models, error } }
 
-// Une session graphique n'a pas toujours le PATH du terminal : on ajoute les
-// emplacements habituels des CLI installés par l'utilisateur.
-function searchPath() {
-  const home = os.homedir();
-  let extra;
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
-    const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-    extra = [
-      path.join(appData, 'npm'), // npm i -g
-      path.join(home, '.local', 'bin'), // installateur natif de Claude Code
-      path.join(local, 'cursor-agent'),
-      path.join(home, '.bun', 'bin'),
-      path.join(local, 'Volta', 'bin'),
-      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs'),
-    ];
-  } else {
-    extra = ['.local/bin', 'bin', '.npm-global/bin', '.bun/bin', '.volta/bin'].map((d) => path.join(home, d));
-    extra.push('/usr/local/bin');
-  }
-  const parts = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d));
-  for (const d of extra) if (!parts.includes(d)) parts.push(d);
-  return parts.join(path.delimiter);
-}
+// PATH élargi aux emplacements habituels des CLI (voir launch.js).
+const searchPath = () => extendedPath();
 
 // Environnement transmis à un agent : filtré, avec le PATH élargi ci-dessus.
 function agentEnv(agent) {
@@ -602,6 +581,12 @@ function registerIpc() {
 // ---------- cycle de vie ----------
 
 const argv = process.argv.slice(1);
+
+// « aska --help » / « --version » : réponse dans le terminal, sans ouvrir de fenêtre.
+if (wantsCliOutput(argv)) {
+  printCli(argv);
+  app.exit(0);
+}
 const wants = (flag) => argv.includes(flag);
 
 if (!app.requestSingleInstanceLock()) {
