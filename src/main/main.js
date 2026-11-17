@@ -634,12 +634,20 @@ const wants = (flag) => argv.includes(flag);
 // d'Electron sait l'écrire : scripts/install.ps1 appelle donc « --install-shortcuts ».
 const APP_ID = 'aska';
 if (process.platform === 'win32' && wants('--install-shortcuts')) {
+  // Ne jamais rester bloqué : quoi qu'il arrive, le processus se termine.
+  const done = (code, out) => {
+    (code ? process.stderr : process.stdout).write(out + '\n');
+    app.exit(code);
+  };
+  setTimeout(() => done(2, 'Délai dépassé pendant la création des raccourcis.'), 30000).unref();
   app.whenReady().then(() => {
+    const fs = require('fs');
     const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
     const root = path.join(__dirname, '..', '..');
     const link = (file, args) => {
-      require('fs').mkdirSync(path.dirname(file), { recursive: true });
-      shell.writeShortcutLink(file, 'replace', {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      // « create » crée le raccourci ou l'écrase (« replace » échoue s'il n'existe pas).
+      const ok = shell.writeShortcutLink(file, 'create', {
         target: process.execPath,
         args: `"${root}" ${args}`,
         cwd: root,
@@ -648,15 +656,17 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
         iconIndex: 0,
         appUserModelId: APP_ID,
       });
-      return file;
+      if (!ok) throw new Error(`impossible d'écrire ${file}`);
+      const back = shell.readShortcutLink(file);
+      if (back.appUserModelId !== APP_ID) throw new Error(`identité absente du raccourci ${file}`);
+      return { file, appUserModelId: back.appUserModelId, target: back.target };
     };
     const startup = path.join(programs, 'Startup', 'Aska.lnk');
     const made = [link(path.join(programs, 'Aska.lnk'), '--toggle')];
-    if (wants('--no-autostart')) require('fs').rmSync(startup, { force: true });
+    if (wants('--no-autostart')) fs.rmSync(startup, { force: true });
     else made.push(link(startup, '--hidden'));
-    process.stdout.write(JSON.stringify(made.map((f) => ({ file: f, ...shell.readShortcutLink(f) }))) + '\n');
-    app.exit(0);
-  });
+    done(0, JSON.stringify(made));
+  }).catch((e) => done(1, `Création des raccourcis impossible : ${e.message}`));
 } else if (!app.requestSingleInstanceLock()) {
   // Une instance tourne déjà : elle reçoit nos arguments (« second-instance ») et bascule.
   app.quit();
