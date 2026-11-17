@@ -1,6 +1,6 @@
-# Intégration continue : lint, tests unitaires et de bout en bout sous Linux et
-# Windows, installation Windows. Le job « CI » résume le tout : c'est le seul
-# contrôle à rendre obligatoire dans la protection de branche.
+# Continuous integration: lint, unit and end-to-end tests on Linux and
+# Windows, Windows installation. The "CI" job sums it all up: it is the only
+# check to make required in branch protection.
 name: CI
 
 on:
@@ -35,15 +35,15 @@ jobs:
       - run: npm run lint
 
   pr-title:
-    name: Titre de la PR
+    name: PR title
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       pull-requests: read
     steps:
-      # Le titre devient le message du commit fusionné (squash) : il doit suivre
-      # Conventional Commits, dont dépendent le numéro de version et le CHANGELOG.
+      # The title becomes the message of the merged (squash) commit: it must follow
+      # Conventional Commits, which the version number and the CHANGELOG depend on.
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -52,11 +52,11 @@ jobs:
             const re = new RegExp(`^(${types.join('|')})(\\([a-z0-9-]+\\))?!?: \\S.*$`);
             if (!re.test(title)) {
               core.setFailed(
-                `Titre « ${title} » non conforme. Attendu : <type>(<portée facultative>): <description>, ` +
-                `type parmi ${types.join(', ')}. Exemple : « feat(notifications): son facultatif ». Voir CONTRIBUTING.md.`
+                `Invalid title "${title}". Expected: <type>(<optional scope>): <description>, ` +
+                `type one of ${types.join(', ')}. Example: "feat(notifications): optional sound". See CONTRIBUTING.md.`
               );
             } else {
-              core.info(`Titre conforme : ${title}`);
+              core.info(`Valid title: ${title}`);
             }
 
   tests:
@@ -74,16 +74,16 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - name: Tests unitaires
+      - name: Unit tests
         run: npm test
-      - name: Test de bout en bout (Linux)
+      - name: End-to-end test (Linux)
         if: runner.os == 'Linux'
         # Les runners GitHub n'autorisent pas le bac à sable d'Electron (espaces de noms
         # restreints) : le test lance donc Electron avec --no-sandbox.
         env:
           ASKA_E2E_NO_SANDBOX: '1'
         run: xvfb-run -a -s "-screen 0 1400x900x24" npm run test:e2e
-      - name: Clic extérieur, avec un vrai gestionnaire de fenêtres (Linux)
+      - name: Outside click, with a real window manager (Linux)
         if: runner.os == 'Linux'
         env:
           ASKA_E2E_NO_SANDBOX: '1'
@@ -91,35 +91,39 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends openbox xdotool xterm
           xvfb-run -a -s "-screen 0 1400x900x24" bash test/e2e/outside-click.sh
-      - name: Test de bout en bout (Windows)
+      - name: End-to-end test (Windows)
         if: runner.os == 'Windows'
         run: npm run test:e2e
       - name: Installation (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          ./scripts/install.ps1 -NoAutostart
+          # Windows PowerShell 5.1, as documented in the README (not pwsh).
+          powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -NoAutostart
+          if ($LASTEXITCODE -ne 0) { throw 'install.ps1 failed' }
+          $bytes = [IO.File]::ReadAllBytes((Join-Path $env:APPDATA 'aska\config.json'))
+          if ($bytes[0] -eq 0xEF) { throw 'config.json starts with a UTF-8 BOM' }
           $programs = [Environment]::GetFolderPath('Programs')
-          if (-not (Test-Path (Join-Path $programs 'Aska.lnk'))) { throw 'raccourci du menu Démarrer absent' }
-          if (-not (Test-Path (Join-Path $env:APPDATA 'aska\config.json'))) { throw 'configuration absente' }
-          # Le raccourci doit porter l'identité de l'app, sinon pas de notifications.
+          if (-not (Test-Path (Join-Path $programs 'Aska.lnk'))) { throw 'Start menu shortcut missing' }
+          if (-not (Test-Path (Join-Path $env:APPDATA 'aska\config.json'))) { throw 'configuration missing' }
+          # The shortcut must carry the app identity, otherwise no notifications.
           $shell = New-Object -ComObject Shell.Application
           $item = $shell.Namespace($programs).ParseName('Aska.lnk')
           $aumid = $item.ExtendedProperty('System.AppUserModel.ID')
-          Write-Host "AppUserModelID du raccourci : $aumid"
-          if ($aumid -ne 'aska') { throw "AppUserModelID absent ou incorrect : '$aumid'" }
+          Write-Host "Shortcut AppUserModelID: $aumid"
+          if ($aumid -ne 'aska') { throw "AppUserModelID missing or wrong: '$aumid'" }
           $aska = Join-Path $env:LOCALAPPDATA 'aska\bin\aska.cmd'
-          if (-not (Test-Path $aska)) { throw 'commande aska absente' }
+          if (-not (Test-Path $aska)) { throw 'aska command missing' }
           $help = & $aska --help | Out-String
           Write-Host $help
-          if ($help -notmatch 'Usage : aska') { throw 'aska --help ne répond pas' }
+          if ($help -notmatch 'Usage: aska') { throw 'aska --help does not respond' }
           $version = & $aska --version | Out-String
-          if ($version -notmatch '^aska \d') { throw 'aska --version ne répond pas' }
-      - name: Captures d'écran
+          if ($version -notmatch '^aska \d') { throw 'aska --version does not respond' }
+      - name: Screenshots
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: captures-${{ matrix.os }}
+          name: screenshots-${{ matrix.os }}
           path: test/e2e/out/
           if-no-files-found: ignore
           retention-days: 14
@@ -131,11 +135,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Résultat
+      - name: Result
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "Résultats : $RESULTS"
+          echo "Results: $RESULTS"
           for r in $RESULTS; do
-            case "$r" in success|skipped) ;; *) echo "::error::Au moins un contrôle a échoué ($r)"; exit 1 ;; esac
+            case "$r" in success|skipped) ;; *) echo "::error::At least one check failed ($r)"; exit 1 ;; esac
           done

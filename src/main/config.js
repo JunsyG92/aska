@@ -3,12 +3,13 @@ const os = require('os');
 const path = require('path');
 const { readOwnedJson } = require('./security');
 const { MODE_ORDER } = require('./agents');
+const { t, setLanguage, resolveLanguage, LANGUAGES } = require('../i18n');
 
 function paths(env = process.env, home = os.homedir(), platform = process.platform) {
   const abs = (v, fallback) => (v && path.isAbsolute(v) ? v : fallback);
   let configDir, stateDir, dataDir;
   if (platform === 'win32') {
-    // Windows : configuration dans %APPDATA% (itinérant), état et données dans %LOCALAPPDATA%.
+    // Windows: config in %APPDATA% (roaming), state and data in %LOCALAPPDATA%.
     configDir = path.join(abs(env.APPDATA, path.join(home, 'AppData', 'Roaming')), 'aska');
     const local = path.join(abs(env.LOCALAPPDATA, path.join(home, 'AppData', 'Local')), 'aska');
     stateDir = path.join(local, 'state');
@@ -40,37 +41,47 @@ const DEFAULTS = {
   timeoutSec: 600,
   maxOutputKb: 2048,
   savePrompts: true,
-  hideOnBlur: true, // cliquer à l'extérieur masque le chat (sauf s'il est épinglé)
+  hideOnBlur: true, // clicking outside hides the chat (unless it is pinned)
   alwaysOnTop: true,
   notify: 'hidden', // hidden | unfocused | never
-  notifyPreview: true, // début de la réponse dans la notification
+  notifyPreview: true, // start of the answer in the notification
   notifySound: true,
   envPassthrough: [],
+  language: 'auto', // auto (system language) | en | fr
   agents: {},
 };
 
 /**
- * Charge la configuration. Comme elle décide des programmes lancés, un fichier
- * modifiable par un autre utilisateur est ignoré (valeurs par défaut + alerte).
+ * Loads the config. Since it decides which programs are run, a file writable
+ * by another user is ignored (defaults + warning).
+ * With systemLangs, also sets the UI language ("language" option, else the
+ * system language) before any warning is written, so warnings use it.
  */
-function loadConfig(file) {
+function loadConfig(file, { systemLangs = null } = {}) {
   const warnings = [];
   const cfg = { ...DEFAULTS };
+  const useLanguage = (pref) => {
+    if (systemLangs) setLanguage(resolveLanguage(pref, systemLangs));
+  };
+  useLanguage('auto');
   const r = readOwnedJson(file);
   if (r.error) {
-    warnings.push(`Configuration ignorée : ${r.error}`);
+    warnings.push(t('config.ignored', { error: r.error }));
     return { config: cfg, warnings };
   }
   if (r.missing || !r.data || typeof r.data !== 'object') return { config: cfg, warnings };
   const u = r.data;
 
+  if (u.language === 'auto' || LANGUAGES.includes(u.language)) cfg.language = u.language;
+  useLanguage(cfg.language);
+
   if (typeof u.shortcut === 'string' && /^[\w+ ]{1,40}$/.test(u.shortcut)) cfg.shortcut = u.shortcut;
   else if (u.shortcut === false) cfg.shortcut = null;
   if (typeof u.defaultAgent === 'string') cfg.defaultAgent = u.defaultAgent;
   if (MODE_ORDER.includes(u.defaultMode)) {
-    // On ne démarre jamais directement en mode autonome.
+    // Never start directly in autonomous mode.
     cfg.defaultMode = u.defaultMode === 'auto' ? 'edit' : u.defaultMode;
-    if (u.defaultMode === 'auto') warnings.push('defaultMode "auto" refusé : remplacé par "edit"');
+    if (u.defaultMode === 'auto') warnings.push(t('config.autoRejected'));
   }
   if (u.allowAutoMode === true) cfg.allowAutoMode = true;
   if (Number.isFinite(u.timeoutSec)) cfg.timeoutSec = Math.min(Math.max(u.timeoutSec, 5), 3600);

@@ -1,20 +1,21 @@
 'use strict';
-// Notifications de fin de réponse, quand le chat n'est pas sous les yeux.
-// La décision et le contenu sont indépendants d'Electron (testables) ; seul
-// createNotifier() touche à l'API Notification.
+// Notifications when an answer finishes, while the chat is out of sight.
+// The decision and the content are independent of Electron (testable); only
+// createNotifier() touches the Notification API.
 
 const fs = require('fs');
 const path = require('path');
 const { plainText } = require('./conversations');
+const { t } = require('../i18n');
 
 const NOTIFY_MODES = ['hidden', 'unfocused', 'never'];
 
 /**
- * Faut-il prévenir l'utilisateur de la fin d'une demande ?
- *  - « hidden » (par défaut) : fenêtre masquée ou réduite en pastille ;
- *  - « unfocused » : aussi quand la fenêtre est visible mais qu'il travaille ailleurs ;
- *  - « never » : jamais.
- * Une demande annulée par l'utilisateur ne notifie jamais.
+ * Should the user be told that a request finished?
+ *  - "hidden" (default): window hidden or collapsed into a pill;
+ *  - "unfocused": also when the window is visible but they are working elsewhere;
+ *  - "never": never.
+ * A request cancelled by the user never notifies.
  */
 function shouldNotify(mode, { visible, focused, mini, status }) {
   if (status === 'cancel' || mode === 'never') return false;
@@ -23,33 +24,32 @@ function shouldNotify(mode, { visible, focused, mini, status }) {
 }
 
 /**
- * Titre et texte de la notification. Avec preview=false, le contenu de la
- * réponse n'apparaît pas (écran verrouillé, partage d'écran) : seul le titre
- * de la conversation est rappelé.
+ * Notification title and text. With preview=false, the answer's content does
+ * not appear (lock screen, screen sharing): only the conversation title is shown.
  */
 function notificationContent({ agentLabel, status, answer, notice, title, preview = true }) {
   const ok = status === 'ok';
-  const subject = title ? `« ${title} »` : '';
+  const subject = title ? t('notify.subject', { title }) : '';
   let body;
   if (!preview) body = subject;
-  else if (ok) body = plainText(answer || '', 180) || subject || 'Réponse vide';
+  else if (ok) body = plainText(answer || '', 180) || subject || t('notify.emptyAnswer');
   else body = notice && notice.text ? plainText(notice.text.split('\n')[0], 180) : subject;
   if (ok && notice && notice.kind === 'warn') {
     const n = (notice.text.match(/^(\d+) action/) || [])[1];
-    if (n) body = `${n} action${n > 1 ? 's' : ''} refusée${n > 1 ? 's' : ''} · ${body}`;
+    if (n) body = t('notify.denied', { count: Number(n), body });
   }
-  return { title: ok ? `${agentLabel} a répondu` : `${agentLabel} : échec`, body: body || '' };
+  return { title: t(ok ? 'notify.replied' : 'notify.failed', { agent: agentLabel }), body: body || '' };
 }
 
 /**
- * @param Notification  la classe Electron
- * @param onClick       (conversationId) => void : rouvre la conversation concernée
- * @param logFile       chemin absolu facultatif où consigner les notifications
- *                      (utilisé par les tests de bout en bout)
+ * @param Notification  the Electron class
+ * @param onClick       (conversationId) => void: reopens the related conversation
+ * @param logFile       optional absolute path where notifications are logged
+ *                      (used by the end-to-end tests)
  */
 function createNotifier({ Notification, onClick, logFile = null, sound = true }) {
-  // Référence gardée sur chaque notification affichée : sans elle, le ramasse-miettes
-  // peut la détruire et le clic ne déclencherait plus rien.
+  // Keep a reference to each shown notification: without it, the garbage collector
+  // may destroy it and the click would no longer do anything.
   const active = new Map();
   const log = logFile && path.isAbsolute(logFile) ? logFile : null;
 
@@ -57,10 +57,10 @@ function createNotifier({ Notification, onClick, logFile = null, sound = true })
     if (log) {
       try {
         fs.appendFileSync(log, JSON.stringify({ conversationId, title, body }) + '\n');
-      } catch { /* journal de test seulement */ }
+      } catch { /* test log only */ }
     }
     if (!Notification.isSupported()) return false;
-    // Une seule notification par conversation : la plus récente remplace l'ancienne.
+    // One notification per conversation: the newest replaces the previous one.
     const previous = active.get(conversationId);
     if (previous) previous.close();
     const n = new Notification({ title, body, silent: !sound });

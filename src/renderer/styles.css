@@ -58,7 +58,7 @@ html, body {
 
 body { padding: 14px; }
 
-/* ---------- panneau ---------- */
+/* ---------- panel ---------- */
 
 .panel {
   position: relative;
@@ -91,7 +91,7 @@ body { padding: 14px; }
   overflow: hidden;
 }
 
-/* Halo : un dégradé conique à la couleur de l'agent, qui tourne pendant le travail. */
+/* Halo: a conic gradient in the agent color, spinning while it works. */
 .glow {
   position: absolute;
   inset: -2px;
@@ -126,7 +126,7 @@ body { padding: 14px; }
   100% { opacity: 0; }
 }
 
-/* ---------- barre de saisie ---------- */
+/* ---------- input bar ---------- */
 
 .bar {
   display: flex;
@@ -215,7 +215,7 @@ kbd {
 .enter { margin-top: 8px; flex: none; transition: opacity 0.2s, transform 0.2s; }
 .enter.off { opacity: 0; transform: translateX(4px); }
 
-/* ---------- confirmation de confiance ---------- */
+/* ---------- trust confirmation ---------- */
 
 .confirm {
   margin: 0 12px 12px;
@@ -253,7 +253,7 @@ kbd {
 }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 
-/* ---------- résultat ---------- */
+/* ---------- result ---------- */
 
 .result {
   display: grid;
@@ -297,7 +297,7 @@ kbd {
 }
 .meta i { width: 7px; height: 7px; border-radius: 50%; background: var(--agent); flex: none; }
 .meta b { font-weight: 600; color: color-mix(in oklab, var(--agent) 70%, var(--text)); }
-.turn[data-status='cancel'] .meta::after { content: '· annulé'; }
+.turn[data-status='cancel'] .meta::after { content: attr(data-cancelled); }
 .turn .notice { margin: 6px 0 0; }
 
 .output {
@@ -450,7 +450,7 @@ kbd {
 .notice.error { background: color-mix(in oklab, var(--err) 11%, var(--surface)); color: var(--err); }
 .notice.warn { background: color-mix(in oklab, var(--auto) 12%, var(--surface)); color: var(--auto); }
 
-/* ---------- pied ---------- */
+/* ---------- footer ---------- */
 
 .foot {
   display: flex;
@@ -510,7 +510,7 @@ kbd {
   .panel[data-state='running'] .glow { opacity: 0.8; }
 }
 
-/* ---------- fenêtre : poignée, réduire, masquer ---------- */
+/* ---------- window: grip, minimize, hide ---------- */
 
 .bar > .grip {
   -webkit-app-region: drag;
@@ -543,7 +543,7 @@ kbd {
 .win-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .i-max, .mini-status { display: none; }
 
-/* Réduit : une pastille déplaçable qui montre l'agent et l'état de la demande. */
+/* Minimized: a draggable pill showing the agent and the request state. */
 .panel.mini { width: max-content; }
 .panel.mini #input, .panel.mini .enter, .panel.mini .confirm,
 .panel.mini .result, .panel.mini .foot { display: none; }
@@ -573,7 +573,7 @@ kbd {
 .panel.mini .full-only, .panel.mini .model-menu { display: none; }
 .win-btn[aria-pressed='true'] { background: var(--surface-2); color: var(--text); }
 
-/* ---------- historique des conversations ---------- */
+/* ---------- conversation history ---------- */
 
 .history { max-height: none; overflow: visible; }
 .hist-head {
@@ -696,7 +696,7 @@ kbd {
 .panel.in-history .foot .chip, .panel.in-history .status { display: none; }
 .panel.in-history .keys { margin-left: 4px; }
 
-/* ---------- choix du modèle ---------- */
+/* ---------- model picker ---------- */
 
 .model-menu {
   padding: 8px;
@@ -753,7 +753,7 @@ kbd {
 .model-note { padding: 6px 10px 2px; font-size: 12px; color: var(--muted); }
 .model-note:empty { display: none; }
 
-/* ---------- épingle et réponses non lues ---------- */
+/* ---------- pin and unread replies ---------- */
 
 #pin-btn svg { transition: transform 0.25s cubic-bezier(0.2, 1.4, 0.3, 1); }
 #pin-btn[aria-pressed='true'] { color: var(--agent); background: color-mix(in oklab, var(--agent) 14%, transparent); }
@@ -780,5 +780,100 @@ kbd {
   100% { box-shadow: 0 0 0 2px var(--surface), 0 0 0 10px transparent; }
 }
 .panel.mini.has-unread .mini-status { color: var(--ok); }
+
+/* ---------- tabs ---------- */
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in oklab, var(--surface-2) 45%, var(--surface));
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 1 230px;
+  min-width: 110px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  border-radius: 9px 9px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.tab:hover { background: color-mix(in oklab, var(--surface-2) 70%, transparent); color: var(--text); }
+.tab.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 0 var(--surface), inset 0 2px 0 var(--c, var(--agent));
+}
+.tab-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c, var(--faint));
+}
+/* Working tab: the dot becomes a small spinning ring. */
+.tab.running .tab-dot {
+  width: 9px;
+  height: 9px;
+  background: none;
+  border: 2px solid color-mix(in oklab, var(--c, var(--agent)) 30%, transparent);
+  border-top-color: var(--c, var(--agent));
+  animation: rot 0.8s linear infinite;
+}
+/* Answer arrived in a tab you were not looking at. */
+.tab.unread .tab-title { font-weight: 600; color: var(--text); }
+.tab.unread::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.tab-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--faint);
+  opacity: 0;
+}
+.tab:hover .tab-close, .tab.active .tab-close { opacity: 1; }
+.tab-close:hover { background: var(--surface-2); color: var(--text); }
+.tab-new {
+  flex: none;
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--faint);
+  font: 400 18px/1 var(--font);
+  cursor: pointer;
+}
+.tab-new:hover { background: var(--surface-2); color: var(--text); }
+.panel.mini .tabs { display: none; }
 
 [hidden] { display: none !important; }

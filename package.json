@@ -1,7 +1,7 @@
 {
   "name": "aska",
   "version": "0.1.0",
-  "description": "Lanceur Linux et Windows : un raccourci, un champ, et vos agents IA en CLI (Claude, Codex, Copilot, Cursor).",
+  "description": "Linux and Windows launcher: one shortcut, one field, and your CLI AI agents (Claude, Codex, Copilot, Cursor).",
   "main": "src/main/main.js",
   "license": "MIT",
   "private": true,
