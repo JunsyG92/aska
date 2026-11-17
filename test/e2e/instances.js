@@ -32,6 +32,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   fs.mkdirSync(P.configDir, { recursive: true });
   fs.writeFileSync(P.config, JSON.stringify({ shortcut: false }), { mode: 0o600 });
   const flags = process.env.ASKA_E2E_NO_SANDBOX === '1' ? ['--no-sandbox'] : [];
+  // Sortie des instances lancées par le test : affichée si le test échoue.
+  const logFile = path.join(home, 'instances.log');
+  const logFd = fs.openSync(logFile, 'a');
   const run = () => JSON.parse(fs.readFileSync(P.run, 'utf8'));
   const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
   const waitFor = async (fn, what, ms = 20000) => {
@@ -40,7 +43,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     throw new Error(`délai dépassé : ${what}`);
   };
   // Lance « aska <args> » comme le ferait le lanceur de l'utilisateur.
-  const launch = (build, ...args) => spawn(ELECTRON, [...flags, ROOT, ...args], { env: { ...env, ASKA_BUILD_ID: build }, detached: true, stdio: 'ignore' }).unref();
+  const launch = (build, ...args) => spawn(ELECTRON, [...flags, ROOT, ...args], { env: { ...env, ASKA_BUILD_ID: build }, detached: true, stdio: ['ignore', logFd, logFd] }).unref();
 
   // 1. Une « ancienne version » tourne (identifiant de code différent).
   const old = await electron.launch({ executablePath: ELECTRON, args: [...flags, ROOT], env: { ...env, ASKA_BUILD_ID: 'ancien' } });
@@ -81,5 +84,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log('Instances OK');
 })().catch((e) => {
   console.error(e);
+  const logs = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('aska-inst-')).map((n) => path.join(os.tmpdir(), n, 'instances.log'));
+  for (const f of logs) {
+    try {
+      const t = fs.readFileSync(f, 'utf8').split('\n').filter((l) => /FATAL|sandbox|Error/i.test(l)).slice(-5).join('\n');
+      if (t) console.error(`Sortie des instances lancées par le test :\n${t}\n(sans bac à sable disponible, lancez le test avec ASKA_E2E_NO_SANDBOX=1)`);
+    } catch { /* journal absent */ }
+  }
   process.exit(1);
 });

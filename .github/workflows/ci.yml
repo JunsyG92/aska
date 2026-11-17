@@ -78,9 +78,15 @@ jobs:
         run: npm test
       - name: Test de bout en bout (Linux)
         if: runner.os == 'Linux'
+        # Les runners GitHub n'autorisent pas le bac à sable d'Electron (espaces de noms
+        # restreints) : le test lance donc Electron avec --no-sandbox.
+        env:
+          ASKA_E2E_NO_SANDBOX: '1'
         run: xvfb-run -a -s "-screen 0 1400x900x24" npm run test:e2e
       - name: Clic extérieur, avec un vrai gestionnaire de fenêtres (Linux)
         if: runner.os == 'Linux'
+        env:
+          ASKA_E2E_NO_SANDBOX: '1'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends openbox xdotool xterm
