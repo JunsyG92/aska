@@ -39,6 +39,9 @@
   let menuOpen = false;
   let pinned = false;
   let unread = 0;
+  let tabList = []; // onglets : [{ id, title, color, running, unread, active }]
+  const tabUi = new Map(); // par onglet : { draft, agentId, mode }, gardé en changeant d'onglet
+  let closeArmed = null; // onglet qui travaille, en attente de confirmation de fermeture
 
   const agent = () => agents.find((a) => a.id === agentId) || null;
   const el = (tag, cls, text) => {
@@ -74,9 +77,12 @@
   }
 
   function syncMini() {
+    const others = tabList.filter((t) => t.running && !t.active).length;
     $('mini-status').textContent = running
-      ? activityText || 'En cours…'
-      : unread
+      ? (activityText || 'En cours…') + (others ? ` · +${others}` : '')
+      : others
+        ? `${others} onglet${others > 1 ? 's' : ''} en cours`
+        : unread
         ? unread > 1 ? `${unread} nouvelles réponses` : 'Nouvelle réponse'
         : status.textContent;
   }
@@ -137,6 +143,7 @@
     $('mini-btn').title = mini ? 'Agrandir (Ctrl+M)' : 'Réduire (Ctrl+M)';
     $('mini-btn').setAttribute('aria-label', mini ? 'Agrandir' : 'Réduire');
     api.setMini(mini);
+    window.AskaTabs.update(mini ? [] : tabList); // pas de barre d'onglets dans la pastille
     syncMini();
     if (!mini) {
       autosize();
@@ -345,7 +352,9 @@
     $('hist-btn').hidden = !s.historyEnabled;
     setPinned(!!s.pinned, false);
     setUnread(s.unread || 0);
-    if (!running && (s.conversation.id !== convId || s.conversation.turns.length !== turnCount)) renderThread(s.conversation);
+    setTabs(s.tabs || []);
+    if (s.conversation.id !== convId) switchTo(s);
+    else if (!running && s.conversation.turns.length !== turnCount) renderThread(s.conversation);
     if (!agents.length) {
       input.disabled = true;
       input.placeholder = 'Aucun agent détecté';
@@ -356,6 +365,12 @@
       return;
     }
     input.disabled = false;
+    const saved = tabUi.get(convId);
+    if (saved && saved.agentId && agents.some((x) => x.id === saved.agentId)) {
+      agentId = saved.agentId;
+      mode = saved.mode || mode;
+      tabUi.set(convId, { ...saved, agentId: null }); // appliqué une fois, à l'arrivée sur l'onglet
+    }
     if (!agentId || !agent()) {
       const preferred = agents.find((a) => a.id === s.defaultAgent) || agents[0];
       if (!modes[mode] || !agentId) mode = s.defaultMode;
@@ -366,6 +381,83 @@
     setMode(a.modes.includes(mode) ? mode : a.modes[0], false);
     if (warnings.length && !turnCount && !running) showNotice(warnings.join('\n'), 'warn');
   }
+
+  // ---------- onglets ----------
+
+  function setTabs(list) {
+    tabList = list;
+    window.AskaTabs.update(mini ? [] : list);
+    syncMini();
+  }
+
+  // Arrivée sur un autre onglet : on range le brouillon et les choix de l'onglet
+  // quitté, on affiche le fil du nouveau, et on se raccroche à sa demande en cours.
+  function switchTo(s) {
+    if (convId) tabUi.set(convId, { draft: input.value, agentId, mode });
+    clearTimeout(renderTimer);
+    renderTimer = null;
+    closeArmed = null;
+    pendingTrust = null;
+    confirmBox.hidden = true;
+    if (view === 'history') showHistory(false);
+    showNotice('');
+    renderThread(s.conversation);
+    const ui = tabUi.get(s.conversation.id);
+    input.value = ui ? ui.draft || '' : '';
+    histIdx = -1;
+    running = !!s.run;
+    live = null;
+    runId = null;
+    if (s.run) {
+      const node = thread.lastElementChild;
+      if (node) {
+        live = { node, meta: node.querySelector('.meta'), answerEl: node.querySelector('.output'), text: s.conversation.turns[s.conversation.turns.length - 1].answer || '' };
+        node.classList.add('live');
+      }
+      runId = s.run.id;
+      panel.dataset.state = 'running';
+      setActivity('En cours…');
+    } else setActivity('');
+    autosize();
+    setKeys();
+  }
+
+  async function newTab() {
+    const res = await api.newTab();
+    if (res.error) setStatus(res.error, 'err');
+    applyState(res);
+    input.focus();
+  }
+
+  async function activateTab(id) {
+    if (!id || id === convId) return;
+    applyState(await api.activateTab(id));
+    input.focus();
+  }
+
+  async function cycleTab(dir) {
+    if (tabList.length < 2) return;
+    applyState(await api.cycleTab(dir));
+    input.focus();
+  }
+
+  // Fermer un onglet qui travaille se fait en deux temps : sa demande sera annulée.
+  async function closeTab(id) {
+    const target = id || convId;
+    const res = await api.closeTab(target, closeArmed === target);
+    if (res.needsConfirm) {
+      closeArmed = target;
+      setStatus('Demande en cours : fermez à nouveau pour l’annuler et fermer l’onglet', 'err');
+      return;
+    }
+    closeArmed = null;
+    if (res.error) setStatus(res.error, 'err');
+    applyState(res);
+    input.focus();
+  }
+
+  window.AskaTabs.init($('tabs'), { onActivate: activateTab, onClose: closeTab, onNew: newTab });
+  api.onTabs(setTabs);
 
   // ---------- envoi ----------
 
@@ -381,7 +473,7 @@
     const a = agent();
     if (running || !prompt || !a) return;
     if (view === 'history') showHistory(false);
-    const res = await api.run({ agentId, mode, prompt, trust });
+    const res = await api.run({ tabId: convId, agentId, mode, prompt, trust });
     if (res.needsTrust) {
       pendingTrust = { prompt };
       confirmBox.dataset.mode = res.mode;
@@ -425,7 +517,8 @@
   }
 
   function onRunEvent(ev) {
-    if (ev.id !== runId || !live) return;
+    if (ev.type === 'end' && ev.tabs) setTabs(ev.tabs);
+    if (ev.tabId !== convId || ev.id !== runId || !live) return;
     switch (ev.type) {
       case 'text':
         live.text += ev.text;
@@ -469,12 +562,10 @@
     scrollEnd(true);
   }
 
+  // Nouvelle conversation : dans un nouvel onglet (ou l'onglet actif s'il est vide).
   async function newConversation() {
-    if (running) return;
     if (view === 'history') showHistory(false);
-    showNotice('');
-    applyState(await api.newConversation());
-    input.focus();
+    await newTab();
   }
 
   // ---------- historique des conversations ----------
@@ -579,7 +670,6 @@
   }
 
   async function showHistory(on) {
-    if (on && running) return;
     view = on ? 'history' : 'chat';
     $('hist-btn').setAttribute('aria-pressed', String(on));
     historyBox.hidden = !on;
@@ -601,9 +691,9 @@
 
   async function openConversation(id) {
     const s = await api.openConversation(id);
-    showNotice('');
-    applyState(s);
     showHistory(false);
+    applyState(s);
+    if (s.error) setStatus(s.error, 'err');
   }
 
   // Suppression en deux temps : la première demande arme, la seconde confirme.
@@ -677,6 +767,22 @@
       setPinned(!pinned, true);
       return;
     }
+    if (!mini && !pendingTrust && !menuOpen && e.ctrlKey) {
+      const tabKey =
+        (k === 't' || (k === 'n' && !e.shiftKey)) ? () => newConversation()
+        : k === 'w' && !e.shiftKey ? () => closeTab()
+        : e.key === 'Tab' ? () => cycleTab(e.shiftKey ? -1 : 1)
+        : e.key === 'PageDown' ? () => cycleTab(1)
+        : e.key === 'PageUp' ? () => cycleTab(-1)
+        : /^[1-9]$/.test(e.key) && !e.shiftKey && tabList.length > 1
+          ? () => activateTab((e.key === '9' ? tabList[tabList.length - 1] : tabList[Number(e.key) - 1] || {}).id)
+          : null;
+      if (tabKey) {
+        e.preventDefault();
+        tabKey();
+        return;
+      }
+    }
     if (mini) {
       if (e.key === 'Escape') { e.preventDefault(); api.hide(); }
       else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMini(false); }
@@ -720,13 +826,12 @@
         // « Suppr » vise la conversation quand il n'y a plus rien à effacer dans la recherche.
         e.preventDefault();
         deleteConversation(sel.id);
-      } else if (e.ctrlKey && k === 'n') { e.preventDefault(); newConversation(); }
-      else if (e.key === 'Tab') e.preventDefault();
+      } else if (e.key === 'Tab') e.preventDefault();
       return;
     }
     if (e.key === 'Escape') {
       e.preventDefault();
-      if (running) api.cancel();
+      if (running) api.cancel(convId);
       else api.hide();
     } else if (e.key === 'Tab') {
       e.preventDefault();
@@ -744,7 +849,7 @@
     } else if (e.ctrlKey && !e.shiftKey && k === 'o') {
       e.preventDefault();
       if (!running) api.pickDir().then(applyState);
-    } else if (e.ctrlKey && !e.shiftKey && (k === 'n' || k === 'l')) {
+    } else if (e.ctrlKey && !e.shiftKey && k === 'l') {
       e.preventDefault();
       newConversation();
     } else if (e.ctrlKey && !e.shiftKey && k === 'h') {
