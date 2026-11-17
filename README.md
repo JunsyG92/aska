@@ -24,6 +24,7 @@ pilotés par leurs CLI officiels. Linux et Windows.
 
 - ⌨️ **`Ctrl+Alt+Espace`** ouvre la fenêtre, où que vous soyez. `Tab` change d'agent, `Entrée` envoie.
 - 💬 **Un vrai fil de discussion** : chaque message garde le contexte des précédents, même si vous changez d'agent en route.
+- 🗂️ **Des onglets qui travaillent en parallèle** : une conversation par sujet, et Claude peut réfléchir dans l'un pendant que vous questionnez Codex dans un autre.
 - 🔌 **Vos CLI, vos comptes** : Aska n'appelle aucune API et ne stocke aucune clé. Il lance les CLI déjà installés et connectés chez vous, avec leurs MCP et leurs skills.
 - 🛡️ **Lecture seule par défaut** : l'agent ne modifie rien tant que vous ne changez pas de mode, et jamais sans votre accord pour le dossier.
 - 📌 **Discret ou toujours là** : un clic à l'extérieur masque le chat ; épinglé, il reste au premier plan où vous le posez. Réduit en pastille, il vous montre où en est l'agent.
@@ -146,7 +147,10 @@ L'aide liste les options, les raccourcis, et surtout **l'état de chaque agent**
 | `Tab` | agent suivant |
 | `Maj+Tab` | mode de permission suivant |
 | `Ctrl+Maj+M` | choisir le modèle |
-| `Ctrl+N` | nouvelle conversation |
+| `Ctrl+T` (ou `Ctrl+N`) | nouvel onglet |
+| `Ctrl+W` | fermer l'onglet (deux fois s'il travaille : sa demande est annulée) |
+| `Ctrl+Tab` / `Ctrl+Maj+Tab` | onglet suivant / précédent (aussi `Ctrl+PgSuiv` / `Ctrl+PgPréc`) |
+| `Ctrl+1` … `Ctrl+9` | aller à l'onglet n°1 à 8, `Ctrl+9` : le dernier |
 | `Ctrl+H` | historique : taper pour rechercher, `Entrée` ouvrir, `Suppr` deux fois pour supprimer |
 | `Ctrl+O` | dossier de travail (clic droit sur le dossier : retour à l'espace temporaire) |
 | `↑` / `↓` | rappeler un message déjà envoyé |
@@ -172,6 +176,24 @@ Quand une réponse arrive alors que le chat est masqué ou réduit en pastille, 
 Sous Windows, les notifications exigent un raccourci du menu Démarrer portant l'identité de l'application : `scripts\install.ps1` le crée.
 
 ## Conversations
+
+### Onglets
+
+Chaque onglet est une conversation à part, avec son propre dossier de travail,
+son agent, son mode et son brouillon. **Les onglets travaillent en même temps** :
+lancez une analyse avec Claude dans un onglet, et posez une autre question à
+Codex dans un autre pendant qu'il travaille (4 demandes simultanées au plus,
+8 onglets).
+
+- La barre d'onglets n'apparaît qu'à partir de deux onglets : avec un seul, Aska
+  reste un simple chat.
+- Un onglet qui travaille affiche un anneau qui tourne ; une réponse arrivée dans
+  un onglet que vous ne regardiez pas le met en gras, avec un point vert.
+- Revenir sur un onglet pendant qu'il répond reprend l'affichage en direct.
+- Ouvrir une conversation depuis l'historique l'ouvre dans un onglet (ou active
+  celui où elle est déjà ouverte).
+- Les onglets ouverts sont rouverts au prochain démarrage.
+
 
 - **Suite de discussion** : avec Claude, Aska reprend la session du CLI (`--resume`), qui garde tout le contexte, outils compris. Avec les autres agents, ou si vous changez d'agent en cours de fil, les échanges précédents sont réinjectés dans la demande (les plus récents d'abord, dans la limite d'environ 24 000 caractères).
 - **Changer d'agent en route** : Codex peut donc poursuivre une discussion commencée avec Claude.
