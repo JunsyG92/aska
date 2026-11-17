@@ -9,6 +9,7 @@ const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('
 const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
+const { Tabs } = require('./tabs');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
@@ -31,8 +32,8 @@ let cfg = null;
 let agents = {};
 let warnings = [];
 let trust = null;
-let cwd = null;
-let current = null; // run in progress: { id, handle }
+let cwd = null; // folder of the active tab (and of new tabs)
+const MAX_RUNS = 4; // simultaneous requests at most, across all tabs
 let runSeq = 0;
 let dialogOpen = false;
 let shortcutOk = false;
@@ -44,7 +45,8 @@ let notifier = null;
 let savedPos = null; // anchor chosen by the user: left edge and BOTTOM edge of the window
 let saveTimer = null;
 let store = null; // saved conversations
-let conv = null; // displayed conversation
+let tabs = null; // open tabs (see tabs.js); each one carries its conversation and its running request
+let savedTabs = null; // saved tabs, reopened at startup
 const picked = {}; // model chosen per agent: { claude: 'opus' } (missing = default)
 const extraModels = {}; // models typed in by hand, per agent
 const discovered = {}; // models reported by each CLI: { cursor: { models, error } }
@@ -108,6 +110,7 @@ function loadEverything() {
       if (Object.hasOwn(agents, k) && Array.isArray(v)) extraModels[k] = v.filter(isModel).slice(0, 12);
     }
     if (typeof d.pinned === 'boolean') pinned = d.pinned;
+    savedTabs = { ids: d.tabs, active: d.activeTab };
     const pos = st.data && st.data.pos;
     if (pos && Number.isInteger(pos.x) && Number.isInteger(pos.bottom)) savedPos = { x: pos.x, bottom: pos.bottom };
     cwd = saved && !sec.checkWorkdir(saved, 'read').error ? saved : P.workspace;
@@ -123,7 +126,36 @@ function loadEverything() {
     },
   });
   store = new ConversationStore(P.conversations, { persist: cfg.savePrompts });
-  if (!conv) conv = store.create(cwd);
+  if (!tabs) {
+    tabs = new Tabs(store);
+    tabs.restore(cfg.savePrompts && savedTabs ? savedTabs.ids : [], savedTabs && savedTabs.active, cwd);
+    syncCwd();
+  } else tabs.store = store; // --reload
+}
+
+// The working folder follows the active tab (a folder that is gone falls back to the scratch space).
+function syncCwd() {
+  const c = tabs.active().conv.cwd;
+  cwd = typeof c === 'string' && !sec.checkWorkdir(c, 'read').error ? c : P.workspace;
+}
+
+// Tab bar on the interface side.
+function publicTabs() {
+  return tabs.list.map((t) => {
+    const last = t.conv.turns[t.conv.turns.length - 1];
+    return {
+      id: t.id,
+      title: t.conv.title || (last ? last.prompt.slice(0, 60) : ''),
+      color: last && agents[last.agent] ? agents[last.agent].color : null,
+      running: !!t.run,
+      unread: t.unread,
+      active: t.id === tabs.activeId,
+    };
+  });
+}
+
+function pushTabs() {
+  if (win && !win.isDestroyed()) win.webContents.send('aska:tabs', publicTabs());
 }
 
 function fsRealWorkspace() {
@@ -136,7 +168,8 @@ function fsRealWorkspace() {
 
 function saveState() {
   try {
-    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels, pinned }));
+    const open = tabs && cfg.savePrompts ? tabs.serialize() : {};
+    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels, pinned, ...open }));
   } catch { /* state is a convenience, not a necessity */ }
 }
 
@@ -206,8 +239,11 @@ function publicState() {
     shortcut: shortcutOk ? cfg.shortcut : null,
     warnings,
     history: cfg.savePrompts ? sec.readRecentPrompts(P.audit) : [],
-    running: !!current,
-    conversation: { id: conv.id, title: conv.title, turns: conv.turns.map(publicTurn) },
+    running: !!tabs.active().run,
+    // Running request of the active tab: the interface reattaches to it to follow the answer.
+    run: tabs.active().run ? { id: tabs.active().run.id } : null,
+    conversation: { id: tabs.active().conv.id, title: tabs.active().conv.title, turns: tabs.active().conv.turns.map(publicTurn) },
+    tabs: publicTabs(),
     historyEnabled: cfg.savePrompts,
     pinned,
     unread,
@@ -313,17 +349,16 @@ function setUnread(n) {
   if (win && !win.isDestroyed()) win.webContents.send('aska:unread', unread);
 }
 
-// Reopens a saved conversation (and its working folder).
+// Reopens a saved conversation in a tab (and its working folder, which session
+// resume depends on).
 function openConversationById(cid) {
-  if (current || !cid || conv.id === cid) return;
-  const c = store.load(cid);
-  if (!c) return;
-  conv = c;
-  // Restore the conversation's folder: session resume depends on it.
-  if (typeof c.cwd === 'string' && !sec.checkWorkdir(c.cwd, 'read').error) {
-    cwd = c.cwd;
-    saveState();
-  }
+  if (typeof cid !== 'string' || !cid) return { error: t('errors.conversationNotFound') };
+  const r = tabs.open(cid);
+  if (r.error) return r;
+  syncCwd();
+  saveState();
+  pushTabs();
+  return { ok: true };
 }
 
 function toggleWindow() {
@@ -363,8 +398,12 @@ function send(payload) {
 }
 
 function startRun(req) {
-  if (current) return { error: t('errors.busy') };
   if (!req || typeof req !== 'object') return { error: t('errors.invalidRequest') };
+  const tab = typeof req.tabId === 'string' ? tabs.get(req.tabId) : null;
+  if (!tab) return { error: t('errors.tabNotFound') };
+  if (tab.run) return { error: t('errors.tabBusy') };
+  if (tabs.running().length >= MAX_RUNS) return { error: t('errors.tooManyRuns', { max: MAX_RUNS }) };
+  const conv = tab.conv;
   const { agentId, mode, prompt, trust: trustChoice } = req;
   const agent = typeof agentId === 'string' && Object.hasOwn(agents, agentId) ? agents[agentId] : null;
   if (!agent) return { error: t('errors.unknownAgent') };
@@ -375,7 +414,8 @@ function startRun(req) {
   }
   if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 100000) return { error: t('errors.invalidPrompt') };
 
-  const dir = sec.checkWorkdir(cwd, mode, os.homedir(), [fsRealWorkspace()]);
+  const tabCwd = typeof conv.cwd === 'string' && !sec.checkWorkdir(conv.cwd, 'read').error ? conv.cwd : P.workspace;
+  const dir = sec.checkWorkdir(tabCwd, mode, os.homedir(), [fsRealWorkspace()]);
   if (dir.error) return { error: dir.error };
 
   // Writing to a folder requires the user's explicit approval.
@@ -429,13 +469,14 @@ function startRun(req) {
       else if (ev.type === 'meta' && ev.model) turn.model = ev.model;
       else if (ev.type === 'error') streamError = ev.text;
       else if (ev.type === 'denied') denied = ev;
-      if (ev.type !== 'session') send({ id, ...ev });
+      if (ev.type !== 'session') send({ id, tabId: tab.id, ...ev });
     }
   );
-  current = { id, handle: handleRun };
+  tab.run = { id, handle: handleRun };
+  pushTabs();
 
   handleRun.done.then((res) => {
-    current = null;
+    tab.run = null;
     const ok = res.ok && !streamError;
     turn.status = ok ? 'ok' : res.reason === 'cancel' ? 'cancel' : 'error';
     turn.durationMs = res.durationMs;
@@ -475,11 +516,17 @@ function startRun(req) {
       code: res.code ?? null,
       durationMs: res.durationMs,
     });
+    // Answer arrived out of view (another tab, or hidden window): the tab flags it.
+    const onScreen = !!win && win.isVisible() && !hideTimer && !mini && tabs.activeId === tab.id;
+    if (turn.status !== 'cancel' && !onScreen && tabs.get(tab.id)) tab.unread = true;
+    saveState();
     send({
       id,
+      tabId: tab.id,
       type: 'end',
       turn: publicTurn(turn),
       title: thread.title,
+      tabs: publicTabs(),
     });
     // A window that is hiding (exit animation) counts as hidden.
     const seen = { visible: !!win && win.isVisible() && !hideTimer, focused: !!win && win.isFocused(), mini, status: turn.status };
@@ -544,8 +591,9 @@ function registerIpc() {
   });
   handle('aska:state', () => publicState());
   handle('aska:run', startRun);
-  handle('aska:cancel', () => {
-    if (current) current.handle.cancel();
+  handle('aska:cancel', (tabId) => {
+    const tab = typeof tabId === 'string' ? tabs.get(tabId) : tabs.active();
+    if (tab && tab.run) tab.run.handle.cancel();
     return true;
   });
   handle('aska:hide', () => hideWindow());
@@ -554,19 +602,48 @@ function registerIpc() {
     saveState();
     return pinned;
   });
+  // ----- tabs -----
+  const tabChanged = (extra = {}) => {
+    syncCwd();
+    saveState();
+    return { ...publicState(), ...extra };
+  };
+  // New tab, in the folder of the active tab.
+  handle('aska:tab-new', () => {
+    const r = tabs.create(cwd);
+    return tabChanged(r.error ? { error: r.error } : {});
+  });
+  handle('aska:tab-activate', (id) => {
+    if (typeof id === 'string') tabs.activate(id);
+    return tabChanged();
+  });
+  handle('aska:tab-cycle', (dir) => {
+    tabs.cycle(dir === -1 ? -1 : 1);
+    return tabChanged();
+  });
+  // Closing a working tab asks for confirmation: its request will be cancelled.
+  handle('aska:tab-close', (req) => {
+    // No id: the active tab. A malformed id is refused, never replaced.
+    const id = !req || req.id === undefined ? tabs.activeId : typeof req.id === 'string' ? req.id : null;
+    const r = tabs.close(id, { force: !!(req && req.force === true), cwd });
+    return tabChanged(r.needsConfirm ? { needsConfirm: id } : r.error ? { error: r.error } : {});
+  });
   handle('aska:conv-new', () => {
-    if (!current) conv = store.create(cwd);
-    return publicState();
+    const r = tabs.create(cwd);
+    return tabChanged(r.error ? { error: r.error } : {});
   });
   handle('aska:conv-list', () => publicList());
   handle('aska:conv-open', (cid) => {
-    if (typeof cid === 'string') openConversationById(cid);
-    return publicState();
+    const r = openConversationById(cid);
+    return { ...publicState(), ...(r.error ? { error: r.error } : {}) };
   });
   handle('aska:conv-delete', (cid) => {
-    if (current && conv.id === cid) return publicList();
+    if (typeof cid !== 'string') return publicList();
+    // A conversation open in a working tab is not deleted.
+    if (tabs.forget(cid, cwd).error) return publicList();
     store.delete(cid);
-    if (conv.id === cid) conv = store.create(cwd);
+    syncCwd();
+    saveState();
     return publicList();
   });
   handle('aska:set-model', (req) => {
@@ -605,7 +682,9 @@ function registerIpc() {
     return true;
   });
   handle('aska:reset-dir', () => {
+    if (tabs.active().run) return publicState();
     cwd = P.workspace;
+    tabs.active().conv.cwd = cwd;
     saveState();
     return publicState();
   });
@@ -619,8 +698,9 @@ function registerIpc() {
       });
       if (!r.canceled && r.filePaths[0]) {
         const d = sec.checkWorkdir(r.filePaths[0], 'read');
-        if (!d.error) {
+        if (!d.error && !tabs.active().run) {
           cwd = d.path;
+          tabs.active().conv.cwd = cwd; // the folder belongs to the tab
           saveState();
         }
       }
@@ -749,7 +829,7 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
 
   app.on('before-quit', () => {
     quitting = true;
-    if (current) current.handle.cancel();
+    for (const t of tabs ? tabs.running() : []) t.run.handle.cancel();
   });
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();

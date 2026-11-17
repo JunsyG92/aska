@@ -97,20 +97,33 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     // The UI is isolated from Node.
     assert.deepEqual(await page.evaluate(() => [typeof require, typeof process]), ['undefined', 'undefined']);
     // The main process revalidates everything the UI sends.
-    const bad = await page.evaluate(async () => [
-      await window.aska.run({ agentId: '__proto__', mode: 'read', prompt: 'x' }),
-      await window.aska.run({ agentId: 'claude', mode: 'auto', prompt: 'x', trust: 'always' }),
-      await window.aska.run({ agentId: 'claude', mode: 'bypass', prompt: 'x' }),
-      await window.aska.run({ agentId: 'claude', mode: 'read', prompt: 42 }),
-      (await window.aska.setModel('claude', '--dangerously-skip-permissions')).agents.find((a) => a.id === 'claude').model,
-      (await window.aska.openConversation('../../../etc/passwd')).conversation.turns.length,
-    ]);
+    const bad = await page.evaluate(async () => {
+      const tabId = (await window.aska.getState()).conversation.id;
+      return [
+        await window.aska.run({ tabId, agentId: '__proto__', mode: 'read', prompt: 'x' }),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'auto', prompt: 'x', trust: 'always' }),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'bypass', prompt: 'x' }),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'read', prompt: 42 }),
+        (await window.aska.setModel('claude', '--dangerously-skip-permissions')).agents.find((a) => a.id === 'claude').model,
+        (await window.aska.openConversation('../../../etc/passwd')).conversation.turns.length,
+        await window.aska.run({ tabId: '__proto__', agentId: 'claude', mode: 'read', prompt: 'x' }),
+        await window.aska.run({ agentId: 'claude', mode: 'read', prompt: 'x' }),
+        (await window.aska.activateTab('../../x')).conversation.id === tabId,
+        await window.aska.closeTab(42),
+      ];
+    });
     assert.match(bad[0].error, /Unknown agent/);
     assert.match(bad[1].error, /Autonomous mode is disabled/);
     assert.match(bad[2].error, /Unknown mode/);
     assert.match(bad[3].error, /Invalid prompt/);
     assert.equal(bad[4], null);
     assert.equal(bad[5], 0);
+    // Missing or unknown tab: refused, and nothing changes.
+    assert.match(bad[6].error, /Tab not found/);
+    assert.match(bad[7].error, /Tab not found/);
+    assert.equal(bad[8], true);
+    assert.match(bad[9].error, /Tab not found/);
+    assert.equal(bad[9].tabs.length, 1);
 
     // Click outside: the chat hides (default behavior)...
     const blur = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit('blur'));
@@ -450,6 +463,68 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await visible(), true);
     assert.equal(await turns(), 9);
 
+    // ---------- tabs: several conversations, working at the same time ----------
+    const tabTitles = () => page.locator('.tab .tab-title').allTextContents();
+    const activeTitle = () => page.locator('.tab.active .tab-title').textContent();
+    await page.keyboard.press('Control+t');
+    await page.waitForSelector('#tabs:not([hidden])');
+    assert.equal(await page.locator('.tab').count(), 2);
+    assert.equal(await activeTitle(), 'New conversation');
+    assert.equal(await turns(), 0, 'new tab: empty thread');
+    // A long request in tab 2…
+    await page.keyboard.type('Long analysis in the second tab');
+    await page.keyboard.press('Enter');
+    await settled('running');
+    // … and meanwhile, back to tab 1 (Ctrl+1) where we keep working too.
+    await page.keyboard.type('draft');
+    await page.keyboard.press('Control+1');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 9);
+    assert.equal(await page.locator('.tab.running').count(), 1, 'tab 2 works in the background');
+    assert.equal(await page.inputValue('#input'), '', 'each tab has its own draft');
+    await shot('9-tabs-running-light');
+    await send('Meanwhile, a quick question [text]');
+    await settled('done');
+    assert.equal(await turns(), 10);
+    // Tab 2's answer arrives while we are not looking at it: it gets flagged.
+    await page.waitForSelector('.tab.unread', { timeout: 20000 });
+    assert.equal(await page.locator('.tab.running').count(), 0);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(400);
+    await shot('9-tabs-unread-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.keyboard.press('Control+Tab');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 1);
+    assert.match(await page.locator('.turn .output').first().textContent(), /three points about main\.js/);
+    assert.equal(await page.locator('.tab.unread').count(), 0, 'read once the tab is open');
+    assert.equal(await page.inputValue('#input'), 'draft', 'tab 2 draft is restored');
+    await page.fill('#input', '');
+    // Reattach to a running answer: leave the tab while it answers, then come back.
+    await send('Second answer, followed from afar');
+    await settled('running');
+    await page.keyboard.press('Control+Shift+Tab');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 10);
+    await page.keyboard.press('Control+2');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 2);
+    assert.equal(await page.getAttribute('.panel', 'data-state'), 'running');
+    await settled('done');
+    assert.match(await page.locator('.turn .output').nth(1).textContent(), /Session continued|three/);
+    // Closing a working tab: confirmation, then the request is cancelled.
+    await send('Request to abandon [hang]');
+    await settled('running');
+    await page.keyboard.press('Control+w');
+    assert.match(await page.textContent('#status'), /close again/);
+    assert.equal(await page.locator('.tab').count(), 2);
+    await page.keyboard.press('Control+w');
+    await page.waitForFunction(() => document.querySelector('#tabs').hidden);
+    assert.equal(await turns(), 10, 'back to the remaining tab');
+    await page.waitForTimeout(500);
+    assert.equal(JSON.parse(fs.readFileSync(P.audit, 'utf8').trim().split('\n').pop()).result, 'cancel');
+    // Open tabs are saved for the next start.
+    const st = JSON.parse(fs.readFileSync(P.state, 'utf8'));
+    assert.equal(st.tabs.length, 1);
+    assert.equal(st.activeTab, st.tabs[0]);
+    assert.deepEqual(await tabTitles(), ['Summarize main.js (deny)']);
+
     // French UI: "language" in the config, picked up by "aska --reload" and the next show.
     fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'fr' }), { mode: 0o600 });
     await app.evaluate(({ app }) => app.emit('second-instance', {}, ['--reload']));
@@ -468,19 +543,19 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.match(await page.textContent('.hist-sub'), / · \d+ messages · Espace temporaire/);
     await page.keyboard.press('Escape');
 
+    // Cursor requires --trust when headless: granted automatically in Aska's empty folder.
+    const before = calls().length;
+    assert.equal((await page.evaluate(async () => window.aska.run({ tabId: (await window.aska.getState()).conversation.id, agentId: 'cursor', mode: 'read', prompt: 'hi' }))).ok, true);
+    await page.waitForTimeout(1500);
+    const cur = calls()[before];
+    assert.deepEqual(cur.args.slice(0, 6), ['-p', '--output-format', 'stream-json', '--mode', 'ask', '--trust']);
 
-    // Navigation and window opening are blocked.
+    // Navigation and window opening are blocked (last: Playwright then waits for
+    // a navigation that will never happen).
     await page.evaluate(() => { window.open('https://example.com'); location.href = 'https://example.com'; });
     await page.waitForTimeout(300);
     assert.match(page.url(), /^file:.*index\.html$/);
     assert.equal((await app.windows()).length, 1);
-
-    // Cursor requires --trust when headless: granted automatically in Aska's empty folder.
-    const before = calls().length;
-    assert.equal((await page.evaluate(() => window.aska.run({ agentId: 'cursor', mode: 'read', prompt: 'hi' }))).ok, true);
-    await page.waitForTimeout(1500);
-    const cur = calls()[before];
-    assert.deepEqual(cur.args.slice(0, 6), ['-p', '--output-format', 'stream-json', '--mode', 'ask', '--trust']);
 
     console.log('E2E OK, screenshots in', OUT);
   } finally {

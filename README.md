@@ -24,6 +24,7 @@ driven by their official CLIs. Linux and Windows.
 
 - ⌨️ **`Ctrl+Alt+Space`** opens the window, wherever you are. `Tab` switches agent, `Enter` sends.
 - 💬 **A real conversation thread**: each message keeps the context of the previous ones, even if you switch agents along the way.
+- 🗂️ **Tabs that work in parallel**: one conversation per topic, and Claude can think in one while you ask Codex something in another.
 - 🔌 **Your CLIs, your accounts**: Aska calls no API and stores no key. It runs the CLIs already installed and signed in on your machine, with their MCP servers and skills.
 - 🛡️ **Read-only by default**: the agent changes nothing until you switch modes, and never without your approval for the folder.
 - 📌 **Out of the way or always there**: a click outside hides the chat; pinned, it stays on top where you put it. Minimized to a pill, it shows you how the agent is doing.
@@ -147,7 +148,10 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Tab` | next agent |
 | `Shift+Tab` | next permission mode |
 | `Ctrl+Shift+M` | pick the model |
-| `Ctrl+N` | new conversation |
+| `Ctrl+T` (or `Ctrl+N`) | new tab |
+| `Ctrl+W` | close the tab (twice if it is working: its request is cancelled) |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | next / previous tab (also `Ctrl+PgDn` / `Ctrl+PgUp`) |
+| `Ctrl+1` … `Ctrl+9` | go to tab 1 to 8, `Ctrl+9`: the last one |
 | `Ctrl+H` | history: type to search, `Enter` to open, `Del` twice to delete |
 | `Ctrl+O` | working folder (right-click the folder: back to the scratch space) |
 | `↑` / `↓` | recall a message already sent |
@@ -173,6 +177,23 @@ When an answer arrives while the chat is hidden or minimized to a pill, Aska sen
 On Windows, notifications require a Start menu shortcut carrying the application identity: `scripts\install.ps1` creates it.
 
 ## Conversations
+
+### Tabs
+
+Each tab is a separate conversation, with its own working folder, agent, mode
+and draft. **Tabs work at the same time**: start an analysis with Claude in one
+tab, and ask Codex another question in another while it works (4 simultaneous
+requests at most, 8 tabs).
+
+- The tab bar only appears from two tabs on: with a single one, Aska stays a
+  simple chat.
+- A working tab shows a spinning ring; an answer that arrives in a tab you were
+  not looking at makes it bold, with a green dot.
+- Coming back to a tab while it answers resumes the live display.
+- Opening a conversation from the history opens it in a tab (or activates the
+  one where it is already open).
+- Open tabs are reopened at the next start.
+
 
 - **Follow-ups**: with Claude, Aska resumes the CLI session (`--resume`), which keeps the whole context, tools included. With the other agents, or if you switch agents mid-thread, the previous exchanges are injected back into the request (most recent first, up to about 24,000 characters).
 - **Switching agents along the way**: so Codex can carry on a discussion started with Claude.

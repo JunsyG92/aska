@@ -11,7 +11,11 @@ const on = (channel) => (cb) => {
 contextBridge.exposeInMainWorld('aska', {
   getState: () => ipcRenderer.invoke('aska:state'),
   run: (req) => ipcRenderer.invoke('aska:run', req),
-  cancel: () => ipcRenderer.invoke('aska:cancel'),
+  cancel: (tabId) => ipcRenderer.invoke('aska:cancel', tabId),
+  newTab: () => ipcRenderer.invoke('aska:tab-new'),
+  activateTab: (id) => ipcRenderer.invoke('aska:tab-activate', id),
+  cycleTab: (dir) => ipcRenderer.invoke('aska:tab-cycle', dir),
+  closeTab: (id, force) => ipcRenderer.invoke('aska:tab-close', { id, force: force === true }),
   pickDir: () => ipcRenderer.invoke('aska:pick-dir'),
   resetDir: () => ipcRenderer.invoke('aska:reset-dir'),
   copy: (text) => ipcRenderer.invoke('aska:copy', text),
@@ -30,4 +34,5 @@ contextBridge.exposeInMainWorld('aska', {
   onShown: on('aska:shown'),
   onWillHide: on('aska:will-hide'),
   onUnread: on('aska:unread'),
+  onTabs: on('aska:tabs'),
 });

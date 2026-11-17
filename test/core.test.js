@@ -672,3 +672,96 @@ test('i18n: every language has the same keys and placeholders, and no em dash', 
     }
   }
 });
+
+// ---------- tabs ----------
+
+const { Tabs } = require('../src/main/tabs');
+
+function tabsFixture() {
+  const store = new ConversationStore(path.join(tmp(), 'conv'));
+  const saved = (title, cwd = '/p') => {
+    const c = store.create(cwd);
+    c.turns.push({ agent: 'claude', label: 'Claude', prompt: title, answer: 'ok', status: 'ok' });
+    store.save(c);
+    return c.id;
+  };
+  return { store, saved, tabs: new Tabs(store, { max: 3 }) };
+}
+
+test('tabs: creation, reuse of the empty tab, limit', () => {
+  const { tabs } = tabsFixture();
+  tabs.restore([], null, '/p');
+  assert.equal(tabs.list.length, 1);
+  const first = tabs.active();
+  // The active tab is still empty: "new tab" reuses it.
+  assert.equal(tabs.create('/p').tab, first);
+  first.conv.turns.push({ agent: 'claude', prompt: 'q', answer: '' });
+  const second = tabs.create('/p').tab;
+  assert.notEqual(second, first);
+  assert.equal(tabs.activeId, second.id);
+  second.conv.turns.push({ agent: 'codex', prompt: 'q2', answer: '' });
+  tabs.create('/q').tab.conv.turns.push({ agent: 'codex', prompt: 'q3', answer: '' });
+  assert.match(tabs.create('/p').error, /3 tabs at most/);
+  assert.equal(tabs.cycle(1).id, first.id); // wraps around
+  assert.equal(tabs.cycle(-1).id, tabs.list[2].id);
+});
+
+test('tabs: open a saved conversation, without duplicates', () => {
+  const { tabs, saved } = tabsFixture();
+  const a = saved('Sujet A');
+  const b = saved('Sujet B');
+  tabs.restore([], null, '/p');
+  const emptyId = tabs.activeId;
+  // The empty tab is replaced by the opened conversation.
+  tabs.open(a);
+  assert.deepEqual(tabs.list.map((t) => t.id), [a]);
+  assert.ok(!tabs.get(emptyId));
+  tabs.open(b);
+  assert.deepEqual(tabs.list.map((t) => t.id), [a, b]);
+  // Already open: simply activated.
+  tabs.open(a);
+  assert.equal(tabs.list.length, 2);
+  assert.equal(tabs.activeId, a);
+  assert.match(tabs.open('0123456789abcdef').error, /not found/);
+});
+
+test('tabs: closing a working tab asks for confirmation and cancels its request', () => {
+  const { tabs, saved } = tabsFixture();
+  const a = saved('A');
+  const b = saved('B');
+  tabs.restore([a, b], a, '/p');
+  let cancelled = 0;
+  tabs.get(a).run = { id: 1, handle: { cancel: () => { cancelled += 1; } } };
+  assert.deepEqual(tabs.close(a), { needsConfirm: true });
+  assert.equal(tabs.list.length, 2);
+  assert.equal(cancelled, 0);
+  assert.deepEqual(tabs.close(a, { force: true }), { ok: true });
+  assert.equal(cancelled, 1);
+  assert.equal(tabs.activeId, b, 'the neighbouring tab becomes active');
+  // Closing the last tab reopens an empty one: there is always one left.
+  tabs.close(b);
+  assert.equal(tabs.list.length, 1);
+  assert.equal(tabs.active().conv.turns.length, 0);
+  // Deleting a working conversation from the history is refused.
+  tabs.open(a);
+  tabs.get(a).run = { id: 2, handle: { cancel() {} } };
+  assert.match(tabs.forget(a).error, /is running/);
+});
+
+test('tabs: saved then reopened, unread answers cleared on activation', () => {
+  const { store, tabs, saved } = tabsFixture();
+  const a = saved('A');
+  const b = saved('B');
+  tabs.restore([a, b], b, '/p');
+  tabs.create('/p'); // empty tab: not saved
+  assert.deepEqual(tabs.serialize(), { tabs: [a, b], activeTab: b });
+  tabs.get(a).unread = true;
+  tabs.activate(a);
+  assert.equal(tabs.get(a).unread, false);
+  // Reopening: deleted conversation skipped, invalid ids skipped.
+  store.delete(b);
+  const again = new Tabs(store);
+  again.restore([a, b, 42, a], b, '/p');
+  assert.deepEqual(again.list.map((t) => t.id), [a]);
+  assert.equal(again.activeId, a);
+});
