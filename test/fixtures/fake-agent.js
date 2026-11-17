@@ -76,6 +76,7 @@ process.stdin.on('end', async () => {
     const chosen = args.includes('--model') ? args[args.indexOf('--model') + 1] : 'fake-model-1';
     j({ type: 'system', subtype: 'init', model: chosen, session_id: 'sess-0001-abcd' });
     if (resumed) {
+      await sleep(Number(process.env.FAKE_DELAY || 15) * 20);
       j({ type: 'assistant', message: { content: [{ type: 'text', text: 'Suite de la session : `preload.js` expose une API minimale.' }] } });
       j({ type: 'result', subtype: 'success', is_error: false, result: 'fin', session_id: 'sess-0001-abcd' });
       return;

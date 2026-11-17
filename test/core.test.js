@@ -437,3 +437,75 @@ test('aska --help : options, raccourcis, agents détectés et fichiers ; --versi
   assert.ok(!/\x1b\[/.test(out), 'pas de couleurs hors terminal');
   assert.match(execFileSync(process.execPath, [cli, '--version'], { env, encoding: 'utf8' }), /^aska \d+\.\d+\.\d+\n$/);
 });
+
+// ---------- notifications ----------
+
+const { shouldNotify, notificationContent, createNotifier } = require('../src/main/notify');
+
+test('notifications : seulement quand le chat est hors de vue, jamais pour une annulation', () => {
+  const at = (o) => ({ visible: true, focused: true, mini: false, status: 'ok', ...o });
+  assert.equal(shouldNotify('hidden', at({})), false);
+  assert.equal(shouldNotify('hidden', at({ focused: false })), false);
+  assert.equal(shouldNotify('hidden', at({ visible: false })), true);
+  assert.equal(shouldNotify('hidden', at({ mini: true })), true);
+  assert.equal(shouldNotify('hidden', at({ visible: false, status: 'error' })), true);
+  assert.equal(shouldNotify('hidden', at({ visible: false, status: 'cancel' })), false);
+  assert.equal(shouldNotify('unfocused', at({ focused: false })), true);
+  assert.equal(shouldNotify('unfocused', at({})), false);
+  assert.equal(shouldNotify('never', at({ visible: false })), false);
+});
+
+test('notifications : contenu lisible, sans Markdown, et masquable', () => {
+  const ok = notificationContent({ agentLabel: 'Claude', status: 'ok', answer: '## Bilan\n\nTout est **vert**, voir `ci.yml`.', title: 'État de la CI' });
+  assert.deepEqual(ok, { title: 'Claude a répondu', body: 'Bilan Tout est vert, voir ci.yml.' });
+  const long = notificationContent({ agentLabel: 'Codex', status: 'ok', answer: 'x'.repeat(500) });
+  assert.equal(long.body.length, 180);
+  const hiddenContent = notificationContent({ agentLabel: 'Claude', status: 'ok', answer: 'secret', title: 'Mot de passe', preview: false });
+  assert.deepEqual(hiddenContent, { title: 'Claude a répondu', body: '« Mot de passe »' });
+  const err = notificationContent({ agentLabel: 'Copilot', status: 'error', notice: { kind: 'error', text: "Le CLI s'est terminé avec le code 3\n\nauth error" }, title: 't' });
+  assert.deepEqual(err, { title: 'Copilot : échec', body: "Le CLI s'est terminé avec le code 3" });
+  const denied = notificationContent({ agentLabel: 'Claude', status: 'ok', answer: 'Fait.', notice: { kind: 'warn', text: '2 action(s) refusée(s) par le mode' } });
+  assert.equal(denied.body, '2 actions refusées · Fait.');
+});
+
+test('notifications : une par conversation, clic vers la bonne conversation, journal de test', () => {
+  const shown = [];
+  class FakeNotification {
+    static isSupported() { return true; }
+    constructor(o) { this.o = o; this.handlers = {}; this.closed = false; }
+    on(ev, fn) { this.handlers[ev] = fn; }
+    show() { shown.push(this); }
+    close() { this.closed = true; if (this.handlers.close) this.handlers.close(); }
+  }
+  const clicked = [];
+  const log = path.join(tmp(), 'n.jsonl');
+  const notify = createNotifier({ Notification: FakeNotification, onClick: (id) => clicked.push(id), logFile: log, sound: false });
+  notify({ conversationId: 'a', title: 'T1', body: 'B1' });
+  notify({ conversationId: 'a', title: 'T2', body: 'B2' });
+  notify({ conversationId: 'b', title: 'T3', body: 'B3' });
+  assert.equal(shown.length, 3);
+  assert.equal(shown[0].closed, true, 'la notification précédente de la même conversation est remplacée');
+  assert.equal(shown[1].closed, false);
+  assert.equal(shown[1].o.silent, true);
+  shown[2].handlers.click();
+  assert.deepEqual(clicked, ['b']);
+  assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l).title), ['T1', 'T2', 'T3']);
+  // Sans prise en charge système : rien n'est affiché, mais rien ne casse.
+  FakeNotification.isSupported = () => false;
+  assert.equal(notify({ conversationId: 'c', title: 'x', body: 'y' }), false);
+});
+
+test('configuration : masquage au clic extérieur et notifications', () => {
+  const d = tmp();
+  const f = path.join(d, 'config.json');
+  let c = loadConfig(path.join(d, 'absent.json')).config;
+  assert.equal(c.hideOnBlur, true);
+  assert.equal(c.notify, 'hidden');
+  fs.writeFileSync(f, JSON.stringify({ hideOnBlur: false, notify: 'unfocused', notifyPreview: false, notifySound: false }), { mode: 0o600 });
+  c = loadConfig(f).config;
+  assert.deepEqual([c.hideOnBlur, c.notify, c.notifyPreview, c.notifySound], [false, 'unfocused', false, false]);
+  fs.writeFileSync(f, JSON.stringify({ notify: false }), { mode: 0o600 });
+  assert.equal(loadConfig(f).config.notify, 'never');
+  fs.writeFileSync(f, JSON.stringify({ notify: 'toujours' }), { mode: 0o600 });
+  assert.equal(loadConfig(f).config.notify, 'hidden');
+});

@@ -24,7 +24,8 @@ pilotés par leurs CLI officiels. Linux et Windows.
 - 💬 **Un vrai fil de discussion** : chaque message garde le contexte des précédents, même si vous changez d'agent en route.
 - 🔌 **Vos CLI, vos comptes** : Aska n'appelle aucune API et ne stocke aucune clé. Il lance les CLI déjà installés et connectés chez vous, avec leurs MCP et leurs skills.
 - 🛡️ **Lecture seule par défaut** : l'agent ne modifie rien tant que vous ne changez pas de mode, et jamais sans votre accord pour le dossier.
-- 📌 **Toujours sous la main** : la fenêtre reste au premier plan où vous la posez, et se réduit en pastille pendant que l'agent travaille.
+- 📌 **Discret ou toujours là** : un clic à l'extérieur masque le chat ; épinglé, il reste au premier plan où vous le posez. Réduit en pastille, il vous montre où en est l'agent.
+- 🔔 **Prévenu dès que l'IA répond** : une notification système (agent et début de la réponse) quand le chat est masqué ou réduit ; un clic vous ramène à la conversation.
 - 🌗 **Clair ou sombre**, selon le thème de votre système.
 
 ## Aperçu
@@ -148,9 +149,24 @@ L'aide liste les options, les raccourcis, et surtout **l'état de chaque agent**
 | `↑` / `↓` | rappeler un message déjà envoyé |
 | `Ctrl+Maj+C` | copier la dernière réponse |
 | `Ctrl+M` | réduire en pastille / agrandir |
+| `Ctrl+P` | épingler : le chat reste affiché quand vous cliquez ailleurs |
 | `Échap` | annuler la demande en cours, sinon masquer |
 
-La fenêtre se déplace par la poignée à gauche ou par la barre du bas, et sa position est mémorisée. Si elle est masquée pendant qu'un agent travaille, une notification signale la fin.
+Un clic en dehors du chat le masque ; l'agent continue de travailler. Pour le garder affiché, épinglez-le (📌 ou `Ctrl+P`) : le choix est mémorisé. Réduit en pastille, il reste toujours visible. La fenêtre se déplace par la poignée à gauche ou par la barre du bas, et sa position est mémorisée.
+
+## Notifications
+
+Quand une réponse arrive alors que le chat est masqué ou réduit en pastille, Aska envoie une notification système : l'agent, et le début de la réponse en texte brut (ou la cause d'un échec). Un clic sur la notification rouvre le chat sur la bonne conversation. La pastille affiche aussi « Nouvelle réponse » avec un point vert, jusqu'à ce que vous rouvriez le chat. Une demande que vous annulez ne notifie jamais.
+
+| Option (`config.json`) | Effet |
+| --- | --- |
+| `"notify": "hidden"` | par défaut : quand le chat est masqué ou réduit |
+| `"notify": "unfocused"` | aussi quand le chat est visible mais que vous travaillez dans une autre fenêtre |
+| `"notify": "never"` | jamais |
+| `"notifyPreview": false` | n'affiche pas le contenu de la réponse (écran verrouillé, partage d'écran), seulement le titre de la conversation |
+| `"notifySound": false` | notification silencieuse |
+
+Sous Windows, les notifications exigent un raccourci du menu Démarrer portant l'identité de l'application : `scripts\install.ps1` le crée.
 
 ## Conversations
 
@@ -265,8 +281,11 @@ Linux : `~/.config/aska/config.json` (droits `600`). Windows : `%APPDATA%\aska\c
   "timeoutSec": 600,
   "maxOutputKb": 2048,
   "savePrompts": true,
-  "hideOnBlur": false,
+  "hideOnBlur": true,
   "alwaysOnTop": true,
+  "notify": "hidden",
+  "notifyPreview": true,
+  "notifySound": true,
   "envPassthrough": [],
   "agents": {
     "claude": { "model": "sonnet", "extraArgs": ["--max-turns", "20"] },
@@ -284,9 +303,7 @@ Linux : `~/.config/aska/config.json` (droits `600`). Windows : `%APPDATA%\aska\c
 }
 ```
 
-`hideOnBlur: true` redonne un comportement de lanceur éphémère (la fenêtre se
-masque dès qu'elle perd le focus) ; `alwaysOnTop: false` la laisse passer
-derrière les autres fenêtres.
+`hideOnBlur` règle le comportement par défaut au clic extérieur (`true` : le chat se masque ; `false` : il reste, comme s'il était épinglé) ; l'épingle de l'interface le change ensuite. `alwaysOnTop: false` laisse la fenêtre passer derrière les autres.
 
 Un agent personnalisé (comme `gemini` ci-dessus) déclare son binaire en chemin
 absolu et les arguments de chaque mode (`read`, `edit`, `auto`) ; `prompt` vaut

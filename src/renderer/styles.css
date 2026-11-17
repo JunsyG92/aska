@@ -753,4 +753,32 @@ kbd {
 .model-note { padding: 6px 10px 2px; font-size: 12px; color: var(--muted); }
 .model-note:empty { display: none; }
 
+/* ---------- épingle et réponses non lues ---------- */
+
+#pin-btn svg { transition: transform 0.25s cubic-bezier(0.2, 1.4, 0.3, 1); }
+#pin-btn[aria-pressed='true'] { color: var(--agent); background: color-mix(in oklab, var(--agent) 14%, transparent); }
+#pin-btn[aria-pressed='true'] svg { transform: rotate(-30deg); }
+#pin-btn[aria-pressed='true'] path { fill: currentColor; fill-opacity: 0.25; }
+#pin-btn.swap { animation: nudge 0.3s cubic-bezier(0.2, 1.4, 0.3, 1); }
+
+.orb::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px var(--surface);
+  transform: scale(0);
+  transition: transform 0.25s cubic-bezier(0.2, 1.5, 0.3, 1);
+}
+.panel.has-unread .orb::after { transform: scale(1); animation: ping 1.6s ease-out 3; }
+@keyframes ping {
+  0% { box-shadow: 0 0 0 2px var(--surface), 0 0 0 2px color-mix(in oklab, var(--ok) 60%, transparent); }
+  100% { box-shadow: 0 0 0 2px var(--surface), 0 0 0 10px transparent; }
+}
+.panel.mini.has-unread .mini-status { color: var(--ok); }
+
 [hidden] { display: none !important; }

@@ -37,6 +37,8 @@
   let activityText = '';
   let view = 'chat'; // 'chat' | 'history'
   let menuOpen = false;
+  let pinned = false;
+  let unread = 0;
 
   const agent = () => agents.find((a) => a.id === agentId) || null;
   const el = (tag, cls, text) => {
@@ -72,7 +74,33 @@
   }
 
   function syncMini() {
-    $('mini-status').textContent = running ? activityText || 'En cours…' : status.textContent;
+    $('mini-status').textContent = running
+      ? activityText || 'En cours…'
+      : unread
+        ? unread > 1 ? `${unread} nouvelles réponses` : 'Nouvelle réponse'
+        : status.textContent;
+  }
+
+  // Réponses arrivées pendant que le chat était masqué ou réduit.
+  function setUnread(n) {
+    unread = n;
+    panel.classList.toggle('has-unread', unread > 0);
+    syncMini();
+  }
+
+  // Épinglé : le chat reste affiché quand on clique ailleurs.
+  function setPinned(v, save) {
+    pinned = v;
+    const btn = $('pin-btn');
+    btn.setAttribute('aria-pressed', String(pinned));
+    btn.title = pinned
+      ? 'Épinglé : reste affiché quand vous cliquez ailleurs (Ctrl+P pour désépingler)'
+      : 'Épingler : rester affiché quand on clique ailleurs (Ctrl+P)';
+    if (save) {
+      api.setPinned(pinned);
+      replay(btn, 'swap');
+      setStatus(pinned ? 'Épinglé' : 'Se masque au clic extérieur');
+    }
   }
 
   function setStatus(text, cls) {
@@ -315,6 +343,8 @@
     $('cwd-name').textContent = s.cwd;
     $('cwd').title = (s.cwdIsScratch ? 'Dossier vide réservé à Aska' : s.cwd) + ' — Ctrl+O pour choisir un dossier';
     $('hist-btn').hidden = !s.historyEnabled;
+    setPinned(!!s.pinned, false);
+    setUnread(s.unread || 0);
     if (!running && (s.conversation.id !== convId || s.conversation.turns.length !== turnCount)) renderThread(s.conversation);
     if (!agents.length) {
       input.disabled = true;
@@ -648,6 +678,11 @@
       setMini(!mini);
       return;
     }
+    if (e.ctrlKey && !e.shiftKey && k === 'p' && !mini) {
+      e.preventDefault();
+      setPinned(!pinned, true);
+      return;
+    }
     if (mini) {
       if (e.key === 'Escape') { e.preventDefault(); api.hide(); }
       else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMini(false); }
@@ -759,6 +794,8 @@
   // ---------- cycle d'affichage ----------
 
   api.onRunEvent(onRunEvent);
+  api.onUnread(setUnread);
+  $('pin-btn').addEventListener('click', () => { setPinned(!pinned, true); input.focus(); });
   api.onWillHide(() => {
     panel.classList.remove('in');
     panel.classList.add('out');

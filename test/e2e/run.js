@@ -51,7 +51,9 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   const calls = () => fs.readFileSync(callLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 
   // Environnement de l'app : dossier personnel et PATH isolés (Windows : profil et AppData).
-  const env = { ...process.env, SECRET_TOKEN: 'ne-doit-pas-fuiter' };
+  const notifyLog = path.join(home, 'notifications.jsonl');
+  const notifications = () => (fs.existsSync(notifyLog) ? fs.readFileSync(notifyLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
+  const env = { ...process.env, SECRET_TOKEN: 'ne-doit-pas-fuiter', ASKA_NOTIFY_LOG: notifyLog };
   const setVar = (k, v) => {
     for (const x of Object.keys(env)) if (x.toUpperCase() === k.toUpperCase()) delete env[x];
     if (v !== undefined) env[k] = v;
@@ -110,10 +112,27 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(bad[4], null);
     assert.equal(bad[5], 0);
 
-    // Fenêtre fixe : elle reste affichée quand elle perd le focus, et épouse le panneau.
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit('blur'));
-    await page.waitForTimeout(300);
+    // Clic à l'extérieur : le chat se masque (comportement par défaut)…
+    const blur = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit('blur'));
+    const toggle = () => app.evaluate(({ app }) => app.emit('second-instance', {}, ['--toggle']));
+    assert.equal(await page.getAttribute('#pin-btn', 'aria-pressed'), 'false');
+    await blur();
+    await page.waitForTimeout(400);
+    assert.equal(await visible(), false);
+    await toggle();
+    await page.waitForTimeout(400);
     assert.equal(await visible(), true);
+    // … sauf s'il est épinglé (Ctrl+P), choix mémorisé.
+    await page.keyboard.press('Control+p');
+    assert.equal(await page.getAttribute('#pin-btn', 'aria-pressed'), 'true');
+    await blur();
+    await page.waitForTimeout(400);
+    assert.equal(await visible(), true);
+    assert.equal(JSON.parse(fs.readFileSync(P.state, 'utf8')).pinned, true);
+    await page.keyboard.press('Control+p');
+    assert.equal(JSON.parse(fs.readFileSync(P.state, 'utf8')).pinned, false);
+    await page.keyboard.press('Control+p'); // reste épinglé pour la suite du test
+    // La fenêtre épouse le panneau.
     const idle = await bounds();
     assert.equal(idle.width, 748);
     assert.ok(idle.height < 150, `hauteur au repos ${idle.height}`);
@@ -172,12 +191,14 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.keyboard.type('fab');
     assert.deepEqual(await page.locator('.model-opt').allTextContents(), ['fable']);
     await page.keyboard.press('Enter');
+    await page.waitForSelector('#model-menu', { state: 'hidden' }); // le choix est enregistré de façon asynchrone
     assert.equal(await page.textContent('#model-name'), 'fable');
     // Un nom absent de la liste reste utilisable.
     await page.click('#model');
     await page.keyboard.type('claude-custom-9');
     assert.deepEqual(await page.locator('.model-opt').allTextContents(), ['Utiliser « claude-custom-9 »']);
     await page.keyboard.press('Enter');
+    await page.waitForSelector('#model-menu', { state: 'hidden' });
     assert.equal(await page.textContent('#model-name'), 'claude-custom-9');
     await page.click('#model');
     await page.waitForFunction(() => document.querySelectorAll('.model-opt').length === 6);
@@ -385,14 +406,49 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.ok(audit.every((a) => !JSON.stringify(a.argv).includes('historique')));
     if (POSIX) assert.equal(fs.statSync(logFile).mode & 0o777, 0o600);
 
+    // Notifications : on envoie une demande, puis on masque le chat pendant que l'agent travaille.
+    assert.equal(notifications().length, 0, 'aucune notification tant que le chat est sous les yeux');
+    const unreadShown = () => page.waitForFunction(() => document.querySelector('.panel').classList.contains('has-unread'), null, { timeout: 20000, polling: 100 });
+    await send('Réponds pendant que je travaille ailleurs');
+    await settled('running');
+    await page.click('#close-btn'); // masque sans annuler
+    await page.waitForTimeout(300);
+    assert.equal(await visible(), false);
+    await unreadShown();
+    let notes = notifications();
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].title, 'Claude a répondu');
+    // Début de la réponse, en texte brut (le faux Claude reprend ici sa session).
+    assert.equal(notes[0].body, 'Suite de la session : preload.js expose une API minimale.');
+    await toggle();
+    await page.waitForTimeout(400);
+    assert.equal(await visible(), true);
+    assert.equal(await page.locator('.panel.has-unread').count(), 0, 'réponse lue une fois le chat rouvert');
+    assert.equal(await turns(), 8);
+    // Réduit en pastille pendant le travail : notification, et la pastille signale la réponse.
+    await send('Et pendant que la fenêtre est réduite ?');
+    await settled('running');
+    await page.keyboard.press('Control+m');
+    await unreadShown();
+    assert.equal(await page.textContent('#mini-status'), 'Nouvelle réponse');
+    notes = notifications();
+    assert.equal(notes.length, 2);
+    assert.equal(notes[1].conversationId, notes[0].conversationId);
+    await page.waitForTimeout(500);
+    await shot('8-mini-unread-light');
+    await page.click('#mini-btn');
+    await page.waitForTimeout(400);
+    assert.equal(await page.locator('.panel.has-unread').count(), 0);
+    assert.equal(await turns(), 9);
+
     // Échap masque la fenêtre ; une seconde instance (« aska --toggle ») la rouvre, fil intact.
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
     assert.equal(await visible(), false);
-    await app.evaluate(({ app }) => app.emit('second-instance', {}, ['--toggle']));
+    await toggle();
     await page.waitForTimeout(400);
     assert.equal(await visible(), true);
-    assert.equal(await turns(), 7);
+    assert.equal(await turns(), 9);
 
     // Navigation et ouverture de fenêtre bloquées.
     await page.evaluate(() => { window.open('https://example.com'); location.href = 'https://example.com'; });

@@ -8,6 +8,7 @@ const { paths, loadConfig } = require('./config');
 const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('./agents');
 const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
+const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
@@ -34,6 +35,9 @@ let dialogOpen = false;
 let shortcutOk = false;
 let quitting = false;
 let mini = false; // panneau réduit en pastille
+let pinned = null; // épinglé : reste affiché quand on clique ailleurs (null = selon la config)
+let unread = 0; // réponses arrivées pendant que le chat était hors de vue
+let notifier = null;
 let savedPos = null; // ancrage choisi par l'utilisateur : bord gauche et bord BAS de la fenêtre
 let saveTimer = null;
 let store = null; // conversations enregistrées
@@ -91,10 +95,21 @@ function loadEverything() {
     for (const [k, v] of Object.entries(d.extraModels && typeof d.extraModels === 'object' ? d.extraModels : {})) {
       if (Object.hasOwn(agents, k) && Array.isArray(v)) extraModels[k] = v.filter(isModel).slice(0, 12);
     }
+    if (typeof d.pinned === 'boolean') pinned = d.pinned;
     const pos = st.data && st.data.pos;
     if (pos && Number.isInteger(pos.x) && Number.isInteger(pos.bottom)) savedPos = { x: pos.x, bottom: pos.bottom };
     cwd = saved && !sec.checkWorkdir(saved, 'read').error ? saved : P.workspace;
   }
+  if (pinned === null) pinned = !cfg.hideOnBlur;
+  notifier = createNotifier({
+    Notification,
+    sound: cfg.notifySound,
+    logFile: process.env.ASKA_NOTIFY_LOG || null,
+    onClick: (cid) => {
+      openConversationById(cid);
+      showWindow();
+    },
+  });
   store = new ConversationStore(P.conversations, { persist: cfg.savePrompts });
   if (!conv) conv = store.create(cwd);
 }
@@ -109,7 +124,7 @@ function fsRealWorkspace() {
 
 function saveState() {
   try {
-    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels }));
+    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels, pinned }));
   } catch { /* l'état est un confort, pas une nécessité */ }
 }
 
@@ -180,6 +195,8 @@ function publicState() {
     running: !!current,
     conversation: { id: conv.id, title: conv.title, turns: conv.turns.map(publicTurn) },
     historyEnabled: cfg.savePrompts,
+    pinned,
+    unread,
   };
 }
 
@@ -228,8 +245,10 @@ function createWindow() {
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
+  // Clic à l'extérieur : le chat se masque, sauf s'il est épinglé ou réduit en
+  // pastille (dont le rôle est justement de rester visible pendant le travail).
   win.on('blur', () => {
-    if (cfg.hideOnBlur && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
+    if (!pinned && !mini && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
   });
   win.on('close', (e) => {
     if (!quitting) {
@@ -261,6 +280,7 @@ function showWindow() {
   }
   win.show();
   win.focus();
+  if (!mini) setUnread(0);
   win.webContents.send('aska:shown', publicState());
 }
 
@@ -272,6 +292,24 @@ function hideWindow() {
     hideTimer = null;
     if (win && !win.isDestroyed()) win.hide();
   }, 150);
+}
+
+function setUnread(n) {
+  unread = n;
+  if (win && !win.isDestroyed()) win.webContents.send('aska:unread', unread);
+}
+
+// Rouvre une conversation enregistrée (et son dossier de travail).
+function openConversationById(cid) {
+  if (current || !cid || conv.id === cid) return;
+  const c = store.load(cid);
+  if (!c) return;
+  conv = c;
+  // On retrouve le dossier de la conversation : la reprise de session en dépend.
+  if (typeof c.cwd === 'string' && !sec.checkWorkdir(c.cwd, 'read').error) {
+    cwd = c.cwd;
+    saveState();
+  }
 }
 
 function toggleWindow() {
@@ -429,15 +467,20 @@ function startRun(req) {
       turn: publicTurn(turn),
       title: thread.title,
     });
-    if (win && !win.isVisible() && res.reason !== 'cancel' && Notification.isSupported()) {
-      const n = new Notification({
-        title: ok ? `${agent.label} a terminé` : `${agent.label} : échec`,
-        body: prompt.slice(0, 120),
-        silent: true,
+    // Une fenêtre en train de se masquer (animation de sortie) compte comme masquée.
+    const seen = { visible: !!win && win.isVisible() && !hideTimer, focused: !!win && win.isFocused(), mini, status: turn.status };
+    if (shouldNotify(cfg.notify, seen)) {
+      const content = notificationContent({
+        agentLabel: agent.label,
+        status: turn.status,
+        answer: turn.answer,
+        notice: turn.notice,
+        title: thread.title,
+        preview: cfg.notifyPreview,
       });
-      n.on('click', showWindow);
-      n.show();
+      notifier({ conversationId: thread.id, ...content });
     }
+    if (turn.status !== 'cancel' && (!seen.visible || mini)) setUnread(unread + 1);
   });
   return { ok: true, id };
 }
@@ -492,22 +535,18 @@ function registerIpc() {
     return true;
   });
   handle('aska:hide', () => hideWindow());
+  handle('aska:set-pinned', (v) => {
+    pinned = v === true;
+    saveState();
+    return pinned;
+  });
   handle('aska:conv-new', () => {
     if (!current) conv = store.create(cwd);
     return publicState();
   });
   handle('aska:conv-list', () => publicList());
   handle('aska:conv-open', (cid) => {
-    if (current) return publicState();
-    const c = store.load(cid);
-    if (c) {
-      conv = c;
-      // On retrouve le dossier de la conversation : la reprise de session en dépend.
-      if (typeof c.cwd === 'string' && !sec.checkWorkdir(c.cwd, 'read').error) {
-        cwd = c.cwd;
-        saveState();
-      }
-    }
+    if (typeof cid === 'string') openConversationById(cid);
     return publicState();
   });
   handle('aska:conv-delete', (cid) => {
@@ -531,6 +570,7 @@ function registerIpc() {
   });
   handle('aska:set-mini', (v) => {
     mini = v === true;
+    if (!mini && win && win.isVisible()) setUnread(0);
   });
   // La fenêtre épouse le panneau : aucune zone transparente ne bloque les clics autour.
   handle('aska:resize', (size) => {
@@ -589,7 +629,35 @@ if (wantsCliOutput(argv)) {
 }
 const wants = (flag) => argv.includes(flag);
 
-if (!app.requestSingleInstanceLock()) {
+// Windows : les notifications ne s'affichent que si un raccourci du menu Démarrer
+// porte l'identité de l'application (AppUserModelID). Seule l'API de raccourcis
+// d'Electron sait l'écrire : scripts/install.ps1 appelle donc « --install-shortcuts ».
+const APP_ID = 'aska';
+if (process.platform === 'win32' && wants('--install-shortcuts')) {
+  app.whenReady().then(() => {
+    const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+    const root = path.join(__dirname, '..', '..');
+    const link = (file, args) => {
+      require('fs').mkdirSync(path.dirname(file), { recursive: true });
+      shell.writeShortcutLink(file, 'replace', {
+        target: process.execPath,
+        args: `"${root}" ${args}`,
+        cwd: root,
+        description: 'Demander une action à un agent IA (Claude, Codex, Copilot, Cursor)',
+        icon: process.execPath,
+        iconIndex: 0,
+        appUserModelId: APP_ID,
+      });
+      return file;
+    };
+    const startup = path.join(programs, 'Startup', 'Aska.lnk');
+    const made = [link(path.join(programs, 'Aska.lnk'), '--toggle')];
+    if (wants('--no-autostart')) require('fs').rmSync(startup, { force: true });
+    else made.push(link(startup, '--hidden'));
+    process.stdout.write(JSON.stringify(made.map((f) => ({ file: f, ...shell.readShortcutLink(f) }))) + '\n');
+    app.exit(0);
+  });
+} else if (!app.requestSingleInstanceLock()) {
   // Une instance tourne déjà : elle reçoit nos arguments (« second-instance ») et bascule.
   app.quit();
 } else {
@@ -606,7 +674,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   // Windows : identité de l'application, nécessaire aux notifications.
-  if (process.platform === 'win32') app.setAppUserModelId('aska');
+  if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 
   app.whenReady().then(() => {
     if (wants('--quit')) return app.quit();
