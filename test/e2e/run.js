@@ -153,7 +153,10 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForTimeout(400);
     const grown = await bounds();
     assert.ok(grown.height > 300, `hauteur avec réponse ${grown.height}`);
-    assert.equal(grown.y + grown.height, idle.y + idle.height, 'le bord bas (la saisie) ne doit pas bouger');
+    // Le bord bas ne bouge pas, sauf si la fenêtre a atteint le haut de l'écran (petit écran
+    // de CI, macOS) : elle reste alors sous la barre des menus.
+    const top = await app.evaluate(({ BrowserWindow, screen }) => screen.getDisplayMatching(BrowserWindow.getAllWindows()[0].getBounds()).workArea.y);
+    if (grown.y > top) assert.equal(grown.y + grown.height, idle.y + idle.height, 'le bord bas (la saisie) ne doit pas bouger');
 
     // 2e message : même fil, et Claude reprend sa session au lieu de repartir de zéro.
     await send('Et le fichier preload ?');
