@@ -44,6 +44,7 @@
   let tabList = []; // tabs: [{ id, title, color, running, unread, active }]
   const tabUi = new Map(); // per tab: { draft, agentId, mode }, kept when switching tabs
   let closeArmed = null; // working tab waiting for the close confirmation
+  let wide = false; // widened panel: the conversation started receiving answers
   let lastPrompt = ''; // last request of the active conversation, for /retry
   let customCommands = []; // "/" commands of the config: [{ name, prompt, description?, agent?, mode?, model? }]
 
@@ -423,6 +424,7 @@
     turnCount = conversation.turns.length;
     thread.replaceChildren();
     conversation.turns.forEach((t, i) => addTurn(t, true, i === conversation.turns.length - 1));
+    setWide(conversation.turns.some((t) => t.answer || t.status !== 'running'));
     const last = conversation.turns[turnCount - 1];
     lastAnswer = last ? last.answer : '';
     lastPrompt = last ? last.prompt : '';
@@ -439,8 +441,22 @@
     scrollEnd(false);
   }
 
+  // Widened as soon as the AI answers; an empty tab goes back to the normal size.
+  function setWide(v) {
+    if (wide === v) return;
+    wide = v;
+    panel.classList.toggle('wide', wide);
+  }
+
+  function sizeFromDisplay(d) {
+    if (!d || !d.w || !d.h) return;
+    panel.style.setProperty('--wide-w', `${Math.max(720, Math.min(1040, d.w - 96))}px`);
+    panel.style.setProperty('--wide-h', `${Math.max(392, Math.min(760, Math.round(d.h * 0.62) - 140))}px`);
+  }
+
   function applyState(s) {
     setLanguage(s);
+    sizeFromDisplay(s.display);
     modes = s.modes;
     agents = s.agents.filter((a) => a.available);
     history = s.history || [];
@@ -665,6 +681,7 @@
     switch (ev.type) {
       case 'text':
         live.text += ev.text;
+        if (!wide && ev.text.trim()) setWide(true); // first answer: more room to read it
         // The longer the answer, the less often it is redrawn.
         if (!renderTimer) renderTimer = setTimeout(renderLive, Math.min(400, 45 + live.text.length / 400));
         break;
@@ -689,6 +706,7 @@
     clearTimeout(renderTimer);
     renderTimer = null;
     live.text = turn.answer || live.text;
+    setWide(true);
     renderLive();
     live.node.classList.remove('live');
     live.node.dataset.status = turn.status;

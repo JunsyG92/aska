@@ -5,7 +5,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('./agents');
+const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel, canPickModel } = require('./agents');
 const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
@@ -258,9 +258,10 @@ function publicState() {
     error: a.binError,
     install: a.install || null,
     modes: MODE_ORDER.filter((m) => a.modes[m] && (m !== 'auto' || cfg.allowAutoMode)),
-    canPickModel: !!a.modelFlag,
+    canPickModel: canPickModel(a),
     models: [...new Set([...(a.models || []), ...(extraModels[a.id] || [])])],
-    model: modelFor(a),
+    // An agent that needs a model (Ollama): show the one that will really be used.
+    model: modelFor(a) || defaultModel(a),
   }));
   return {
     lang: getLanguage(),
@@ -287,7 +288,18 @@ function publicState() {
     historyEnabled: cfg.savePrompts,
     pinned,
     unread,
+    // Screen size: the interface derives the size of the widened panel from it.
+    display: (() => {
+      const wa = screen.getDisplayMatching(win ? win.getBounds() : screen.getPrimaryDisplay().workArea).workArea;
+      return { w: wa.width, h: wa.height };
+    })(),
   };
+}
+
+/** Agent that needs a model (Ollama) with none chosen: the first one installed. */
+function defaultModel(agent) {
+  const known = agent.requiresModel && discovered[agent.id] && discovered[agent.id].models[0];
+  return known ? known.id : null;
 }
 
 function createWindow() {
@@ -596,8 +608,8 @@ function startRun(req) {
   const resume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length ? sess.id : null;
   const fullPrompt = resume ? prompt : buildContextPrompt(conv.turns, prompt);
   // A "/" command of the config may name a model for this request only (null: the CLI's default).
-  let model = modelFor(agent);
-  if (req.model !== undefined && agent.modelFlag) {
+  let model = modelFor(agent) || defaultModel(agent);
+  if (req.model !== undefined && canPickModel(agent)) {
     if (req.model !== null && !isModel(req.model)) return { error: t('errors.invalidModel') };
     model = req.model;
   }
@@ -720,7 +732,7 @@ function startRun(req) {
 // demand), plus the built-in list, the config and models typed in by hand.
 async function listModels(req) {
   const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
-  if (!a || !a.modelFlag) return { models: [], current: null, error: null };
+  if (!a || !canPickModel(a)) return { models: [], current: null, error: null };
   if (a.binPath && (!discovered[a.id] || req.refresh === true)) {
     const cwdForList = fsRealWorkspace();
     discovered[a.id] = await discoverModels(a.id, (args, { stdin = '', timeoutMs = 12000 } = {}) => {
@@ -834,7 +846,7 @@ function registerIpc() {
   handle('aska:settings-save', (values) => settingsSave(values));
   handle('aska:set-model', (req) => {
     const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
-    if (!a || !a.modelFlag) return publicState();
+    if (!a || !canPickModel(a)) return publicState();
     if (req.model === null) delete picked[a.id];
     else if (isModel(req.model)) {
       picked[a.id] = req.model;
@@ -852,15 +864,20 @@ function registerIpc() {
   // The window fits the panel: no transparent area blocks clicks around it.
   handle('aska:resize', (size) => {
     if (!size || !Number.isFinite(size.w) || !Number.isFinite(size.h)) return;
-    const w = Math.round(Math.min(Math.max(size.w, 120), 900));
-    const h = Math.round(Math.min(Math.max(size.h, 40), 800));
     const b = win.getBounds();
+    const wa = screen.getDisplayMatching(b).workArea;
+    const w = Math.round(Math.min(Math.max(size.w, 120), wa.width - 16));
+    const h = Math.round(Math.min(Math.max(size.h, 40), wa.height - 16));
     if (b.width === w && b.height === h) return;
     // The bottom edge stays put: the input area does not move when the thread grows.
-    const wa = screen.getDisplayMatching(b).workArea;
     const y = Math.max(wa.y, b.y + b.height - h);
+    // The panel that widens (or goes back to its size) stays centered; the mini
+    // pill folds to the left, where the panel starts.
+    let x = b.x;
+    if (b.width >= 600 && w >= 600) x = Math.round(b.x - (w - b.width) / 2);
+    x = Math.min(Math.max(x, wa.x), wa.x + wa.width - w);
     win.setResizable(true);
-    win.setBounds({ x: b.x, y, width: w, height: h });
+    win.setBounds({ x, y, width: w, height: h });
     win.setResizable(false);
   });
   handle('aska:copy', (text) => {
@@ -1019,6 +1036,8 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
 
     loadEverything();
     registerIpc();
+    // Agents that need a model (Ollama): list preloaded, to have a default one.
+    for (const a of Object.values(agents)) if (a.requiresModel && a.binPath) listModels({ agentId: a.id }).catch(() => {});
     registerShortcut();
     createWindow();
     setupTray();

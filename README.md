@@ -6,7 +6,7 @@
 
 **One shortcut, one field, and your AI agents answer.**
 
-Claude Code, Codex, GitHub Copilot and Cursor in a single small window,<br>
+Claude Code, Codex, GitHub Copilot, Cursor and Ollama in a single small window,<br>
 driven by their official CLIs. Linux, macOS and Windows.
 
 [![CI](https://github.com/JunsyG92/aska/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JunsyG92/aska/actions/workflows/ci.yml)
@@ -102,6 +102,7 @@ You need **Node.js ≥ 20** and at least one agent CLI installed and signed in:
 | Codex | `npm i -g @openai/codex` |
 | GitHub Copilot | `npm i -g @github/copilot` |
 | Cursor | see [cursor.com/cli](https://cursor.com/cli) |
+| Ollama (local models) | see [ollama.com/download](https://ollama.com/download), then `ollama pull <model>` |
 
 ### Linux
 
@@ -183,7 +184,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 
 The shortcuts that use `Ctrl` can be changed in the [settings](#settings) or with `"keybindings"` in the [configuration](#configuration); the tooltips and `aska --help` show the ones you chose.
 
-A click outside the chat hides it; the agent keeps working. To keep it visible, pin it (📌 or `Ctrl+P`): the choice is remembered. Minimized to a pill, it always stays visible. The window is moved with the handle on the left or the bottom bar, and its position is remembered.
+A click outside the chat hides it; the agent keeps working. To keep it visible, pin it (📌 or `Ctrl+P`): the choice is remembered. Minimized to a pill, it always stays visible. The window is moved with the handle on the left or the bottom bar, and its position is remembered. As soon as the AI answers, the window widens (up to 1040 px, centered) for easier reading; a new or empty tab brings it back to its normal size.
 
 While Aska is running, its icon stays in the system tray (top right on GNOME).
 A green dot is added while a request is running, and the tooltip says which
@@ -267,6 +268,7 @@ The model is chosen per agent and the choice is remembered. "CLI default" lets t
 | Cursor | `cursor-agent --list-models` (you must be signed in: `cursor-agent login`) |
 | Copilot | the list its ACP mode gives when a session opens (`copilot --acp`, in Aska's empty folder, nothing is sent) |
 | Codex | the catalog Codex caches in `~/.codex/` |
+| Ollama | `ollama list`: the models installed on the machine. Ollama needs one: without a choice, Aska uses the first one |
 
 Claude Code only names aliases: next to each one, and next to "CLI default", the picker shows the full name the CLI reported in its answers (`opus` · `claude-opus-5-5`), once you have used it.
 
@@ -279,14 +281,19 @@ The ↻ button queries the CLI again. If a CLI returns nothing, the picker says 
 As in Claude Code, each request runs in an explicit mode,
 shown at the bottom of the panel. Aska always starts in **Read-only**.
 
-| Mode | Claude | Codex | Copilot | Cursor |
-| --- | --- | --- | --- | --- |
-| **Read-only** | `--permission-mode plan --setting-sources user` | `--sandbox read-only` | `--deny-tool shell --deny-tool write` | `--mode ask` |
-| **Edit** | `--permission-mode acceptEdits` | `--sandbox workspace-write` | `--allow-tool write --deny-tool shell` | - |
-| **Autonomous** (disabled by default) | `--permission-mode auto` | `workspace-write` + network | `--allow-all-tools` + deny list | `--force` |
+| Mode | Claude | Codex | Copilot | Cursor | Ollama |
+| --- | --- | --- | --- | --- | --- |
+| **Read-only** | `--permission-mode plan --setting-sources user` | `--sandbox read-only` | read commands only (`ls`, `cat`, `grep`, `git status`…), `--deny-tool write` | `--mode ask` | no tools |
+| **Edit** | `--permission-mode acceptEdits` | `--sandbox workspace-write` | `--allow-tool write` + read commands, `git log/diff/show` | - | - |
+| **Autonomous** (disabled by default) | `--permission-mode auto` | `workspace-write` + network | `--allow-all-tools` + deny list | `--force` | - |
 
 - Each CLI's own permission settings (e.g. `~/.claude/settings.json`)
   still apply: Aska only adds restrictions.
+- Copilot reads files mostly through the shell, so it gets a closed list of read
+  commands rather than no shell at all. Commands that can write or run something
+  else (`find -exec`, `sed -i`, `rm`, `git push`…) stay refused, compound ones too.
+- Ollama only answers: local models have no tools and no file access. Their
+  thinking block, if any, shows as "Thinking…" and not in the answer.
 - **Autonomous** mode only shows up if `"allowAutoMode": true`. For Copilot and
   Cursor it is not isolated by a sandbox: keep it for throwaway folders.
 - No mode uses `--dangerously-skip-permissions`, `--yolo` or the like,
