@@ -411,7 +411,15 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
 
     // Notifications : on envoie une demande, puis on masque le chat pendant que l'agent travaille.
     assert.equal(notifications().length, 0, 'aucune notification tant que le chat est sous les yeux');
-    const unreadShown = () => page.waitForFunction(() => document.querySelector('.panel').classList.contains('has-unread'), null, { timeout: 20000, polling: 100 });
+    // Attente menée côté Node : dans une fenêtre masquée, macOS bride (voire gèle) les
+    // minuteries de la page, et page.waitForFunction n'y interroge plus le DOM.
+    const unreadShown = async () => {
+      const end = Date.now() + 20000;
+      while (!(await page.evaluate(() => document.querySelector('.panel').classList.contains('has-unread')))) {
+        if (Date.now() > end) throw new Error('délai dépassé : réponse non lue jamais signalée');
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    };
     await send('Réponds pendant que je travaille ailleurs');
     await settled('running');
     await page.click('#close-btn'); // masque sans annuler
