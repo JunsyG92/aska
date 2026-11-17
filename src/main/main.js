@@ -1,11 +1,13 @@
 'use strict';
-const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell, Menu } = require('electron');
+
+const MAC = process.platform === 'darwin';
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('./agents');
+const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel, canPickModel } = require('./agents');
 const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
@@ -212,9 +214,10 @@ function publicState() {
     error: a.binError,
     install: a.install || null,
     modes: MODE_ORDER.filter((m) => a.modes[m] && (m !== 'auto' || cfg.allowAutoMode)),
-    canPickModel: !!a.modelFlag,
+    canPickModel: canPickModel(a),
     models: [...new Set([...(a.models || []), ...(extraModels[a.id] || [])])],
-    model: modelFor(a),
+    // Agent qui exige un modèle (Ollama) : on affiche celui qui sera réellement utilisé.
+    model: modelFor(a) || (a.requiresModel && discovered[a.id] && discovered[a.id].models[0] ? discovered[a.id].models[0].id : null),
   }));
   return {
     agents: list,
@@ -235,6 +238,11 @@ function publicState() {
     historyEnabled: cfg.savePrompts,
     pinned,
     unread,
+    // Taille de l'écran : l'interface en déduit la taille du panneau agrandi.
+    display: (() => {
+      const wa = screen.getDisplayMatching(win ? win.getBounds() : screen.getPrimaryDisplay().workArea).workArea;
+      return { w: wa.width, h: wa.height };
+    })(),
   };
 }
 
@@ -316,6 +324,8 @@ function showWindow() {
     }
     win.setPosition(pos.x, pos.y);
   }
+  // macOS : un lanceur hors du Dock ne prend pas le focus de lui-même.
+  if (MAC) app.focus({ steal: true });
   win.show();
   win.focus();
   if (!mini) setUnread(0);
@@ -422,7 +432,9 @@ function startRun(req) {
   const sess = conv.sessions[agent.id];
   const resume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length ? sess.id : null;
   const fullPrompt = resume ? prompt : buildContextPrompt(conv.turns, prompt);
-  const model = modelFor(agent);
+  // Un agent qui exige un modèle (Ollama) prend, à défaut de choix, le premier installé.
+  const known = discovered[agent.id] && discovered[agent.id].models[0];
+  const model = modelFor(agent) || (agent.requiresModel && known ? known.id : null);
 
   let inv;
   try {
@@ -538,7 +550,7 @@ function startRun(req) {
 // puis à la demande), complétés par la liste intégrée, la config et les saisies.
 async function listModels(req) {
   const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
-  if (!a || !a.modelFlag) return { models: [], current: null, error: null };
+  if (!a || !canPickModel(a)) return { models: [], current: null, error: null };
   if (a.binPath && (!discovered[a.id] || req.refresh === true)) {
     discovered[a.id] = await discoverModels(a.id, (args) => {
       let text = '';
@@ -636,7 +648,7 @@ function registerIpc() {
   });
   handle('aska:set-model', (req) => {
     const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
-    if (!a || !a.modelFlag) return publicState();
+    if (!a || !canPickModel(a)) return publicState();
     if (req.model === null) delete picked[a.id];
     else if (isModel(req.model)) {
       picked[a.id] = req.model;
@@ -654,15 +666,20 @@ function registerIpc() {
   // La fenêtre épouse le panneau : aucune zone transparente ne bloque les clics autour.
   handle('aska:resize', (size) => {
     if (!size || !Number.isFinite(size.w) || !Number.isFinite(size.h)) return;
-    const w = Math.round(Math.min(Math.max(size.w, 120), 900));
-    const h = Math.round(Math.min(Math.max(size.h, 40), 800));
     const b = win.getBounds();
+    const wa = screen.getDisplayMatching(b).workArea;
+    const w = Math.round(Math.min(Math.max(size.w, 120), wa.width - 16));
+    const h = Math.round(Math.min(Math.max(size.h, 40), wa.height - 16));
     if (b.width === w && b.height === h) return;
     // Le bord bas reste en place : la zone de saisie ne bouge pas quand le fil s'allonge.
-    const wa = screen.getDisplayMatching(b).workArea;
     const y = Math.max(wa.y, b.y + b.height - h);
+    // Le panneau qui s'élargit (ou revient à sa taille) reste centré ; la pastille,
+    // elle, se replie vers la gauche, là où commence le panneau.
+    let x = b.x;
+    if (b.width >= 600 && w >= 600) x = Math.round(b.x - (w - b.width) / 2);
+    x = Math.min(Math.max(x, wa.x), wa.x + wa.width - w);
     win.setResizable(true);
-    win.setBounds({ x: b.x, y, width: w, height: h });
+    win.setBounds({ x, y, width: w, height: h });
     win.setResizable(false);
   });
   handle('aska:copy', (text) => {
@@ -792,6 +809,12 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
 
   app.whenReady().then(() => {
     if (wants('--quit')) return app.quit();
+    if (MAC) {
+      // Lanceur : pas d'icône dans le Dock. Le menu Édition est indispensable sur
+      // macOS pour que ⌘C, ⌘V, ⌘X, ⌘A et ⌘Z fonctionnent dans les champs.
+      if (app.dock) app.dock.hide();
+      Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]));
+    }
     // Instance active : ce fichier permet de la reconnaître (aska --help, remplacement).
     try {
       sec.writePrivate(P.run, JSON.stringify({ pid: process.pid, build: BUILD, version: app.getVersion(), startedAt: new Date().toISOString() }));
@@ -802,6 +825,8 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
 
     loadEverything();
     registerIpc();
+    // Agents qui exigent un modèle (Ollama) : liste préchargée, pour en avoir un par défaut.
+    for (const a of Object.values(agents)) if (a.requiresModel && a.binPath) listModels({ agentId: a.id }).catch(() => {});
     registerShortcut();
     createWindow();
     win.webContents.once('did-finish-load', () => {

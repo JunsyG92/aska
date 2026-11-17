@@ -132,6 +132,53 @@ function createTextParser(emit) {
 }
 
 /**
+ * Sortie d'« ollama run » : texte brut, précédé pour les modèles qui réfléchissent
+ * d'un bloc « Thinking... … ...done thinking. ». Ce bloc n'est pas affiché comme
+ * réponse : il devient l'activité « Réflexion… ». (L'option --hidethinking ferait
+ * la même chose, mais les anciennes versions d'Ollama la refusent.)
+ */
+function createOllamaParser(emit) {
+  const START = 'Thinking...';
+  const END = '...done thinking.';
+  let state = 'head'; // head : on ne sait pas encore ; think : bloc de réflexion ; answer
+  let buf = '';
+  const answer = (t) => {
+    if (t) emit({ type: 'text', text: t });
+  };
+  return {
+    push(chunk) {
+      const t = clean(chunk);
+      if (!t) return;
+      if (state === 'answer') return answer(t);
+      buf += t;
+      if (state === 'head') {
+        const start = buf.replace(/^\s+/, '');
+        if (start.length < START.length && START.startsWith(start)) return; // pas encore tranché
+        if (!start.startsWith(START)) {
+          state = 'answer';
+          answer(buf);
+          buf = '';
+          return;
+        }
+        state = 'think';
+        emit({ type: 'activity', text: 'Réflexion…' });
+      }
+      const i = buf.indexOf(END);
+      if (i < 0) {
+        buf = buf.slice(-END.length); // on ne garde que de quoi reconnaître la fin
+        return;
+      }
+      state = 'answer';
+      answer(buf.slice(i + END.length).replace(/^\s+/, ''));
+      buf = '';
+    },
+    end() {
+      if (state === 'head') answer(buf);
+    },
+  };
+}
+
+/**
  * @returns {{ cancel: () => void, done: Promise<object> }}
  */
 function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600000, maxBytes = 2 * 1024 * 1024, verbatim = false }, onEvent) {
@@ -192,7 +239,10 @@ function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600
   };
 
   const timeout = setTimeout(() => stop('timeout'), timeoutMs);
-  const parser = output === 'stream-json' ? createStreamJsonParser(emit) : createTextParser(emit);
+  const parser =
+    output === 'stream-json' ? createStreamJsonParser(emit)
+    : output === 'ollama' ? createOllamaParser(emit)
+    : createTextParser(emit);
   const outDec = new StringDecoder('utf8');
   const errDec = new StringDecoder('utf8');
 
@@ -231,4 +281,4 @@ function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600
   return { cancel: () => stop('cancel'), done };
 }
 
-module.exports = { runAgent, createStreamJsonParser, createTextParser, clean, describeTool };
+module.exports = { runAgent, createStreamJsonParser, createTextParser, createOllamaParser, clean, describeTool };

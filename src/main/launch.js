@@ -98,6 +98,22 @@ function buildCommand(launch, argv) {
   return { command: comspec, args: ['/d', '/s', '/c', `""${launch.command}" ${args.join(' ')}"`], verbatim: true };
 }
 
+/** Dossiers bin des versions de Node installées par nvm, de la plus récente à la plus ancienne. */
+function nvmBins(versionsDir) {
+  let names;
+  try {
+    names = fs.readdirSync(versionsDir).filter((n) => /^v\d+\.\d+\.\d+$/.test(n));
+  } catch {
+    return [];
+  }
+  const num = (n) => n.slice(1).split('.').map(Number);
+  names.sort((a, b) => {
+    const [x, y] = [num(a), num(b)];
+    return y[0] - x[0] || y[1] - x[1] || y[2] - x[2];
+  });
+  return names.map((n) => path.join(versionsDir, n, 'bin'));
+}
+
 /**
  * PATH élargi : une session graphique n'a pas toujours le PATH du terminal, on
  * ajoute donc les emplacements habituels des CLI installés par l'utilisateur.
@@ -122,6 +138,10 @@ function extendedPath({ env = process.env, home = require('os').homedir(), platf
     ];
   } else {
     extra = ['.local/bin', 'bin', '.npm-global/bin', '.bun/bin', '.volta/bin'].map((d) => p.join(home, d));
+    // nvm : les CLI installés par « npm i -g » vivent dans le dossier de chaque version de Node.
+    extra.push(...nvmBins(p.join(get('NVM_DIR') || p.join(home, '.nvm'), 'versions', 'node')));
+    // macOS : une application lancée hors du terminal n'a que /usr/bin:/bin:/usr/sbin:/sbin.
+    if (platform === 'darwin') extra.push('/opt/homebrew/bin', '/opt/homebrew/sbin');
     extra.push('/usr/local/bin');
   }
   const parts = (get('PATH') || '').split(p.delimiter).filter((d) => d && p.isAbsolute(d));
@@ -129,4 +149,4 @@ function extendedPath({ env = process.env, home = require('os').homedir(), platf
   return parts.join(p.delimiter);
 }
 
-module.exports = { resolveLaunch, buildCommand, parseNpmShim, findOnPath, extendedPath, WIN };
+module.exports = { resolveLaunch, buildCommand, parseNpmShim, findOnPath, extendedPath, nvmBins, WIN };

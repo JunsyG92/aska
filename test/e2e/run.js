@@ -47,6 +47,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   };
   wrap('claude', 'stream');
   wrap('cursor-agent', 'stream');
+  wrap('ollama', 'ollama');
   wrap('codex', ''); // comportement choisi par une balise [mode] dans le prompt
   const calls = () => fs.readFileSync(callLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 
@@ -167,6 +168,12 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     const grown = await bounds();
     assert.ok(grown.height > 300, `hauteur avec réponse ${grown.height}`);
     assert.equal(grown.y + grown.height, idle.y + idle.height, 'le bord bas (la saisie) ne doit pas bouger');
+    // Dès la première réponse, le panneau s'agrandit pour la lecture, en restant centré.
+    assert.ok(await page.locator('.panel.wide').count(), 'panneau agrandi');
+    // Largeur agrandie : 1040 px au plus, en laissant une marge sur les petits écrans.
+    const screenW = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea.width);
+    assert.equal(grown.width, Math.max(720, Math.min(1040, screenW - 96)) + 28, `largeur avec réponse ${grown.width}`);
+    assert.ok(Math.abs(grown.x + grown.width / 2 - (idle.x + idle.width / 2)) <= 1, 'agrandi autour du même centre');
 
     // 2e message : même fil, et Claude reprend sa session au lieu de repartir de zéro.
     await send('Et le fichier preload ?');
@@ -285,7 +292,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await shot('5-mini-light');
     await page.click('#mini-btn');
     await page.waitForTimeout(500);
-    assert.equal((await bounds()).width, 748);
+    assert.equal((await bounds()).width, grown.width, 'rétabli à la taille agrandie');
     assert.equal(await turns(), 6);
 
     // Historique : nouvelle conversation, liste, réouverture, suppression.
@@ -374,6 +381,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     // depuis, donc le contexte complet est réinjecté plutôt que la vieille session.
     await page.keyboard.press('Tab');
     assert.equal(await page.textContent('#agent-name'), 'Cursor');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.textContent('#agent-name'), 'Ollama');
     await page.keyboard.press('Tab');
     assert.equal(await page.textContent('#agent-name'), 'Claude');
     await send('On reprend');
@@ -471,6 +480,10 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await page.locator('.tab').count(), 2);
     assert.equal(await activeTitle(), 'Nouvelle conversation');
     assert.equal(await turns(), 0, 'nouvel onglet : fil vide');
+    // Nouvelle conversation : retour à la taille normale.
+    await page.waitForTimeout(500);
+    assert.equal(await page.locator('.panel.wide').count(), 0);
+    assert.equal((await bounds()).width, 748, 'onglet vide : taille normale');
     // Une demande longue dans l'onglet 2…
     await page.keyboard.type('Analyse longue dans le deuxième onglet');
     await page.keyboard.press('Enter');
@@ -524,6 +537,26 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(st.tabs.length, 1);
     assert.equal(st.activeTab, st.tabs[0]);
     assert.deepEqual(await tabTitles(), ['Résume main.js (deny)']);
+
+    // ---------- Ollama : modèles locaux, sans outils ----------
+    for (let i = 0; i < 6 && (await page.textContent('#agent-name')) !== 'Ollama'; i++) await page.keyboard.press('Tab');
+    assert.equal(await page.textContent('#agent-name'), 'Ollama');
+    assert.equal(await page.textContent('#mode-name'), 'Lecture seule');
+    // Premier modèle installé (« ollama list »), utilisé et affiché par défaut.
+    await page.waitForFunction(() => document.querySelector('#model-name').textContent === 'qwen3:8b', null, { timeout: 10000 }).catch(async () => {
+      await page.keyboard.press('Control+Shift+M');
+      await page.keyboard.press('Escape');
+    });
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.textContent('#mode-name'), 'Lecture seule', 'pas d\'autre mode pour Ollama');
+    const beforeOllama = calls().length;
+    await send('Bonjour Ollama');
+    await settled('done');
+    const answer = await page.locator('.turn .output').last().textContent();
+    assert.equal(answer.trim(), 'Réponse locale de qwen3:8b.');
+    assert.ok(!(await page.textContent('.thread')).includes('réfléchit à voix haute'), 'la réflexion n\'est pas affichée comme réponse');
+    assert.deepEqual(calls()[beforeOllama].args, ['run', 'qwen3:8b']);
+    await page.keyboard.press('Tab'); // retour à Claude
 
     // Cursor exige --trust sans interface : accordé d'office dans le dossier vide d'Aska.
     const before = calls().length;

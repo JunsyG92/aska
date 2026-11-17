@@ -6,14 +6,15 @@
 
 **Un raccourci, un champ, et vos agents IA répondent.**
 
-Claude Code, Codex, GitHub Copilot et Cursor dans une seule petite fenêtre,<br>
-pilotés par leurs CLI officiels. Linux et Windows.
+Claude Code, Codex, GitHub Copilot, Cursor et vos modèles Ollama dans une seule<br>
+petite fenêtre, pilotés par leurs CLI officiels. Linux, Windows et macOS.
 
 [![CI](https://github.com/JunsyG92/aska/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JunsyG92/aska/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/JunsyG92/aska?include_prereleases&label=version&color=d97757)](https://github.com/JunsyG92/aska/releases)
 [![Licence MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 ![Linux](https://img.shields.io/badge/Linux-%E2%9C%93-2ea44f?logo=linux&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-%E2%9C%93-2ea44f)
+![macOS](https://img.shields.io/badge/macOS-%E2%9C%93-2ea44f?logo=apple&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A5%2020-5fa04e?logo=nodedotjs&logoColor=white)
 
 <img src="docs/demo.gif" alt="Démonstration : une question à Claude, la réponse qui s'affiche en direct, puis une question de suivi" width="760">
@@ -99,6 +100,7 @@ Il vous faut **Node.js ≥ 20** et au moins un CLI d'agent installé et connect�
 | Codex | `npm i -g @openai/codex` |
 | GitHub Copilot | `npm i -g @github/copilot` |
 | Cursor | voir [cursor.com/cli](https://cursor.com/cli) |
+| Ollama (modèles locaux) | voir [ollama.com/download](https://ollama.com/download), puis `ollama pull <modèle>` |
 
 ### Linux
 
@@ -111,6 +113,21 @@ aska --hidden &                         # ou reconnectez-vous (démarrage automa
 
 - **Ubuntu 24.04+** : le script propose de régler le bac à sable d'Electron (mot de passe `sudo` demandé). Sans cela, Aska ne démarre pas ; `--sandbox-fix` le fait sans poser la question.
 - **Wayland** : une application ne peut pas toujours capter un raccourci global. Si `Ctrl+Alt+Espace` ne répond pas, associez la commande `aska --toggle` à un raccourci dans les paramètres clavier de votre bureau (KDE, Sway, Hyprland…) et mettez `"shortcut": false` dans la configuration.
+
+### macOS
+
+```sh
+git clone https://github.com/JunsyG92/aska.git && cd aska
+./scripts/install.sh                    # --no-autostart pour ne pas le lancer à l'ouverture de session
+```
+
+Le script pose la commande `aska` dans `~/.local/bin` et un LaunchAgent
+(`~/Library/LaunchAgents/com.aska.launcher.plist`) qui lance Aska en arrière-plan
+à l'ouverture de session. Aska n'a pas d'icône dans le Dock : c'est un lanceur,
+qu'on appelle avec `Ctrl+⌥+Espace`. Dans la fenêtre, `⌘` remplace `Ctrl`
+(`⌘T`, `⌘W`, `⌘1`…). Les CLI installés avec Homebrew (`/opt/homebrew/bin`) ou nvm
+sont trouvés même si Aska est lancé hors du terminal. macOS demande l'autorisation
+d'afficher des notifications à la première réponse reçue fenêtre masquée.
 
 ### Windows 10 / 11
 
@@ -159,7 +176,7 @@ L'aide liste les options, les raccourcis, et surtout **l'état de chaque agent**
 | `Ctrl+P` | épingler : le chat reste affiché quand vous cliquez ailleurs |
 | `Échap` | annuler la demande en cours, sinon masquer |
 
-Un clic en dehors du chat le masque ; l'agent continue de travailler. Pour le garder affiché, épinglez-le (📌 ou `Ctrl+P`) : le choix est mémorisé. Réduit en pastille, il reste toujours visible. La fenêtre se déplace par la poignée à gauche ou par la barre du bas, et sa position est mémorisée.
+Dès que l'IA commence à répondre, le panneau s'agrandit (jusqu'à 1040 px de large, plus haut) pour une lecture confortable ; une nouvelle conversation le ramène à sa taille normale. Un clic en dehors du chat le masque ; l'agent continue de travailler. Pour le garder affiché, épinglez-le (📌 ou `Ctrl+P`) : le choix est mémorisé. Réduit en pastille, il reste toujours visible. La fenêtre se déplace par la poignée à gauche ou par la barre du bas, et sa position est mémorisée.
 
 ## Notifications
 
@@ -219,9 +236,21 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
 
 | Mode | Claude | Codex | Copilot | Cursor |
 | --- | --- | --- | --- | --- |
-| **Lecture seule** | `--permission-mode plan --setting-sources user` | `--sandbox read-only` | `--deny-tool shell --deny-tool write` | `--mode ask` |
-| **Édition** | `--permission-mode acceptEdits` | `--sandbox workspace-write` | `--allow-tool write --deny-tool shell` | — |
+| **Lecture seule** | `--permission-mode plan --setting-sources user` | `--sandbox read-only` | commandes de lecture seulement (`ls`, `cat`, `grep`, `git status`…), écriture refusée | `--mode ask` |
+| **Édition** | `--permission-mode acceptEdits` | `--sandbox workspace-write` | écriture + commandes de lecture et `git log/diff/show` | — |
 | **Autonome** (désactivé par défaut) | `--permission-mode auto` | `workspace-write` + réseau | `--allow-all-tools` + liste noire | `--force` |
+
+- **Copilot** lit les fichiers surtout par le shell. Hors mode Autonome, il n'a
+  droit qu'à une liste fermée de commandes de lecture : `ls`, `cat`, `head`,
+  `tail`, `grep`, `wc`, `pwd`, `file`, `stat`, `git status`, plus `git log`,
+  `git diff` et `git show` en Édition. Toute autre commande est refusée, y compris
+  dans une commande composée. Pour qu'il lance des tests ou installe des
+  dépendances, il faut le mode Autonome.
+- **Ollama** n'a ni outils ni accès aux fichiers : il répond seulement, à partir de
+  votre demande et de l'historique de la conversation. Il n'a donc que le mode
+  Lecture seule. Le premier modèle de `ollama list` est utilisé par défaut ;
+  `Ctrl+Maj+M` en choisit un autre. Le serveur Ollama doit tourner (`ollama serve`,
+  ou l'application Ollama).
 
 - Les réglages de permission propres à chaque CLI (par ex. `~/.claude/settings.json`)
   continuent de s'appliquer : Aska n'ajoute que des restrictions.
@@ -399,4 +428,4 @@ npm test                                # tests unitaires
 xvfb-run -a npm run test:e2e            # test de bout en bout, avec de faux CLI (Windows : npm run test:e2e)
 ```
 
-Chaque PR lance ces contrôles sous Linux et Windows, ainsi qu'une analyse CodeQL. Les images de cette page sont produites à partir de la vraie application par `scripts/readme-media.js`.
+Chaque PR lance ces contrôles sous Linux, Windows et macOS, ainsi qu'une analyse CodeQL. Les images de cette page sont produites à partir de la vraie application par `scripts/readme-media.js`.

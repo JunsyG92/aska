@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Installe Aska pour l'utilisateur courant (aucun sudo) :
-#   lanceur ~/.local/bin/aska, entrée de menu, démarrage automatique en arrière-plan.
+# Installe Aska pour l'utilisateur courant (aucun sudo), sous Linux ou macOS :
+#   lanceur ~/.local/bin/aska, entrée de menu (Linux), démarrage automatique en
+#   arrière-plan (.desktop sous Linux, LaunchAgent sous macOS).
 # Options :
 #   --gnome-shortcut   enregistre Ctrl+Alt+Espace → « aska --toggle » dans GNOME (utile sous Wayland)
 #   --no-autostart     ne lance pas Aska à l'ouverture de session
@@ -21,7 +22,12 @@ for a in "$@"; do
 done
 
 command -v node >/dev/null || { echo "Node.js (>= 20) est requis." >&2; exit 1; }
-ELECTRON="$ROOT/node_modules/electron/dist/electron"
+OS="$(uname -s)"
+if [ "$OS" = Darwin ]; then
+  ELECTRON="$ROOT/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+else
+  ELECTRON="$ROOT/node_modules/electron/dist/electron"
+fi
 [ -d "$ROOT/node_modules/electron" ] || (cd "$ROOT" && npm install --no-fund --no-audit)
 # Electron >= 45 ne télécharge plus son binaire pendant « npm install » : on le fait ici.
 if [ ! -x "$ELECTRON" ]; then
@@ -42,7 +48,7 @@ fi
 BIN="${XDG_BIN_HOME:-$HOME/.local/bin}"
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
-mkdir -p "$BIN" "$APPS"
+mkdir -p "$BIN"
 
 cat > "$BIN/aska" <<LAUNCHER
 #!/bin/sh
@@ -83,10 +89,34 @@ Categories=Utility;Development;
 StartupNotify=false
 DESKTOP
 }
-desktop "$APPS/aska.desktop" "--toggle"
-if [ "$AUTOSTART" = 1 ]; then
-  mkdir -p "$CONF/autostart"
-  desktop "$CONF/autostart/aska.desktop" "--hidden"
+if [ "$OS" = Darwin ]; then
+  # macOS : démarrage à l'ouverture de session par un LaunchAgent de l'utilisateur.
+  AGENT="$HOME/Library/LaunchAgents/com.aska.launcher.plist"
+  if [ "$AUTOSTART" = 1 ]; then
+    mkdir -p "$(dirname "$AGENT")"
+    cat > "$AGENT" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.aska.launcher</string>
+  <key>ProgramArguments</key>
+  <array><string>$BIN/aska</string><string>--hidden</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
+PLIST
+  else
+    rm -f "$AGENT"
+  fi
+else
+  mkdir -p "$APPS"
+  desktop "$APPS/aska.desktop" "--toggle"
+  if [ "$AUTOSTART" = 1 ]; then
+    mkdir -p "$CONF/autostart"
+    desktop "$CONF/autostart/aska.desktop" "--hidden"
+  fi
 fi
 
 # Configuration privée : elle décide des programmes lancés, donc 0600.
@@ -131,8 +161,8 @@ fi
 RESTRICT="$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)"
 PROFILE=/etc/apparmor.d/aska
 SANDBOX="$ROOT/node_modules/electron/dist/chrome-sandbox"
-REAL_ELECTRON="$(readlink -f "$ELECTRON")"
 if [ "$RESTRICT" = 1 ]; then
+  REAL_ELECTRON="$(readlink -f "$ELECTRON")"
   WANT="$(printf '%s\n' \
     '# Aska : autorise Electron à créer les espaces de noms de son bac à sable.' \
     '# Généré par scripts/install.sh, supprimable sans risque (sudo rm /etc/apparmor.d/aska).' \

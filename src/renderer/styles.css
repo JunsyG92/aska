@@ -63,6 +63,7 @@ body { padding: 14px; }
 .panel {
   position: relative;
   width: 720px;
+  transition: width 0.32s cubic-bezier(0.25, 1, 0.35, 1);
   border-radius: 18px;
   opacity: 0;
   transform: translateY(14px) scale(0.965);
@@ -266,6 +267,7 @@ kbd {
 
 .thread, .history {
   max-height: 392px;
+  transition: max-height 0.32s cubic-bezier(0.25, 1, 0.35, 1);
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
@@ -875,5 +877,10 @@ kbd {
 }
 .tab-new:hover { background: var(--surface-2); color: var(--text); }
 .panel.mini .tabs { display: none; }
+
+/* Panneau agrandi dès que l'IA répond, pour lire confortablement (tailles : app.js). */
+.panel.wide { width: var(--wide-w, 960px); }
+.panel.wide .thread, .panel.wide .hist-list { max-height: var(--wide-h, 560px); }
+.panel.mini.wide { width: max-content; }
 
 [hidden] { display: none !important; }

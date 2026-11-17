@@ -16,6 +16,7 @@
   const status = $('status');
   const keys = $('keys');
   const api = window.aska;
+  const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
 
   let agents = [];
   let modes = {};
@@ -41,7 +42,8 @@
   let unread = 0;
   let tabList = []; // onglets : [{ id, title, color, running, unread, active }]
   const tabUi = new Map(); // par onglet : { draft, agentId, mode }, gardé en changeant d'onglet
-  let closeArmed = null; // onglet qui travaille, en attente de confirmation de fermeture
+  let closeArmed = null;
+  let wide = false; // panneau agrandi : la conversation a commencé à recevoir des réponses // onglet qui travaille, en attente de confirmation de fermeture
 
   const agent = () => agents.find((a) => a.id === agentId) || null;
   const el = (tag, cls, text) => {
@@ -327,6 +329,7 @@
     turnCount = conversation.turns.length;
     thread.replaceChildren();
     for (const t of conversation.turns) addTurn(t, true);
+    setWide(conversation.turns.some((t) => t.answer || t.status !== 'running'));
     const last = conversation.turns[turnCount - 1];
     lastAnswer = last ? last.answer : '';
     panel.dataset.state = 'idle';
@@ -352,6 +355,7 @@
     $('hist-btn').hidden = !s.historyEnabled;
     setPinned(!!s.pinned, false);
     setUnread(s.unread || 0);
+    sizeFromDisplay(s.display);
     setTabs(s.tabs || []);
     if (s.conversation.id !== convId) switchTo(s);
     else if (!running && s.conversation.turns.length !== turnCount) renderThread(s.conversation);
@@ -380,6 +384,21 @@
     const a = agent();
     setMode(a.modes.includes(mode) ? mode : a.modes[0], false);
     if (warnings.length && !turnCount && !running) showNotice(warnings.join('\n'), 'warn');
+  }
+
+  // ---------- taille du panneau ----------
+
+  // Agrandi dès que l'IA répond ; un onglet vide revient à la taille normale.
+  function setWide(v) {
+    if (wide === v) return;
+    wide = v;
+    panel.classList.toggle('wide', wide);
+  }
+
+  function sizeFromDisplay(d) {
+    if (!d || !d.w || !d.h) return;
+    panel.style.setProperty('--wide-w', `${Math.max(720, Math.min(1040, d.w - 96))}px`);
+    panel.style.setProperty('--wide-h', `${Math.max(392, Math.min(760, Math.round(d.h * 0.62) - 140))}px`);
   }
 
   // ---------- onglets ----------
@@ -521,6 +540,7 @@
     if (ev.tabId !== convId || ev.id !== runId || !live) return;
     switch (ev.type) {
       case 'text':
+        if (!wide && ev.text.trim()) setWide(true); // première réponse : plus de place pour la lire
         live.text += ev.text;
         // Plus la réponse est longue, moins on la redessine souvent.
         if (!renderTimer) renderTimer = setTimeout(renderLive, Math.min(400, 45 + live.text.length / 400));
@@ -548,6 +568,7 @@
     live.text = t.answer || live.text;
     renderLive();
     live.node.classList.remove('live');
+    setWide(true);
     live.node.dataset.status = t.status;
     fillMeta(live.meta, t);
     if (t.notice) live.node.append(el('div', 'notice ' + t.notice.kind, t.notice.text));
@@ -757,17 +778,19 @@
 
   document.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
-    if (e.ctrlKey && !e.shiftKey && k === 'm') {
+    // macOS : ⌘ joue le rôle de Ctrl (⌘T, ⌘W, ⌘1…), Ctrl reste accepté.
+    const ctrl = e.ctrlKey || (IS_MAC && e.metaKey);
+    if (ctrl && !e.shiftKey && k === 'm') {
       e.preventDefault();
       setMini(!mini);
       return;
     }
-    if (e.ctrlKey && !e.shiftKey && k === 'p' && !mini) {
+    if (ctrl && !e.shiftKey && k === 'p' && !mini) {
       e.preventDefault();
       setPinned(!pinned, true);
       return;
     }
-    if (!mini && !pendingTrust && !menuOpen && e.ctrlKey) {
+    if (!mini && !pendingTrust && !menuOpen && ctrl) {
       const tabKey =
         (k === 't' || (k === 'n' && !e.shiftKey)) ? () => newConversation()
         : k === 'w' && !e.shiftKey ? () => closeTab()
@@ -795,7 +818,7 @@
       return;
     }
     if (menuOpen) {
-      if (e.key === 'Escape' || (e.ctrlKey && e.shiftKey && k === 'm')) { e.preventDefault(); closeModelMenu(); }
+      if (e.key === 'Escape' || (ctrl && e.shiftKey && k === 'm')) { e.preventDefault(); closeModelMenu(); }
       else if (e.key === 'ArrowDown') { e.preventDefault(); highlightModel(modelSel + 1, true); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); highlightModel(modelSel - 1, true); }
       else if (e.key === 'PageDown') { e.preventDefault(); highlightModel(modelSel + 6, true); }
@@ -813,7 +836,7 @@
         if (histConfirm) armDelete(null);
         else if (histSearch.value) { histSearch.value = ''; renderHistory(); }
         else showHistory(false);
-      } else if (e.ctrlKey && k === 'h') { e.preventDefault(); showHistory(false); }
+      } else if (ctrl && k === 'h') { e.preventDefault(); showHistory(false); }
       else if (e.key === 'ArrowDown') { e.preventDefault(); highlightHist(histSel + 1, true); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); highlightHist(histSel - 1, true); }
       else if (e.key === 'PageDown') { e.preventDefault(); highlightHist(histSel + 5, true); }
@@ -840,19 +863,19 @@
     } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       submit();
-    } else if (e.ctrlKey && e.shiftKey && k === 'm') {
+    } else if (ctrl && e.shiftKey && k === 'm') {
       e.preventDefault();
       openModelMenu();
-    } else if (e.ctrlKey && e.shiftKey && k === 'c') {
+    } else if (ctrl && e.shiftKey && k === 'c') {
       e.preventDefault();
       if (lastAnswer) api.copy(lastAnswer).then(() => setStatus('Réponse copiée', 'ok'));
-    } else if (e.ctrlKey && !e.shiftKey && k === 'o') {
+    } else if (ctrl && !e.shiftKey && k === 'o') {
       e.preventDefault();
       if (!running) api.pickDir().then(applyState);
-    } else if (e.ctrlKey && !e.shiftKey && k === 'l') {
+    } else if (ctrl && !e.shiftKey && k === 'l') {
       e.preventDefault();
       newConversation();
-    } else if (e.ctrlKey && !e.shiftKey && k === 'h') {
+    } else if (ctrl && !e.shiftKey && k === 'h') {
       e.preventDefault();
       if (!$('hist-btn').hidden) showHistory(true);
     } else if (e.key === 'ArrowUp' && e.target === input && !input.value.slice(0, input.selectionStart).includes('\n')) {

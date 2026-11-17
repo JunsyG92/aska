@@ -64,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -94,6 +94,23 @@ jobs:
       - name: Test de bout en bout (Windows)
         if: runner.os == 'Windows'
         run: npm run test:e2e
+      - name: Test de bout en bout (macOS)
+        if: runner.os == 'macOS'
+        run: npm run test:e2e
+      - name: Installation (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ./scripts/install.sh
+          test -x "$HOME/.local/bin/aska" || { echo "lanceur absent"; exit 1; }
+          plist="$HOME/Library/LaunchAgents/com.aska.launcher.plist"
+          plutil -lint "$plist"
+          grep -q -- '--hidden' "$plist" || { echo "démarrage en arrière-plan absent du LaunchAgent"; exit 1; }
+          help="$("$HOME/.local/bin/aska" --help)"
+          echo "$help"
+          echo "$help" | grep -q 'Usage : aska' || { echo "aska --help ne répond pas"; exit 1; }
+          "$HOME/.local/bin/aska" --version | grep -q '^aska [0-9]' || { echo "aska --version ne répond pas"; exit 1; }
+          ./scripts/install.sh --no-autostart
+          test ! -e "$plist" || { echo "--no-autostart devrait retirer le LaunchAgent"; exit 1; }
       - name: Installation (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

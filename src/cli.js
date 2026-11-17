@@ -102,6 +102,7 @@ function helpText(stream = process.stdout, env = process.env) {
     row('Ctrl+P', 'Épingler / désépingler (un chat épinglé ne se masque pas au clic extérieur)'),
     row('Ctrl+Maj+C', 'Copier la dernière réponse'),
     row('Échap', 'Annuler la demande en cours, sinon masquer'),
+    ...(process.platform === 'darwin' ? [row('⌘', 'Sur macOS, ⌘ remplace Ctrl (⌘T, ⌘W, ⌘1…)')] : []),
     '',
     s.bold('État'),
     row('Clic extérieur', pinned ? "Ne masque pas le chat : il est épinglé (Ctrl+P pour désépingler)" : 'Masque le chat (Ctrl+P pour l\'épingler)'),
