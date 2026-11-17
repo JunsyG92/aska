@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy"
@@ -18,10 +18,11 @@
             <div class="hist-head">
               <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.3"/><path d="M10.3 10.3 13.5 13.5"/></svg>
               <input id="hist-search" type="text" spellcheck="false" autocomplete="off" maxlength="80"
-                     placeholder="Rechercher dans les conversations…" aria-label="Rechercher dans les conversations" aria-controls="hist-list">
+                     placeholder="Search conversations…" aria-label="Search conversations" aria-controls="hist-list"
+                     data-i18n-placeholder="history.search" data-i18n-aria-label="history.searchLabel">
               <span id="hist-count" class="hist-count"></span>
             </div>
-            <div id="hist-list" class="hist-list" role="listbox" aria-label="Conversations enregistrées"></div>
+            <div id="hist-list" class="hist-list" role="listbox" aria-label="Saved conversations" data-i18n-aria-label="history.saved"></div>
           </div>
           <div id="thread" class="thread" tabindex="-1" aria-live="polite"></div>
           <div id="activity" class="activity" hidden><span class="spinner" aria-hidden="true"></span><span id="activity-text"></span></div>
@@ -30,29 +31,32 @@
       </section>
 
       <header class="bar">
-        <span class="grip" title="Déplacer" aria-hidden="true"></span>
-        <button id="agent" class="agent" type="button" title="Changer d'agent (Tab)">
+        <span class="grip" title="Move" data-i18n-title="move" aria-hidden="true"></span>
+        <button id="agent" class="agent" type="button" title="Switch agent (Tab)" data-i18n-title="switchAgent">
           <span class="orb" aria-hidden="true"><i></i></span>
           <span id="agent-name" class="agent-name">…</span>
         </button>
         <textarea id="input" rows="1" spellcheck="false" autocomplete="off"
-                  placeholder="Demandez une action…" aria-label="Votre message"></textarea>
+                  placeholder="Ask for something…" aria-label="Your message"
+                  data-i18n-placeholder="inputPlaceholder" data-i18n-aria-label="inputLabel"></textarea>
         <kbd id="enter-hint" class="enter">⏎</kbd>
         <span id="mini-status" class="mini-status"></span>
         <button id="pin-btn" class="win-btn full-only" type="button" aria-pressed="false"
-                title="Épingler : rester affiché quand on clique ailleurs (Ctrl+P)" aria-label="Épingler">
+                title="Pin: stay visible when clicking elsewhere (Ctrl+P)" aria-label="Pin" data-i18n-aria-label="pin.label">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5h4M6.6 2.5v3.8L4.4 9h7.2L9.4 6.3V2.5M8 9v4.5"/></svg>
         </button>
-        <button id="hist-btn" class="win-btn full-only" type="button" title="Conversations (Ctrl+H)" aria-label="Conversations">
+        <button id="hist-btn" class="win-btn full-only" type="button" title="Conversations (Ctrl+H)" aria-label="Conversations"
+                data-i18n-title="history.title" data-i18n-aria-label="history.label">
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.2"/><path d="M8 5.2V8l2 1.3"/></svg>
         </button>
-        <button id="new-btn" class="win-btn full-only" type="button" title="Nouvelle conversation (Ctrl+N)" aria-label="Nouvelle conversation">
+        <button id="new-btn" class="win-btn full-only" type="button" title="New conversation (Ctrl+N)" aria-label="New conversation"
+                data-i18n-title="newConversationTitle" data-i18n-aria-label="newConversation">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
         </button>
-        <button id="mini-btn" class="win-btn" type="button" title="Réduire (Ctrl+M)" aria-label="Réduire">
+        <button id="mini-btn" class="win-btn" type="button" title="Minimize (Ctrl+M)" aria-label="Minimize">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path class="i-min" d="M4 8h8"/><path class="i-max" d="M4 9.5 8 5.5 12 9.5"/></svg>
         </button>
-        <button id="close-btn" class="win-btn" type="button" title="Masquer (Échap)" aria-label="Masquer">
+        <button id="close-btn" class="win-btn" type="button" title="Hide (Esc)" aria-label="Hide" data-i18n-title="hideTitle" data-i18n-aria-label="hide">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>
         </button>
       </header>
@@ -60,33 +64,35 @@
       <section id="confirm" class="confirm" hidden role="alertdialog" aria-labelledby="confirm-text">
         <p id="confirm-text"></p>
         <div class="confirm-actions">
-          <button id="trust-once" type="button" class="primary">Autoriser une fois <kbd>⏎</kbd></button>
-          <button id="trust-always" type="button">Toujours pour ce dossier <kbd>⇧⏎</kbd></button>
-          <button id="trust-cancel" type="button" class="ghost">Annuler <kbd>Échap</kbd></button>
+          <button id="trust-once" type="button" class="primary"><span data-i18n="trust.once">Allow once</span> <kbd>⏎</kbd></button>
+          <button id="trust-always" type="button"><span data-i18n="trust.always">Always for this folder</span> <kbd>⇧⏎</kbd></button>
+          <button id="trust-cancel" type="button" class="ghost"><span data-i18n="trust.cancel">Cancel</span> <kbd data-i18n="keys.esc">Esc</kbd></button>
         </div>
       </section>
 
-      <section id="model-menu" class="model-menu" hidden aria-label="Choix du modèle">
+      <section id="model-menu" class="model-menu" hidden aria-label="Model picker" data-i18n-aria-label="modelPicker">
         <div class="model-head">
           <input id="model-filter" type="text" spellcheck="false" autocomplete="off" maxlength="80"
-                 placeholder="Rechercher un modèle…" aria-label="Rechercher un modèle" aria-controls="model-list">
-          <button id="model-refresh" class="win-btn" type="button" title="Actualiser la liste depuis le CLI" aria-label="Actualiser la liste">
+                 placeholder="Search models…" aria-label="Search models" aria-controls="model-list"
+                 data-i18n-placeholder="searchModels" data-i18n-aria-label="searchModelsLabel">
+          <button id="model-refresh" class="win-btn" type="button" title="Refresh the list from the CLI" aria-label="Refresh the list"
+                  data-i18n-title="refreshTitle" data-i18n-aria-label="refreshLabel">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.6 8a4.6 4.6 0 1 1-1.5-3.4M12.8 3v2.4h-2.4"/></svg>
           </button>
         </div>
-        <div id="model-list" class="model-list" role="listbox" aria-label="Modèles disponibles"></div>
+        <div id="model-list" class="model-list" role="listbox" aria-label="Available models" data-i18n-aria-label="availableModels"></div>
         <div id="model-note" class="model-note"></div>
       </section>
 
       <footer class="foot">
-        <button id="cwd" type="button" class="chip" title="Dossier de travail (Ctrl+O)">
+        <button id="cwd" type="button" class="chip" title="Working folder (Ctrl+O)" data-i18n-title="workingFolderTitle">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4.5a1 1 0 0 1 1-1h3.2l1.3 1.5h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
           <span id="cwd-name"></span>
         </button>
-        <button id="mode" type="button" class="chip mode" title="Mode de permission (Maj+Tab)">
+        <button id="mode" type="button" class="chip mode" title="Permission mode (Shift+Tab)" data-i18n-title="modeChipTitle">
           <span class="mode-dot" aria-hidden="true"></span><span id="mode-name"></span>
         </button>
-        <button id="model" type="button" class="chip" title="Modèle (Ctrl+Maj+M)">
+        <button id="model" type="button" class="chip" title="Model (Ctrl+Shift+M)" data-i18n-title="modelChipTitle">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 13.4 4.9v6.2L8 14.2 2.6 11.1V4.9zM2.8 5 8 8l5.2-3M8 8v6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
           <span id="model-name"></span>
         </button>

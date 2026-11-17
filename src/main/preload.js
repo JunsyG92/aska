@@ -1,5 +1,5 @@
 'use strict';
-// Seul pont entre l'interface (bac à sable, sans Node) et le processus principal.
+// The only bridge between the UI (sandboxed, no Node) and the main process.
 const { contextBridge, ipcRenderer } = require('electron');
 
 const on = (channel) => (cb) => {

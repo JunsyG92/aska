@@ -1,4 +1,4 @@
-# Mises à jour automatiques des dépendances, regroupées pour limiter le bruit.
+# Automatic dependency updates, grouped to limit noise.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -14,7 +14,7 @@ updates:
       dev-dependencies:
         dependency-type: development
         update-types: [minor, patch]
-    labels: [dépendances]
+    labels: [dependencies]
 
   - package-ecosystem: github-actions
     directory: /
@@ -26,4 +26,4 @@ updates:
     groups:
       actions:
         patterns: ['*']
-    labels: [dépendances, ci]
+    labels: [dependencies, ci]

@@ -1,23 +1,23 @@
 <!--
-Le titre de la PR devient le message du commit sur main : il doit suivre
-Conventional Commits, par exemple « feat(notifications): son facultatif » ou
-« fix(windows): lanceur .cmd introuvable ». Voir CONTRIBUTING.md.
+The PR title becomes the commit message on main: it must follow
+Conventional Commits, for example "feat(notifications): optional sound" or
+"fix(windows): .cmd launcher not found". See CONTRIBUTING.md.
 -->
 
-## Quoi et pourquoi
+## What and why
 
-<!-- Le changement en quelques lignes, et le besoin qu'il couvre. « Closes #123 » si une issue existe. -->
+<!-- The change in a few lines, and the need it covers. "Closes #123" if there is an issue. -->
 
-## Comment c'est vérifié
+## How it was verified
 
-<!-- Tests ajoutés ou modifiés, essais manuels (système, agent, bureau). -->
+<!-- Tests added or changed, manual testing (OS, agent, desktop). -->
 
-## Captures
+## Screenshots
 
-<!-- Pour tout changement visible : avant / après, en clair et en sombre si possible. -->
+<!-- For any visible change: before / after, in light and dark if possible. -->
 
-## Points d'attention
+## Checklist
 
-- [ ] Sécurité : ce changement touche-t-il au lancement des agents, aux permissions, aux dossiers ou à l'environnement transmis ? Si oui, expliquez.
-- [ ] Les tests passent en local (`npm run check`, et `npm run test:e2e` pour l'interface).
-- [ ] Documentation à jour (README, `aska --help`) si le comportement change.
+- [ ] Security: does this change touch agent launching, permissions, folders or the environment passed on? If so, explain.
+- [ ] Tests pass locally (`npm run check`, and `npm run test:e2e` for the UI).
+- [ ] Documentation up to date (README, `aska --help`) if the behavior changes.

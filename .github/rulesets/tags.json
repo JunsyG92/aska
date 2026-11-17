@@ -1,5 +1,5 @@
 {
-  "name": "Protection des tags de version",
+  "name": "Protect version tags",
   "target": "tag",
   "enforcement": "active",
   "conditions": {

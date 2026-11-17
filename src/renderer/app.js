@@ -23,7 +23,7 @@
   let mode = 'read';
   let runId = null;
   let running = false;
-  let live = null; // tour en cours : { node, answerEl, text }
+  let live = null; // current turn: { node, answerEl, text }
   let convId = null;
   let turnCount = 0;
   let lastAnswer = '';
@@ -31,7 +31,7 @@
   let history = [];
   let histIdx = -1;
   let draft = '';
-  let pendingTrust = null; // demande en attente d'accord d'écriture
+  let pendingTrust = null; // request waiting for write approval
   let warnings = [];
   let mini = false;
   let activityText = '';
@@ -39,6 +39,41 @@
   let menuOpen = false;
   let pinned = false;
   let unread = 0;
+
+  // ---------- translations (strings sent by the main process) ----------
+
+  let lang = 'en';
+  let strings = {};
+  const lookup = (key) => key.split('.').reduce((o, k) => (o && typeof o === 'object' && Object.hasOwn(o, k) ? o[k] : undefined), strings);
+  function t(key, params = {}) {
+    let v = lookup(key);
+    if (v && typeof v === 'object' && typeof params.count === 'number') v = v[new Intl.PluralRules(lang).select(params.count)] ?? v.other;
+    if (typeof v !== 'string') return key;
+    return v.replace(/\{(\w+)\}/g, (m, k) => (Object.hasOwn(params, k) ? String(params[k]) : m));
+  }
+  let locale = 'en-US';
+  let timeFmt, dayFmt, yearFmt;
+
+  // Static texts of index.html (data-i18n*), reapplied when the language changes.
+  function setLanguage(s) {
+    lang = s.lang || 'en';
+    strings = s.strings || {};
+    locale = t('locale');
+    document.documentElement.lang = lang;
+    timeFmt = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' });
+    dayFmt = new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' });
+    yearFmt = new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short', year: 'numeric' });
+    window.renderMarkdown.labels.copy = t('copy');
+    for (const n of document.querySelectorAll('[data-i18n]')) n.textContent = t(n.dataset.i18n);
+    for (const [attr, data] of [['title', 'i18nTitle'], ['aria-label', 'i18nAriaLabel'], ['placeholder', 'i18nPlaceholder']]) {
+      const sel = '[data-' + data.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()) + ']';
+      for (const n of document.querySelectorAll(sel)) n.setAttribute(attr, t(n.dataset[data]));
+    }
+    document.querySelectorAll('.code-copy').forEach((b) => { b.textContent = t('copy'); });
+    document.querySelectorAll('.turn .meta').forEach((m) => { m.dataset.cancelled = t('cancelled'); });
+    syncMiniLabels();
+    setKeys();
+  }
 
   const agent = () => agents.find((a) => a.id === agentId) || null;
   const el = (tag, cls, text) => {
@@ -54,16 +89,16 @@
     node.classList.add(cls);
   }
 
-  // ---------- pied, statut, pastille ----------
+  // ---------- footer, status, pill ----------
 
   function setKeys() {
     const items = running
-      ? [['Échap', 'annuler']]
+      ? [[t('keys.esc'), t('footer.cancel')]]
       : pendingTrust || menuOpen
         ? []
         : view === 'history'
-          ? [['↑ ↓', 'choisir'], ['⏎', 'ouvrir'], ['Suppr', 'supprimer'], ['Échap', 'retour']]
-          : [['Tab', 'agent'], ['⇧ Tab', 'mode']];
+          ? [['↑ ↓', t('footer.select')], ['⏎', t('footer.open')], [t('keys.del'), t('footer.delete')], [t('keys.esc'), t('footer.back')]]
+          : [['Tab', t('footer.agent')], ['⇧ Tab', t('footer.mode')]];
     keys.replaceChildren(
       ...items.map(([k, label]) => {
         const s = el('span');
@@ -75,31 +110,29 @@
 
   function syncMini() {
     $('mini-status').textContent = running
-      ? activityText || 'En cours…'
+      ? activityText || t('running')
       : unread
-        ? unread > 1 ? `${unread} nouvelles réponses` : 'Nouvelle réponse'
+        ? t('unread', { count: unread })
         : status.textContent;
   }
 
-  // Réponses arrivées pendant que le chat était masqué ou réduit.
+  // Replies that arrived while the chat was hidden or minimized.
   function setUnread(n) {
     unread = n;
     panel.classList.toggle('has-unread', unread > 0);
     syncMini();
   }
 
-  // Épinglé : le chat reste affiché quand on clique ailleurs.
+  // Pinned: the chat stays visible when clicking elsewhere.
   function setPinned(v, save) {
     pinned = v;
     const btn = $('pin-btn');
     btn.setAttribute('aria-pressed', String(pinned));
-    btn.title = pinned
-      ? 'Épinglé : reste affiché quand vous cliquez ailleurs (Ctrl+P pour désépingler)'
-      : 'Épingler : rester affiché quand on clique ailleurs (Ctrl+P)';
+    btn.title = t(pinned ? 'pin.pinnedTitle' : 'pin.title');
     if (save) {
       api.setPinned(pinned);
       replay(btn, 'swap');
-      setStatus(pinned ? 'Épinglé' : 'Se masque au clic extérieur');
+      setStatus(t(pinned ? 'pin.pinned' : 'pin.hidesOnBlur'));
     }
   }
 
@@ -129,13 +162,12 @@
     result.classList.toggle('open', open);
   }
 
-  // Réduit le panneau en pastille (ou le rétablit). L'exécution en cours continue.
+  // Minimizes the panel to a pill (or restores it). The current run keeps going.
   function setMini(v) {
     if (mini === v) return;
     mini = v;
     panel.classList.toggle('mini', mini);
-    $('mini-btn').title = mini ? 'Agrandir (Ctrl+M)' : 'Réduire (Ctrl+M)';
-    $('mini-btn').setAttribute('aria-label', mini ? 'Agrandir' : 'Réduire');
+    syncMiniLabels();
     api.setMini(mini);
     syncMini();
     if (!mini) {
@@ -146,13 +178,18 @@
     }
   }
 
-  // ---------- agent, mode, modèle ----------
+  function syncMiniLabels() {
+    $('mini-btn').title = t(mini ? 'mini.expandTitle' : 'mini.minimizeTitle');
+    $('mini-btn').setAttribute('aria-label', t(mini ? 'mini.expand' : 'mini.minimize'));
+  }
+
+  // ---------- agent, mode, model ----------
 
   function setMode(next, animate) {
     mode = next;
     modeBtn.dataset.mode = mode;
     $('mode-name').textContent = modes[mode] ? modes[mode].label : mode;
-    modeBtn.title = `${modes[mode] ? modes[mode].hint : ''} — Maj+Tab pour changer`;
+    modeBtn.title = t('modeTitle', { hint: modes[mode] ? modes[mode].hint : '' });
     if (animate) replay(modeBtn, 'swap');
   }
 
@@ -160,8 +197,8 @@
     const a = agent();
     modelBtn.hidden = !a || !a.canPickModel;
     if (!a) return;
-    $('model-name').textContent = a.model || 'Modèle par défaut';
-    modelBtn.title = `Modèle utilisé par ${a.label} — Ctrl+Maj+M pour changer`;
+    $('model-name').textContent = a.model || t('model.default');
+    modelBtn.title = t('model.title', { agent: a.label });
   }
 
   function setAgent(id, animate) {
@@ -170,9 +207,9 @@
     agentId = id;
     panel.style.setProperty('--agent', a.color);
     $('agent-name').textContent = a.label;
-    input.placeholder = turnCount ? `Répondre à ${a.label}…` : `Demandez une action à ${a.label}…`;
+    input.placeholder = t(turnCount ? 'reply' : 'ask', { agent: a.label });
     if (animate) replay(agentBtn, 'swap');
-    // Un agent ne propose pas forcément tous les modes : on retombe sur le plus restrictif.
+    // An agent may not offer every mode: fall back to the most restrictive one.
     if (!a.modes.includes(mode)) setMode(a.modes[0], animate);
     syncModel();
     if (menuOpen) closeModelMenu();
@@ -191,9 +228,9 @@
     setMode(a.modes[(i + 1) % a.modes.length], true);
   }
 
-  // ----- choix du modèle : liste fournie par le CLI, filtrable au clavier -----
+  // ----- model picker: list provided by the CLI, filterable from the keyboard -----
 
-  let modelItems = []; // options affichées : { id, label }
+  let modelItems = []; // displayed options: { id, label }
   let modelSel = 0;
   let modelAll = [];
   let modelCurrent = null;
@@ -227,10 +264,10 @@
     const needle = q.toLowerCase();
     const match = (m) => !needle || m.id.toLowerCase().includes(needle) || (m.label || '').toLowerCase().includes(needle);
     modelItems = [];
-    if (!needle) modelItems.push({ id: null, label: 'Par défaut du CLI' });
+    if (!needle) modelItems.push({ id: null, label: t('model.cliDefault') });
     modelItems.push(...modelAll.filter(match).slice(0, 300));
-    // Un nom absent de la liste reste utilisable, si le CLI le connaît.
-    if (q && MODEL_RE.test(q) && !modelItems.length) modelItems.push({ id: q, label: `Utiliser « ${q} »`, custom: true });
+    // A name missing from the list is still usable, if the CLI knows it.
+    if (q && MODEL_RE.test(q) && !modelItems.length) modelItems.push({ id: q, label: t('model.use', { model: q }), custom: true });
     $('model-list').replaceChildren(
       ...modelItems.map((m, i) => {
         const row = el('div', 'model-opt');
@@ -251,7 +288,7 @@
     if (!a) return;
     const btn = $('model-refresh');
     btn.classList.add('busy');
-    $('model-note').textContent = modelAll.length ? '' : `Récupération des modèles de ${a.label}…`;
+    $('model-note').textContent = modelAll.length ? '' : t('model.fetching', { agent: a.label });
     const res = await api.listModels(a.id, refresh);
     btn.classList.remove('busy');
     if (!menuOpen || agentId !== a.id) return;
@@ -260,10 +297,10 @@
     $('model-note').textContent = res.fromCli
       ? ''
       : res.error
-        ? `Liste indisponible (${res.error}) : tapez le nom du modèle.`
+        ? t('model.unavailable', { error: res.error })
         : modelAll.length
           ? ''
-          : `${a.label} ne publie pas sa liste : tapez le nom du modèle.`;
+          : t('model.notPublished', { agent: a.label });
     renderModels();
   }
 
@@ -274,7 +311,7 @@
     modelAll = a.models.map((id) => ({ id, label: null }));
     modelCurrent = a.model || null;
     $('model-filter').value = '';
-    $('model-filter').placeholder = `Rechercher un modèle ${a.label}…`;
+    $('model-filter').placeholder = t('model.search', { agent: a.label });
     menuOpen = true;
     modelMenu.hidden = false;
     setKeys();
@@ -289,16 +326,17 @@
     $('enter-hint').classList.toggle('off', !input.value.trim() || running);
   }
 
-  // ---------- fil de conversation ----------
+  // ---------- conversation thread ----------
 
   function scrollEnd(force) {
     if (force || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80) thread.scrollTop = thread.scrollHeight;
   }
 
-  function fillMeta(metaEl, t) {
-    const secs = t.durationMs ? `${(t.durationMs / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} s` : null;
-    const parts = [t.model, modes[t.mode] ? modes[t.mode].label : null, secs].filter(Boolean);
-    metaEl.replaceChildren(el('i'), el('b', null, t.label), parts.length ? ' · ' + parts.join(' · ') : '');
+  function fillMeta(metaEl, turn) {
+    const secs = turn.durationMs ? t('duration', { secs: (turn.durationMs / 1000).toLocaleString(locale, { maximumFractionDigits: 1 }) }) : null;
+    const parts = [turn.model, modes[turn.mode] ? modes[turn.mode].label : null, secs].filter(Boolean);
+    metaEl.dataset.cancelled = t('cancelled');
+    metaEl.replaceChildren(el('i'), el('b', null, turn.label), parts.length ? ' · ' + parts.join(' · ') : '');
   }
 
   function addTurn(t, isStatic) {
@@ -336,23 +374,24 @@
   }
 
   function applyState(s) {
+    setLanguage(s);
     modes = s.modes;
     agents = s.agents.filter((a) => a.available);
     history = s.history || [];
     warnings = s.warnings || [];
     $('cwd-name').textContent = s.cwd;
-    $('cwd').title = (s.cwdIsScratch ? 'Dossier vide réservé à Aska' : s.cwd) + ' — Ctrl+O pour choisir un dossier';
+    $('cwd').title = t('cwdTitle', { path: s.cwdIsScratch ? t('cwdScratch') : s.cwd });
     $('hist-btn').hidden = !s.historyEnabled;
     setPinned(!!s.pinned, false);
     setUnread(s.unread || 0);
     if (!running && (s.conversation.id !== convId || s.conversation.turns.length !== turnCount)) renderThread(s.conversation);
     if (!agents.length) {
       input.disabled = true;
-      input.placeholder = 'Aucun agent détecté';
-      $('agent-name').textContent = 'Aucun';
+      input.placeholder = t('noAgent');
+      $('agent-name').textContent = t('noneAgent');
       modelBtn.hidden = true;
-      const hints = s.agents.map((a) => `${a.label} : ${a.install || a.error}`).join('\n');
-      showNotice(`Aucun CLI d'agent trouvé dans le PATH.\n${hints}`, 'warn');
+      const hints = s.agents.map((a) => t('agentHint', { agent: a.label, hint: a.install || a.error })).join('\n');
+      showNotice(t('noAgentCli', { hints }), 'warn');
       return;
     }
     input.disabled = false;
@@ -367,7 +406,7 @@
     if (warnings.length && !turnCount && !running) showNotice(warnings.join('\n'), 'warn');
   }
 
-  // ---------- envoi ----------
+  // ---------- sending ----------
 
   function closeConfirm() {
     pendingTrust = null;
@@ -385,11 +424,8 @@
     if (res.needsTrust) {
       pendingTrust = { prompt };
       confirmBox.dataset.mode = res.mode;
-      const what = res.mode === 'auto' ? 'modifier des fichiers et lancer des commandes' : 'modifier des fichiers';
-      $('confirm-text').textContent =
-        res.reason === 'content'
-          ? `${res.agent} demande de faire confiance au contenu de « ${res.cwd} » : il lira sa configuration et pourra exécuter du code qui s'y trouve. Continuer ?`
-          : `Autoriser ${res.agent} à ${what} dans « ${res.cwd} » ?`;
+      const what = t(res.mode === 'auto' ? 'trust.editAndRun' : 'trust.editFiles');
+      $('confirm-text').textContent = t(res.reason === 'content' ? 'trust.content' : 'trust.allow', { agent: res.agent, cwd: res.cwd, what });
       confirmBox.hidden = false;
       $('trust-once').focus();
       setKeys();
@@ -403,7 +439,7 @@
       input.focus();
       return;
     }
-    // La demande rejoint le fil et le champ se vide pour le message suivant.
+    // The request joins the thread and the field clears for the next message.
     runId = res.id;
     running = true;
     if (history[history.length - 1] !== prompt) history.push(prompt);
@@ -416,11 +452,11 @@
     turnCount += 1;
     panel.dataset.state = 'running';
     setStatus('');
-    setActivity('Démarrage…');
+    setActivity(t('starting'));
     setKeys();
     autosize();
     scrollEnd(true);
-    input.placeholder = `Répondre à ${a.label}…`;
+    input.placeholder = t('reply', { agent: a.label });
     input.focus();
   }
 
@@ -429,7 +465,7 @@
     switch (ev.type) {
       case 'text':
         live.text += ev.text;
-        // Plus la réponse est longue, moins on la redessine souvent.
+        // The longer the answer, the less often it is redrawn.
         if (!renderTimer) renderTimer = setTimeout(renderLive, Math.min(400, 45 + live.text.length / 400));
         break;
       case 'activity':
@@ -448,22 +484,22 @@
   }
 
   function finish(ev) {
-    const t = ev.turn;
+    const turn = ev.turn;
     running = false;
     clearTimeout(renderTimer);
     renderTimer = null;
-    live.text = t.answer || live.text;
+    live.text = turn.answer || live.text;
     renderLive();
     live.node.classList.remove('live');
-    live.node.dataset.status = t.status;
-    fillMeta(live.meta, t);
-    if (t.notice) live.node.append(el('div', 'notice ' + t.notice.kind, t.notice.text));
+    live.node.dataset.status = turn.status;
+    fillMeta(live.meta, turn);
+    if (turn.notice) live.node.append(el('div', 'notice ' + turn.notice.kind, turn.notice.text));
     lastAnswer = live.text;
     live = null;
     setActivity('');
-    panel.dataset.state = t.status === 'ok' ? 'done' : 'error';
-    if (t.status === 'ok') setStatus('Terminé', 'ok');
-    else setStatus(t.status === 'cancel' ? 'Annulé' : 'Échec', 'err');
+    panel.dataset.state = turn.status === 'ok' ? 'done' : 'error';
+    if (turn.status === 'ok') setStatus(t('status.done'), 'ok');
+    else setStatus(t(turn.status === 'cancel' ? 'status.cancelled' : 'status.failed'), 'err');
     setKeys();
     autosize();
     scrollEnd(true);
@@ -477,30 +513,27 @@
     input.focus();
   }
 
-  // ---------- historique des conversations ----------
+  // ---------- conversation history ----------
 
   const histList = $('hist-list');
   const histSearch = $('hist-search');
   let histAll = [];
   let histShown = [];
   let histSel = 0;
-  let histConfirm = null; // id en attente de confirmation de suppression
+  let histConfirm = null; // id waiting for delete confirmation
 
-  const timeFmt = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  const dayFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' });
-  const yearFmt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
   const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
-  // Regroupe par ancienneté et choisit le format de date le plus court qui reste clair.
+  // Groups by age and picks the shortest date format that stays clear.
   function whenOf(iso) {
     const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return { group: 'Plus ancien', time: '' };
+    if (Number.isNaN(d.getTime())) return { group: t('history.older'), time: '' };
     const days = Math.round((dayStart(new Date()) - dayStart(d)) / 86400000);
-    if (days <= 0) return { group: "Aujourd'hui", time: timeFmt.format(d) };
-    if (days === 1) return { group: 'Hier', time: timeFmt.format(d) };
-    if (days < 7) return { group: '7 derniers jours', time: dayFmt.format(d) };
-    if (days < 30) return { group: '30 derniers jours', time: dayFmt.format(d) };
-    return { group: 'Plus ancien', time: d.getFullYear() === new Date().getFullYear() ? dayFmt.format(d) : yearFmt.format(d) };
+    if (days <= 0) return { group: t('history.today'), time: timeFmt.format(d) };
+    if (days === 1) return { group: t('history.yesterday'), time: timeFmt.format(d) };
+    if (days < 7) return { group: t('history.last7'), time: dayFmt.format(d) };
+    if (days < 30) return { group: t('history.last30'), time: dayFmt.format(d) };
+    return { group: t('history.older'), time: d.getFullYear() === new Date().getFullYear() ? dayFmt.format(d) : yearFmt.format(d) };
   }
 
   function armDelete(id) {
@@ -508,7 +541,7 @@
     histList.querySelectorAll('.hist-item').forEach((r) => {
       const on = r.dataset.id === id;
       r.classList.toggle('arming', on);
-      r.querySelector('.hist-del').textContent = on ? 'Confirmer la suppression' : 'Supprimer';
+      r.querySelector('.hist-del').textContent = t(on ? 'history.confirmDelete' : 'history.delete');
     });
   }
 
@@ -533,13 +566,13 @@
       (c) => !q || [c.title, c.preview, c.cwd || '', ...c.agents.map((a) => a.label)].some((t) => t.toLowerCase().includes(q))
     );
     const n = histAll.length;
-    $('hist-count').textContent = !n ? '' : q ? `${histShown.length} sur ${n}` : `${n} conversation${n > 1 ? 's' : ''}`;
+    $('hist-count').textContent = !n ? '' : q ? t('history.filtered', { shown: histShown.length, total: n }) : t('history.count', { count: n });
     histConfirm = null;
     if (!histShown.length) {
       const empty = el('div', 'hist-empty');
       empty.append(
-        el('b', null, n ? 'Aucun résultat' : 'Aucune conversation pour le moment'),
-        n ? `Rien ne correspond à « ${histSearch.value.trim()} ».` : 'Vos échanges apparaîtront ici dès le premier message envoyé.'
+        el('b', null, t(n ? 'history.noResults' : 'history.empty')),
+        n ? t('history.noMatch', { query: histSearch.value.trim() }) : t('history.emptyHint')
       );
       histList.replaceChildren(empty);
       return;
@@ -562,9 +595,9 @@
         dots.append(d);
       }
       const sub = el('div', 'hist-sub');
-      const facts = [c.agents.map((a) => a.label).join(', '), `${c.turns} message${c.turns > 1 ? 's' : ''}`, c.cwd].filter(Boolean);
+      const facts = [c.agents.map((a) => a.label).join(', '), t('history.messages', { count: c.turns }), c.cwd].filter(Boolean);
       sub.append(dots, el('span', null, facts.join(' · ')));
-      const del = el('button', 'hist-del', 'Supprimer');
+      const del = el('button', 'hist-del', t('history.delete'));
       del.type = 'button';
       del.tabIndex = -1;
       row.append(el('div', 'hist-title', c.title), el('div', 'hist-time', w.time));
@@ -584,7 +617,7 @@
     $('hist-btn').setAttribute('aria-pressed', String(on));
     historyBox.hidden = !on;
     thread.hidden = on;
-    panel.classList.toggle('in-history', on); // le pied ne garde que les raccourcis de la liste
+    panel.classList.toggle('in-history', on); // the footer only keeps the list shortcuts
     if (on) {
       setStatus('');
       histSearch.value = '';
@@ -606,7 +639,7 @@
     showHistory(false);
   }
 
-  // Suppression en deux temps : la première demande arme, la seconde confirme.
+  // Two-step delete: the first request arms, the second confirms.
   async function deleteConversation(id) {
     if (histConfirm !== id) return armDelete(id);
     const keep = histSel;
@@ -626,7 +659,7 @@
     histSearch.focus();
   });
 
-  // Dans le fil : liens ouverts dans le navigateur, bouton « Copier » des blocs de code.
+  // In the thread: links open in the browser, "Copy" button on code blocks.
   thread.addEventListener('click', (e) => {
     const a = e.target.closest('a.md-link');
     if (a) {
@@ -637,12 +670,12 @@
     const btn = e.target.closest('.code-copy');
     if (btn) {
       api.copy(btn.closest('.codeblock').querySelector('pre code').textContent);
-      btn.textContent = 'Copié';
-      setTimeout(() => { btn.textContent = 'Copier'; }, 1400);
+      btn.textContent = t('copied');
+      setTimeout(() => { btn.textContent = t('copy'); }, 1400);
     }
   });
 
-  // ---------- clavier ----------
+  // ---------- keyboard ----------
 
   function historyMove(dir) {
     if (!history.length) return false;
@@ -717,7 +750,7 @@
         if (histConfirm === sel.id) deleteConversation(sel.id);
         else openConversation(sel.id);
       } else if (e.key === 'Delete' && sel && histSearch.selectionStart === histSearch.value.length) {
-        // « Suppr » vise la conversation quand il n'y a plus rien à effacer dans la recherche.
+        // "Del" targets the conversation when there is nothing left to erase in the search.
         e.preventDefault();
         deleteConversation(sel.id);
       } else if (e.ctrlKey && k === 'n') { e.preventDefault(); newConversation(); }
@@ -740,7 +773,7 @@
       openModelMenu();
     } else if (e.ctrlKey && e.shiftKey && k === 'c') {
       e.preventDefault();
-      if (lastAnswer) api.copy(lastAnswer).then(() => setStatus('Réponse copiée', 'ok'));
+      if (lastAnswer) api.copy(lastAnswer).then(() => setStatus(t('status.copied'), 'ok'));
     } else if (e.ctrlKey && !e.shiftKey && k === 'o') {
       e.preventDefault();
       if (!running) api.pickDir().then(applyState);
@@ -779,13 +812,13 @@
   $('new-btn').addEventListener('click', newConversation);
   $('hist-btn').addEventListener('click', () => showHistory(view !== 'history'));
 
-  // La fenêtre suit la taille du panneau (réduit, agrandi, fil qui s'allonge).
+  // The window follows the panel size (minimized, expanded, growing thread).
   new ResizeObserver(() => {
     const pad = 2 * parseFloat(getComputedStyle(document.body).paddingLeft);
     api.resize({ w: panel.offsetWidth + pad, h: panel.offsetHeight + pad });
   }).observe(panel);
 
-  // ---------- cycle d'affichage ----------
+  // ---------- display lifecycle ----------
 
   api.onRunEvent(onRunEvent);
   api.onUnread(setUnread);

@@ -1,54 +1,54 @@
 'use strict';
-// Garde-fous indépendants d'Electron : binaires, environnement, dossiers, journal.
+// Safeguards independent of Electron: binaries, environment, folders, audit log.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { t } = require('../i18n');
 
 const uid = () => (typeof process.getuid === 'function' ? process.getuid() : -1);
-// Sous Windows, propriétaire et droits POSIX n'existent pas (fs.stat les invente) :
-// ces vérifications y sont sans objet. Le profil utilisateur Windows (AppData…)
-// n'est par défaut accessible qu'à son propriétaire et aux administrateurs.
+// On Windows, POSIX owners and permissions do not exist (fs.stat makes them up):
+// these checks do not apply there. The Windows user profile (AppData…) is by
+// default only accessible to its owner and to administrators.
 const POSIX = process.platform !== 'win32';
-// Comparaison de chemins : insensible à la casse sous Windows.
+// Path comparison: case-insensitive on Windows.
 const norm = (p) => (POSIX ? p : p.toLowerCase());
 const within = (child, parent) => norm(child) === norm(parent) || norm(child).startsWith(norm(parent).replace(/[\\/]+$/, '') + path.sep);
 
-/** Un fichier/dossier est « sûr » s'il appartient à root ou à l'utilisateur et n'est pas modifiable par les autres. */
+/** A file/folder is "safe" if it belongs to root or to the user and is not writable by others. */
 function checkOwnedNotWritable(p, { allowSticky = false } = {}) {
   if (!POSIX) return null;
   const st = fs.statSync(p);
-  if (st.uid !== 0 && st.uid !== uid()) return `${p} appartient à un autre utilisateur`;
+  if (st.uid !== 0 && st.uid !== uid()) return t('security.otherOwner', { path: p });
   const worldWritable = (st.mode & 0o002) !== 0;
   const sticky = (st.mode & 0o1000) !== 0;
-  if (worldWritable && !(allowSticky && sticky)) return `${p} est modifiable par tous les utilisateurs`;
+  if (worldWritable && !(allowSticky && sticky)) return t('security.worldWritable', { path: p });
   return null;
 }
 
 /**
- * Trouve le binaire d'un agent et renvoie son chemin réel absolu.
- * Refuse les entrées PATH relatives et tout binaire qu'un autre utilisateur
- * pourrait remplacer.
+ * Finds an agent's binary and returns its absolute real path.
+ * Rejects relative PATH entries and any binary another user could replace.
  */
-// Extensions essayées sous Windows, dans l'ordre. Un nom sans extension n'y est
-// jamais retenu : npm pose à côté du « .cmd » un script shell pour Git Bash.
+// Extensions tried on Windows, in order. A name without extension is never
+// used there: npm puts a shell script for Git Bash next to the ".cmd".
 const WIN_EXT = ['.exe', '.cmd', '.bat', '.com'];
 
 function resolveBinary(names, { override, envPath = process.env.PATH || '', avoid, platform = process.platform } = {}) {
   const candidates = [];
   if (override) {
-    if (!path.isAbsolute(override)) return { error: `"bin" doit être un chemin absolu (${override})` };
+    if (!path.isAbsolute(override)) return { error: t('security.binNotAbsolute', { path: override }) };
     candidates.push(override);
   } else {
     const delimiter = platform === 'win32' ? ';' : ':';
     for (const dir of envPath.split(delimiter)) {
-      if (!dir || !path.isAbsolute(dir)) continue; // « . » ou chemin relatif dans PATH : ignoré
+      if (!dir || !path.isAbsolute(dir)) continue; // "." or relative path in PATH: ignored
       for (const name of names) {
         if (platform === 'win32') for (const ext of WIN_EXT) candidates.push(path.join(dir, name + ext));
         else candidates.push(path.join(dir, name));
       }
     }
-    // Les emplacements « à éviter » (lanceurs factices) passent en dernier recours.
+    // Locations "to avoid" (fake launchers) are tried as a last resort.
     if (avoid) candidates.sort((a, b) => Number(avoid.test(a)) - Number(avoid.test(b)));
   }
   let lastError = null;
@@ -68,7 +68,7 @@ function resolveBinary(names, { override, envPath = process.env.PATH || '', avoi
         checkOwnedNotWritable(path.dirname(real)) ||
         checkOwnedNotWritable(path.dirname(cand));
       if (problem) {
-        lastError = `binaire refusé : ${problem}`;
+        lastError = t('security.binaryRejected', { problem });
         continue;
       }
     } catch (e) {
@@ -77,13 +77,13 @@ function resolveBinary(names, { override, envPath = process.env.PATH || '', avoi
     }
     return { path: real };
   }
-  return { error: lastError || 'introuvable dans le PATH' };
+  return { error: lastError || t('security.notInPath') };
 }
 
-// Variables transmises à tous les agents. Tout le reste de l'environnement
-// (jetons cloud, mots de passe exportés…) est retiré.
+// Variables passed to all agents. The rest of the environment (cloud tokens,
+// exported passwords…) is removed.
 const BASE_ENV = [
-  // Windows (les noms y sont insensibles à la casse : « Path », « SystemRoot »…)
+  // Windows (names are case-insensitive there: "Path", "SystemRoot"…)
   ...(POSIX ? [] : [
     'SystemRoot', 'SystemDrive', 'windir', 'ComSpec', 'PATHEXT', 'OS', 'TEMP', 'TMP',
     'USERPROFILE', 'USERNAME', 'USERDOMAIN', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
@@ -102,7 +102,7 @@ function matchPattern(name, pattern, caseless = !POSIX) {
   return p.endsWith('*') ? n.startsWith(p.slice(0, -1)) : n === p;
 }
 
-/** Remplace une variable d'environnement, en retirant ses variantes de casse (Windows : « Path » et « PATH »). */
+/** Replaces an environment variable, removing its case variants (Windows: "Path" and "PATH"). */
 function setEnvVar(env, name, value) {
   for (const k of Object.keys(env)) if (k.toUpperCase() === name.toUpperCase()) delete env[k];
   env[name] = value;
@@ -135,29 +135,29 @@ function windowsSystemDirs(env = process.env) {
 
 const SYSTEM_DIRS = ['/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/boot', '/var', '/sys', '/proc', '/dev', '/run', '/root', '/snap'];
 
-/** Valide le dossier de travail. En mode écriture, refuse les dossiers trop larges ou système. */
+/** Validates the working folder. In write modes, rejects folders that are too broad or system folders. */
 function checkWorkdir(dir, mode, home = os.homedir(), ownDirs = []) {
   let real;
   try {
     real = fs.realpathSync(dir);
-    if (!fs.statSync(real).isDirectory()) return { error: `${dir} n'est pas un dossier` };
+    if (!fs.statSync(real).isDirectory()) return { error: t('security.notAFolder', { dir }) };
   } catch {
-    return { error: `Dossier introuvable : ${dir}` };
+    return { error: t('security.folderNotFound', { dir }) };
   }
   if (mode !== 'read' && !ownDirs.some((d) => norm(d) === norm(real))) {
     const realHome = (() => { try { return fs.realpathSync(home); } catch { return home; } })();
-    if (path.parse(real).root === real) return { error: 'Écriture refusée à la racine du système' };
+    if (path.parse(real).root === real) return { error: t('security.rootRefused') };
     if (norm(real) === norm(realHome)) {
-      return { error: 'Écriture refusée dans votre dossier personnel entier : choisissez un dossier de projet (Ctrl+O)' };
+      return { error: t('security.homeRefused') };
     }
     const inHome = within(real, realHome);
     const system = POSIX ? SYSTEM_DIRS : windowsSystemDirs();
     if (!inHome && system.some((d) => within(real, d))) {
-      return { error: `Écriture refusée dans un dossier système (${real})` };
+      return { error: t('security.systemRefused', { path: real }) };
     }
     const first = inHome ? path.relative(realHome, real).split(path.sep)[0] : '';
     if (inHome && /^(\.(ssh|gnupg|config|local|aws|azure|kube|docker)|appdata)$/i.test(first)) {
-      return { error: `Écriture refusée dans un dossier sensible (~${path.sep}${path.relative(realHome, real)})` };
+      return { error: t('security.sensitiveRefused', { path: `~${path.sep}${path.relative(realHome, real)}` }) };
     }
   }
   return { path: real };
@@ -174,7 +174,7 @@ function writePrivate(file, data) {
   fs.renameSync(tmp, file);
 }
 
-/** Lit un fichier JSON seulement s'il appartient à l'utilisateur et que lui seul peut l'écrire. */
+/** Reads a JSON file only if it belongs to the user and only they can write it. */
 function readOwnedJson(file) {
   let st;
   try {
@@ -183,19 +183,19 @@ function readOwnedJson(file) {
     return { missing: true };
   }
   if (st.isSymbolicLink()) st = fs.statSync(file);
-  if (POSIX && st.uid !== uid()) return { error: `${file} n'appartient pas à l'utilisateur courant` };
+  if (POSIX && st.uid !== uid()) return { error: t('security.fileNotOwned', { file }) };
   if (POSIX && st.mode & 0o022) {
-    return { error: `${file} est modifiable par d'autres utilisateurs (chmod 600 requis)` };
+    return { error: t('security.fileWritable', { file }) };
   }
   try {
-    // BOM UTF-8 retiré : Windows PowerShell 5.1 et le Bloc-notes en ajoutent un.
+    // UTF-8 BOM stripped: Windows PowerShell 5.1 and Notepad add one.
     return { data: JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) };
   } catch (e) {
-    return { error: `${file} : JSON invalide (${e.message})` };
+    return { error: t('security.invalidJson', { file, error: e.message }) };
   }
 }
 
-/** Dossiers pour lesquels l'utilisateur a accordé durablement l'écriture. */
+/** Folders the user has permanently allowed writing to. */
 class TrustStore {
   constructor(file) {
     this.file = file;
@@ -217,15 +217,15 @@ class TrustStore {
 
 const MAX_LOG = 5 * 1024 * 1024;
 
-/** Journal d'audit JSONL (0600), une ligne par exécution. */
+/** JSONL audit log (0600), one line per run. */
 function appendAudit(file, entry) {
   try {
     ensurePrivateDir(path.dirname(file));
     try {
       if (fs.statSync(file).size > MAX_LOG) fs.renameSync(file, `${file}.1`);
-    } catch { /* pas encore de journal */ }
+    } catch { /* no audit log yet */ }
     fs.appendFileSync(file, JSON.stringify(entry) + '\n', { mode: 0o600 });
-  } catch { /* le journal ne doit jamais bloquer une exécution */ }
+  } catch { /* the audit log must never block a run */ }
 }
 
 function readRecentPrompts(file, limit = 50) {
@@ -236,7 +236,7 @@ function readRecentPrompts(file, limit = 50) {
       try {
         const e = JSON.parse(l);
         if (typeof e.prompt === 'string' && e.prompt && out[out.length - 1] !== e.prompt) out.push(e.prompt);
-      } catch { /* ligne corrompue */ }
+      } catch { /* corrupted line */ }
     }
     return out.slice(-limit);
   } catch {

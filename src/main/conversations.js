@@ -1,6 +1,6 @@
 'use strict';
-// Conversations : fil de tours (demande → réponse), enregistré en fichiers
-// privés (0600), un par conversation. Indépendant d'Electron.
+// Conversations: a thread of turns (request → answer), saved as private files
+// (0600), one per conversation. Independent of Electron.
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -16,12 +16,12 @@ function titleOf(prompt) {
   return t.length > 70 ? t.slice(0, 69) + '…' : t;
 }
 
-/** Début de la dernière réponse, débarrassé de la syntaxe Markdown, pour la liste. */
-/** Texte brut d'une réponse Markdown, raccourci à n caractères (aperçus, notifications). */
+/** Start of the last answer, stripped of Markdown syntax, for the list. */
+/** Plain text of a Markdown answer, shortened to n characters (previews, notifications). */
 function plainText(md, n = 140) {
   const t = String(md)
     .replace(/```[\s\S]*?(```|$)/g, ' ')
-    .replace(/^\s*\|.*$/gm, ' ') // lignes de tableau
+    .replace(/^\s*\|.*$/gm, ' ') // table rows
     .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/[*_`~|]/g, '')
@@ -48,7 +48,7 @@ class ConversationStore {
   }
 
   file(id) {
-    if (!validId(id)) throw new Error('Identifiant de conversation invalide');
+    if (!validId(id)) throw new Error('Invalid conversation id');
     return path.join(this.dir, `${id}.json`);
   }
 
@@ -59,7 +59,7 @@ class ConversationStore {
     try {
       writePrivate(this.file(conv.id), JSON.stringify(conv));
       this.prune();
-    } catch { /* l'historique ne doit jamais bloquer une réponse */ }
+    } catch { /* history must never block an answer */ }
   }
 
   load(id) {
@@ -70,7 +70,7 @@ class ConversationStore {
     c.turns = c.turns.filter((t) => t && typeof t.prompt === 'string' && typeof t.agent === 'string');
     for (const t of c.turns) {
       if (typeof t.answer !== 'string') t.answer = '';
-      if (t.status === 'running') t.status = 'error'; // app fermée en cours de route
+      if (t.status === 'running') t.status = 'error'; // app closed mid-run
     }
     if (!c.sessions || typeof c.sessions !== 'object') c.sessions = {};
     return c;
@@ -106,7 +106,7 @@ class ConversationStore {
     if (!validId(id)) return;
     try {
       fs.unlinkSync(this.file(id));
-    } catch { /* déjà supprimée */ }
+    } catch { /* already deleted */ }
   }
 
   prune() {
@@ -115,33 +115,33 @@ class ConversationStore {
   }
 }
 
-const clip = (s, n) => (s.length > n ? s.slice(0, n) + '\n[… tronqué]' : s);
+const clip = (s, n) => (s.length > n ? s.slice(0, n) + '\n[… truncated]' : s);
 
 /**
- * Pour un CLI sans reprise de session (ou quand on change d'agent en cours de
- * route), le contexte est réinjecté dans la demande : les tours précédents,
- * du plus récent au plus ancien tant que le budget le permet.
+ * For a CLI without session resume (or when switching agents mid-conversation),
+ * the context is fed back into the request: the previous turns, from newest to
+ * oldest, as long as the budget allows.
  */
 function buildContextPrompt(turns, prompt, maxChars = 24000) {
   const blocks = [];
   let used = 0;
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i];
-    const answer = t.answer.trim() ? clip(t.answer.trim(), 6000) : '(aucune réponse : demande interrompue ou en échec)';
-    const block = `[Utilisateur]\n${clip(t.prompt, 4000)}\n\n[Assistant — ${t.label || t.agent}]\n${answer}`;
+    const answer = t.answer.trim() ? clip(t.answer.trim(), 6000) : '(no answer: request interrupted or failed)';
+    const block = `[User]\n${clip(t.prompt, 4000)}\n\n[Assistant: ${t.label || t.agent}]\n${answer}`;
     if (used + block.length > maxChars && blocks.length) break;
     blocks.unshift(block);
     used += block.length;
   }
   if (!blocks.length) return prompt;
   return [
-    "Voici l'historique de la conversation en cours, du plus ancien au plus récent. Il sert de contexte : n'y réponds pas à nouveau.",
+    'Here is the history of the current conversation, from oldest to newest. It is context only: do not answer it again.',
     '',
-    '<historique>',
+    '<history>',
     blocks.join('\n\n'),
-    '</historique>',
+    '</history>',
     '',
-    "Nouvelle demande de l'utilisateur :",
+    'New request from the user:',
     prompt,
   ].join('\n');
 }

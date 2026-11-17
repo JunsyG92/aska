@@ -14,15 +14,16 @@ const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
 const { buildId, runningInstance } = require('./build');
 const { wantsCliOutput, printCli } = require('../cli');
+const { t, getLanguage, uiStrings } = require('../i18n');
 
 const P = paths();
 const BUILD = buildId();
 const INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
 const INDEX_URL = pathToFileURL(INDEX).href;
-const WIN_W = 748; // taille initiale ; la fenêtre épouse ensuite le panneau
+const WIN_W = 748; // initial size; the window then fits the panel
 const WIN_H = 110;
 
-// Portail GlobalShortcuts : raccourci global sous Wayland quand le bureau le propose.
+// GlobalShortcuts portal: global shortcut on Wayland when the desktop supports it.
 app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal');
 
 let win = null;
@@ -31,32 +32,32 @@ let agents = {};
 let warnings = [];
 let trust = null;
 let cwd = null;
-let current = null; // exécution en cours : { id, handle }
+let current = null; // run in progress: { id, handle }
 let runSeq = 0;
 let dialogOpen = false;
 let shortcutOk = false;
 let quitting = false;
-let mini = false; // panneau réduit en pastille
-let pinned = null; // épinglé : reste affiché quand on clique ailleurs (null = selon la config)
-let unread = 0; // réponses arrivées pendant que le chat était hors de vue
+let mini = false; // panel collapsed into a pill
+let pinned = null; // pinned: stays visible when clicking elsewhere (null = per config)
+let unread = 0; // answers that arrived while the chat was out of sight
 let notifier = null;
-let savedPos = null; // ancrage choisi par l'utilisateur : bord gauche et bord BAS de la fenêtre
+let savedPos = null; // anchor chosen by the user: left edge and BOTTOM edge of the window
 let saveTimer = null;
-let store = null; // conversations enregistrées
-let conv = null; // conversation affichée
-const picked = {}; // modèle choisi par agent : { claude: 'opus' } (absent = défaut)
-const extraModels = {}; // modèles saisis à la main, par agent
-const discovered = {}; // modèles annoncés par chaque CLI : { cursor: { models, error } }
+let store = null; // saved conversations
+let conv = null; // displayed conversation
+const picked = {}; // model chosen per agent: { claude: 'opus' } (missing = default)
+const extraModels = {}; // models typed in by hand, per agent
+const discovered = {}; // models reported by each CLI: { cursor: { models, error } }
 
-// PATH élargi aux emplacements habituels des CLI (voir launch.js).
+// PATH extended with the usual CLI locations (see launch.js).
 const searchPath = () => extendedPath();
 
-// Environnement transmis à un agent : filtré, avec le PATH élargi ci-dessus.
+// Environment passed to an agent: filtered, with the extended PATH above.
 function agentEnv(agent) {
   return sec.setEnvVar(sec.buildEnv(process.env, agent.env, cfg.envPassthrough), 'PATH', searchPath());
 }
 
-// Lance une commande d'agent (Windows : sans cmd.exe pour les lanceurs npm).
+// Runs an agent command (Windows: without cmd.exe for npm launchers).
 function launchAgent(agent, argv, opts, onEvent) {
   let cmd;
   try {
@@ -67,8 +68,17 @@ function launchAgent(agent, argv, opts, onEvent) {
   return runAgent({ ...opts, bin: cmd.command, argv: cmd.args, verbatim: cmd.verbatim, env: agentEnv(agent) }, onEvent);
 }
 
+// System languages, most preferred first (decides the language when "language" is "auto").
+function systemLangs() {
+  try {
+    const langs = app.getPreferredSystemLanguages();
+    if (langs.length) return langs;
+  } catch { /* older Electron or not ready */ }
+  return [app.getLocale()];
+}
+
 function loadEverything() {
-  const c = loadConfig(P.config);
+  const c = loadConfig(P.config, { systemLangs: systemLangs() });
   cfg = c.config;
   const a = resolveAgents(cfg.agents);
   agents = a.agents;
@@ -127,16 +137,16 @@ function fsRealWorkspace() {
 function saveState() {
   try {
     sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels, pinned }));
-  } catch { /* l'état est un confort, pas une nécessité */ }
+  } catch { /* state is a convenience, not a necessity */ }
 }
 
 const tilde = (p) => {
   const home = os.homedir();
-  if (p === P.workspace || p === fsRealWorkspace()) return 'Espace temporaire';
+  if (p === P.workspace || p === fsRealWorkspace()) return t('app.scratch');
   return p === home ? '~' : p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p;
 };
 
-// Modèle utilisé pour un agent : choix dans l'interface, sinon config, sinon défaut du CLI.
+// Model used for an agent: choice in the UI, else config, else the CLI's default.
 function modelFor(a) {
   return picked[a.id] || a.model || null;
 }
@@ -157,7 +167,7 @@ function publicTurn(t) {
   };
 }
 
-// Liste des conversations pour l'interface : couleurs d'agents et dossier lisible.
+// Conversation list for the UI: agent colors and readable folder.
 function publicList() {
   return store.list().map((c) => ({
     id: c.id,
@@ -184,8 +194,10 @@ function publicState() {
     model: modelFor(a),
   }));
   return {
+    lang: getLanguage(),
+    strings: uiStrings(),
     agents: list,
-    modes: MODES,
+    modes: Object.fromEntries(MODE_ORDER.map((m) => [m, { label: MODES[m].label, hint: MODES[m].hint }])),
     defaultAgent: cfg.defaultAgent,
     defaultMode: cfg.defaultMode,
     allowAutoMode: cfg.allowAutoMode,
@@ -233,7 +245,7 @@ function createWindow() {
   win.setMenu(null);
   if (cfg.alwaysOnTop) win.setAlwaysOnTop(true, 'floating');
   win.setVisibleOnAllWorkspaces(true);
-  // La position choisie en déplaçant la fenêtre est conservée.
+  // The position chosen by moving the window is kept.
   win.on('moved', () => {
     const b = win.getBounds();
     savedPos = { x: b.x, bottom: b.y + b.height };
@@ -241,14 +253,14 @@ function createWindow() {
     saveTimer = setTimeout(saveState, 400);
   });
 
-  // L'interface ne charge que son fichier local : ni navigation, ni fenêtre, ni webview.
+  // The UI only loads its local file: no navigation, no window, no webview.
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.on('will-redirect', (e) => e.preventDefault());
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
-  // Clic à l'extérieur : le chat se masque, sauf s'il est épinglé ou réduit en
-  // pastille (dont le rôle est justement de rester visible pendant le travail).
+  // Click outside: the chat hides, unless it is pinned or collapsed into a pill
+  // (whose whole point is to stay visible while you work).
   win.on('blur', () => {
     if (!pinned && !mini && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
   });
@@ -267,14 +279,14 @@ function showWindow() {
     const [w, h] = win.getSize();
     let pos = null;
     if (savedPos) {
-      // On ne réutilise la position mémorisée que si elle est encore sur un écran.
+      // The saved position is reused only if it is still on a screen.
       const top = savedPos.bottom - h;
       const wa = screen.getDisplayMatching({ x: savedPos.x, y: top, width: w, height: h }).workArea;
       const inside = savedPos.x + 80 > wa.x && savedPos.x < wa.x + wa.width - 80 && top >= wa.y && savedPos.bottom <= wa.y + wa.height + 40;
       if (inside) pos = { x: savedPos.x, y: top };
     }
     if (!pos) {
-      // Par défaut : centré, la saisie vers les deux tiers de l'écran ; le fil grandit vers le haut.
+      // Default: centered, input at about two thirds of the screen; the thread grows upward.
       const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
       pos = { x: Math.round(wa.x + (wa.width - w) / 2), y: Math.round(wa.y + wa.height * 0.68) - h };
     }
@@ -301,13 +313,13 @@ function setUnread(n) {
   if (win && !win.isDestroyed()) win.webContents.send('aska:unread', unread);
 }
 
-// Rouvre une conversation enregistrée (et son dossier de travail).
+// Reopens a saved conversation (and its working folder).
 function openConversationById(cid) {
   if (current || !cid || conv.id === cid) return;
   const c = store.load(cid);
   if (!c) return;
   conv = c;
-  // On retrouve le dossier de la conversation : la reprise de session en dépend.
+  // Restore the conversation's folder: session resume depends on it.
   if (typeof c.cwd === 'string' && !sec.checkWorkdir(c.cwd, 'read').error) {
     cwd = c.cwd;
     saveState();
@@ -329,11 +341,11 @@ function registerShortcut() {
     shortcutOk = false;
   }
   if (!shortcutOk) {
-    warnings.push(`Raccourci ${cfg.shortcut} indisponible : associez la commande « aska --toggle » dans les raccourcis de votre bureau`);
+    warnings.push(t('app.shortcutUnavailable', { shortcut: cfg.shortcut }));
   }
 }
 
-// ---------- IPC (chaque appel vérifie son émetteur et ses arguments) ----------
+// ---------- IPC (each call checks its sender and its arguments) ----------
 
 function fromOurUi(event) {
   return !!win && event.sender === win.webContents && event.senderFrame && event.senderFrame.url === INDEX_URL;
@@ -341,7 +353,7 @@ function fromOurUi(event) {
 
 function handle(channel, fn) {
   ipcMain.handle(channel, (event, arg) => {
-    if (!fromOurUi(event)) throw new Error('émetteur refusé');
+    if (!fromOurUi(event)) throw new Error('sender rejected');
     return fn(arg);
   });
 }
@@ -351,24 +363,24 @@ function send(payload) {
 }
 
 function startRun(req) {
-  if (current) return { error: 'Une demande est déjà en cours' };
-  if (!req || typeof req !== 'object') return { error: 'Requête invalide' };
+  if (current) return { error: t('errors.busy') };
+  if (!req || typeof req !== 'object') return { error: t('errors.invalidRequest') };
   const { agentId, mode, prompt, trust: trustChoice } = req;
   const agent = typeof agentId === 'string' && Object.hasOwn(agents, agentId) ? agents[agentId] : null;
-  if (!agent) return { error: 'Agent inconnu' };
-  if (!agent.binPath) return { error: `${agent.label} : ${agent.binError}` };
-  if (!MODE_ORDER.includes(mode)) return { error: 'Mode inconnu' };
+  if (!agent) return { error: t('errors.unknownAgent') };
+  if (!agent.binPath) return { error: t('errors.agentUnavailable', { agent: agent.label, error: agent.binError }) };
+  if (!MODE_ORDER.includes(mode)) return { error: t('errors.unknownMode') };
   if (mode === 'auto' && !cfg.allowAutoMode) {
-    return { error: 'Le mode autonome est désactivé ("allowAutoMode": true dans la configuration pour l\'activer)' };
+    return { error: t('errors.autoDisabled') };
   }
-  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 100000) return { error: 'Prompt invalide' };
+  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 100000) return { error: t('errors.invalidPrompt') };
 
   const dir = sec.checkWorkdir(cwd, mode, os.homedir(), [fsRealWorkspace()]);
   if (dir.error) return { error: dir.error };
 
-  // Écrire dans un dossier demande l'accord explicite de l'utilisateur.
-  // Certains CLI (Cursor) exigent en plus qu'on se porte garant du contenu du
-  // dossier, même en lecture : même accord, sauf dans le dossier vide d'Aska.
+  // Writing to a folder requires the user's explicit approval.
+  // Some CLIs (Cursor) also require vouching for the folder's content, even
+  // when reading: same approval, except in Aska's own empty folder.
   const contentTrust = !!agent.trustFlag && dir.path !== fsRealWorkspace();
   if ((mode !== 'read' || contentTrust) && !trust.isTrusted(dir.path)) {
     if (trustChoice === 'always') trust.add(dir.path);
@@ -377,8 +389,8 @@ function startRun(req) {
     }
   }
 
-  // Suite de conversation : reprise native si le CLI a déjà tout le fil en
-  // session (même agent, même dossier), sinon le contexte est réinjecté.
+  // Follow-up in a conversation: native resume if the CLI already has the whole
+  // thread in its session (same agent, same folder), otherwise the context is fed back in.
   const sess = conv.sessions[agent.id];
   const resume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length ? sess.id : null;
   const fullPrompt = resume ? prompt : buildContextPrompt(conv.turns, prompt);
@@ -432,20 +444,20 @@ function startRun(req) {
         kind: 'error',
         text: [
           {
-            timeout: `Arrêté : délai de ${cfg.timeoutSec} s dépassé`,
-            overflow: 'Arrêté : sortie trop volumineuse',
-            'spawn-error': `Lancement impossible : ${res.error}`,
-          }[res.reason] || streamError || `Le CLI s'est terminé avec le code ${res.code}`,
+            timeout: t('errors.timeout', { sec: cfg.timeoutSec }),
+            overflow: t('errors.overflow'),
+            'spawn-error': t('errors.spawnError', { error: res.error }),
+          }[res.reason] || streamError || t('errors.exitCode', { code: res.code }),
           (res.stderrTail || '').slice(-1500),
         ].filter(Boolean).join('\n\n'),
       };
     } else if (ok && denied) {
       turn.notice = {
         kind: 'warn',
-        text: `${denied.count} action(s) refusée(s) par le mode « ${MODES[mode].label} » (${denied.tools.join(', ')}). Maj+Tab pour changer de mode, puis relancez.`,
+        text: t('notices.denied', { count: denied.count, mode: MODES[mode].label, tools: denied.tools.join(', ') }),
       };
     }
-    // La session du CLI ne « couvre » le fil que si ce tour a réussi.
+    // The CLI session only "covers" the thread if this turn succeeded.
     if (ok && sessionId && agent.resumeFlag) thread.sessions[agent.id] = { id: sessionId, cwd: dir.path, upTo: thread.turns.length };
     else if (!ok) delete thread.sessions[agent.id];
     store.save(thread);
@@ -469,7 +481,7 @@ function startRun(req) {
       turn: publicTurn(turn),
       title: thread.title,
     });
-    // Une fenêtre en train de se masquer (animation de sortie) compte comme masquée.
+    // A window that is hiding (exit animation) counts as hidden.
     const seen = { visible: !!win && win.isVisible() && !hideTimer, focused: !!win && win.isFocused(), mini, status: turn.status };
     if (shouldNotify(cfg.notify, seen)) {
       const content = notificationContent({
@@ -487,8 +499,8 @@ function startRun(req) {
   return { ok: true, id };
 }
 
-// Liste des modèles d'un agent : ceux annoncés par son CLI (interrogé une fois,
-// puis à la demande), complétés par la liste intégrée, la config et les saisies.
+// An agent's model list: those reported by its CLI (queried once, then on
+// demand), plus the built-in list, the config and models typed in by hand.
 async function listModels(req) {
   const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
   if (!a || !a.modelFlag) return { models: [], current: null, error: null };
@@ -516,8 +528,8 @@ async function listModels(req) {
 
 function registerIpc() {
   handle('aska:models', listModels);
-  // Lien cliqué dans une réponse : ouvert dans le navigateur, jamais dans Aska,
-  // et seulement en http(s) (pas de file:, javascript:, etc.).
+  // Link clicked in an answer: opened in the browser, never in Aska,
+  // and only over http(s) (no file:, javascript:, etc.).
   handle('aska:open-url', (url) => {
     if (typeof url !== 'string' || url.length > 2000) return false;
     let u;
@@ -574,14 +586,14 @@ function registerIpc() {
     mini = v === true;
     if (!mini && win && win.isVisible()) setUnread(0);
   });
-  // La fenêtre épouse le panneau : aucune zone transparente ne bloque les clics autour.
+  // The window fits the panel: no transparent area blocks clicks around it.
   handle('aska:resize', (size) => {
     if (!size || !Number.isFinite(size.w) || !Number.isFinite(size.h)) return;
     const w = Math.round(Math.min(Math.max(size.w, 120), 900));
     const h = Math.round(Math.min(Math.max(size.h, 40), 800));
     const b = win.getBounds();
     if (b.width === w && b.height === h) return;
-    // Le bord bas reste en place : la zone de saisie ne bouge pas quand le fil s'allonge.
+    // The bottom edge stays put: the input area does not move when the thread grows.
     const wa = screen.getDisplayMatching(b).workArea;
     const y = Math.max(wa.y, b.y + b.height - h);
     win.setResizable(true);
@@ -601,7 +613,7 @@ function registerIpc() {
     dialogOpen = true;
     try {
       const r = await dialog.showOpenDialog(win, {
-        title: 'Dossier de travail de l’agent',
+        title: t('app.pickDirTitle'),
         defaultPath: cwd === P.workspace ? os.homedir() : cwd,
         properties: ['openDirectory', 'createDirectory'],
       });
@@ -620,11 +632,11 @@ function registerIpc() {
   });
 }
 
-// ---------- cycle de vie ----------
+// ---------- lifecycle ----------
 
 const argv = process.argv.slice(1);
 
-// « aska --help » / « --version » : réponse dans le terminal, sans ouvrir de fenêtre.
+// "aska --help" / "--version": answer in the terminal, without opening a window.
 if (wantsCliOutput(argv)) {
   printCli(argv);
   app.exit(0);
@@ -633,9 +645,9 @@ const wants = (flag) => argv.includes(flag);
 
 const APP_FLAGS = ['--toggle', '--hidden', '--reload', '--restart', '--replaced', '--quit', '--no-autostart'];
 
-// Remplace l'instance en cours : une instance auxiliaire lui transmet « --quit »
-// (compris même par les anciennes versions), puis on se relance à sa place.
-// « --replaced » évite toute boucle si l'ancienne instance refuse de se fermer.
+// Replaces the running instance: a helper instance sends it "--quit"
+// (understood even by old versions), then we relaunch in its place.
+// "--replaced" prevents any loop if the old instance refuses to close.
 function replaceRunningInstance() {
   const { spawn } = require('child_process');
   const root = app.getAppPath();
@@ -648,36 +660,37 @@ function replaceRunningInstance() {
   }, 2500);
 }
 
-// Windows : les notifications ne s'affichent que si un raccourci du menu Démarrer
-// porte l'identité de l'application (AppUserModelID). Seule l'API de raccourcis
-// d'Electron sait l'écrire : scripts/install.ps1 appelle donc « --install-shortcuts ».
+// Windows: notifications only show if a Start menu shortcut carries the app's
+// identity (AppUserModelID). Only Electron's shortcut API can write it, so
+// scripts/install.ps1 calls "--install-shortcuts".
 const APP_ID = 'aska';
 if (process.platform === 'win32' && wants('--install-shortcuts')) {
-  // Ne jamais rester bloqué : quoi qu'il arrive, le processus se termine.
+  // Never hang: whatever happens, the process ends.
   const done = (code, out) => {
     (code ? process.stderr : process.stdout).write(out + '\n');
     app.exit(code);
   };
-  setTimeout(() => done(2, 'Délai dépassé pendant la création des raccourcis.'), 30000).unref();
+  setTimeout(() => done(2, 'Timed out while creating the shortcuts.'), 30000).unref();
   app.whenReady().then(() => {
     const fs = require('fs');
+    loadConfig(P.config, { systemLangs: systemLangs() }); // language of the shortcut description
     const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
     const root = path.join(__dirname, '..', '..');
     const link = (file, args) => {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      // « create » crée le raccourci ou l'écrase (« replace » échoue s'il n'existe pas).
+      // "create" creates the shortcut or overwrites it ("replace" fails if it does not exist).
       const ok = shell.writeShortcutLink(file, 'create', {
         target: process.execPath,
         args: `"${root}" ${args}`,
         cwd: root,
-        description: 'Demander une action à un agent IA (Claude, Codex, Copilot, Cursor)',
+        description: t('app.shortcutDescription'),
         icon: process.execPath,
         iconIndex: 0,
         appUserModelId: APP_ID,
       });
-      if (!ok) throw new Error(`impossible d'écrire ${file}`);
+      if (!ok) throw new Error(`cannot write ${file}`);
       const back = shell.readShortcutLink(file);
-      if (back.appUserModelId !== APP_ID) throw new Error(`identité absente du raccourci ${file}`);
+      if (back.appUserModelId !== APP_ID) throw new Error(`identity missing from shortcut ${file}`);
       return { file, appUserModelId: back.appUserModelId, target: back.target };
     };
     const startup = path.join(programs, 'Startup', 'Aska.lnk');
@@ -685,11 +698,11 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     if (wants('--no-autostart')) fs.rmSync(startup, { force: true });
     else made.push(link(startup, '--hidden'));
     done(0, JSON.stringify(made));
-  }).catch((e) => done(1, `Création des raccourcis impossible : ${e.message}`));
+  }).catch((e) => done(1, `Cannot create the shortcuts: ${e.message}`));
 } else if (!app.requestSingleInstanceLock()) {
-  // Une instance tourne déjà : elle reçoit nos arguments (« second-instance ») et bascule.
-  // Mais si elle exécute un autre code que le nôtre (Aska mis à jour sans avoir été
-  // relancé), ses fonctions sont périmées : on la remplace plutôt que de la rouvrir.
+  // An instance is already running: it receives our arguments ("second-instance") and toggles.
+  // But if it runs other code than ours (Aska updated without being relaunched),
+  // its features are stale: we replace it instead of reopening it.
   const running = runningInstance(sec.readOwnedJson, P.run);
   const stale = !running || running.build !== BUILD;
   if ((stale || wants('--restart')) && !wants('--quit') && !wants('--replaced')) replaceRunningInstance();
@@ -707,16 +720,16 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     }
   });
 
-  // Windows : identité de l'application, nécessaire aux notifications.
+  // Windows: app identity, required for notifications.
   if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 
   app.whenReady().then(() => {
     if (wants('--quit')) return app.quit();
-    // Instance active : ce fichier permet de la reconnaître (aska --help, remplacement).
+    // Active instance: this file identifies it (aska --help, replacement).
     try {
       sec.writePrivate(P.run, JSON.stringify({ pid: process.pid, build: BUILD, version: app.getVersion(), startedAt: new Date().toISOString() }));
-    } catch { /* confort seulement */ }
-    // Aucune permission web (caméra, géoloc, notifications web…) n'est accordée.
+    } catch { /* convenience only */ }
+    // No web permission (camera, geolocation, web notifications…) is granted.
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
 
@@ -740,11 +753,11 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
   });
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
-    // On ne retire le fichier que s'il est encore le nôtre (une nouvelle instance a pu le réécrire).
+    // Only remove the file if it is still ours (a new instance may have rewritten it).
     try {
       const r = sec.readOwnedJson(P.run);
       if (r.data && r.data.pid === process.pid) require('fs').rmSync(P.run, { force: true });
-    } catch { /* déjà supprimé */ }
+    } catch { /* already removed */ }
   });
-  app.on('window-all-closed', () => {}); // l'app reste résidente
+  app.on('window-all-closed', () => {}); // the app stays resident
 }
