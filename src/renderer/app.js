@@ -197,7 +197,7 @@
   let modelSel = 0;
   let modelAll = [];
   let modelCurrent = null;
-  const MODEL_RE = /^[A-Za-z0-9][\w.:\/\[\]-]{0,79}$/;
+  const MODEL_RE = /^[A-Za-z0-9][\w.:/[\]-]{0,79}$/;
 
   function closeModelMenu() {
     menuOpen = false;
@@ -664,12 +664,6 @@
     return true;
   }
 
-  function moveFocus(selector, dir) {
-    const items = [...document.querySelectorAll(selector)];
-    const i = items.indexOf(document.activeElement);
-    const next = items[Math.min(Math.max(i + dir, 0), items.length - 1)];
-    if (next) next.focus();
-  }
 
   document.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();

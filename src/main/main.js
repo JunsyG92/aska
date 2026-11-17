@@ -42,8 +42,8 @@ let savedPos = null; // ancrage choisi par l'utilisateur : bord gauche et bord B
 let saveTimer = null;
 let store = null; // conversations enregistrées
 let conv = null; // conversation affichée
-let picked = {}; // modèle choisi par agent : { claude: 'opus' } (absent = défaut)
-let extraModels = {}; // modèles saisis à la main, par agent
+const picked = {}; // modèle choisi par agent : { claude: 'opus' } (absent = défaut)
+const extraModels = {}; // modèles saisis à la main, par agent
 const discovered = {}; // modèles annoncés par chaque CLI : { cursor: { models, error } }
 
 // PATH élargi aux emplacements habituels des CLI (voir launch.js).

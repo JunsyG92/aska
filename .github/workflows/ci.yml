@@ -1,0 +1,129 @@
+# Intégration continue : lint, tests unitaires et de bout en bout sous Linux et
+# Windows, installation Windows. Le job « CI » résume le tout : c'est le seul
+# contrôle à rendre obligatoire dans la protection de branche.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  pr-title:
+    name: Titre de la PR
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      # Le titre devient le message du commit fusionné (squash) : il doit suivre
+      # Conventional Commits, dont dépendent le numéro de version et le CHANGELOG.
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
+            const types = ['feat', 'fix', 'perf', 'refactor', 'docs', 'test', 'build', 'ci', 'chore', 'style', 'revert'];
+            const re = new RegExp(`^(${types.join('|')})(\\([a-z0-9-]+\\))?!?: \\S.*$`);
+            if (!re.test(title)) {
+              core.setFailed(
+                `Titre « ${title} » non conforme. Attendu : <type>(<portée facultative>): <description>, ` +
+                `type parmi ${types.join(', ')}. Exemple : « feat(notifications): son facultatif ». Voir CONTRIBUTING.md.`
+              );
+            } else {
+              core.info(`Titre conforme : ${title}`);
+            }
+
+  tests:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Tests unitaires
+        run: npm test
+      - name: Test de bout en bout (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1400x900x24" npm run test:e2e
+      - name: Test de bout en bout (Windows)
+        if: runner.os == 'Windows'
+        run: npm run test:e2e
+      - name: Installation (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/install.ps1 -NoAutostart
+          $programs = [Environment]::GetFolderPath('Programs')
+          if (-not (Test-Path (Join-Path $programs 'Aska.lnk'))) { throw 'raccourci du menu Démarrer absent' }
+          if (-not (Test-Path (Join-Path $env:APPDATA 'aska\config.json'))) { throw 'configuration absente' }
+          # Le raccourci doit porter l'identité de l'app, sinon pas de notifications.
+          $shell = New-Object -ComObject Shell.Application
+          $item = $shell.Namespace($programs).ParseName('Aska.lnk')
+          $aumid = $item.ExtendedProperty('System.AppUserModel.ID')
+          Write-Host "AppUserModelID du raccourci : $aumid"
+          if ($aumid -ne 'aska') { throw "AppUserModelID absent ou incorrect : '$aumid'" }
+          $aska = Join-Path $env:LOCALAPPDATA 'aska\bin\aska.cmd'
+          if (-not (Test-Path $aska)) { throw 'commande aska absente' }
+          $help = & $aska --help | Out-String
+          Write-Host $help
+          if ($help -notmatch 'Usage : aska') { throw 'aska --help ne répond pas' }
+          $version = & $aska --version | Out-String
+          if ($version -notmatch '^aska \d') { throw 'aska --version ne répond pas' }
+      - name: Captures d'écran
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: captures-${{ matrix.os }}
+          path: test/e2e/out/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  ci:
+    name: CI
+    if: always()
+    needs: [lint, pr-title, tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Résultat
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Résultats : $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in success|skipped) ;; *) echo "::error::Au moins un contrôle a échoué ($r)"; exit 1 ;; esac
+          done

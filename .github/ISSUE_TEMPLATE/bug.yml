@@ -1,0 +1,62 @@
+name: Signaler un bug
+description: Quelque chose ne fonctionne pas comme prévu.
+labels: [bug, à trier]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de prendre le temps de signaler ce problème.
+        **Une faille de sécurité ?** Ne l'ouvrez pas ici : suivez [SECURITY.md](../blob/main/SECURITY.md).
+  - type: textarea
+    id: probleme
+    attributes:
+      label: Que se passe-t-il ?
+      description: Ce que vous avez fait, ce que vous attendiez, ce qui s'est passé.
+      placeholder: "J'appuie sur Ctrl+Alt+Espace, la fenêtre ne s'ouvre pas…"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduire
+    attributes:
+      label: Étapes pour reproduire
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Système
+      options:
+        - Linux (X11)
+        - Linux (Wayland)
+        - Windows 11
+        - Windows 10
+        - Autre
+    validations:
+      required: true
+  - type: input
+    id: distribution
+    attributes:
+      label: Distribution et bureau (Linux)
+      placeholder: Ubuntu 24.04, GNOME 46
+  - type: dropdown
+    id: agents
+    attributes:
+      label: Agent(s) concerné(s)
+      multiple: true
+      options: [Claude, Codex, Copilot, Cursor, Aucun en particulier]
+  - type: textarea
+    id: diagnostic
+    attributes:
+      label: Sortie de « aska --help »
+      description: Elle indique la version et l'état de chaque agent. Masquez ce qui vous semble privé.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: journal
+    attributes:
+      label: Messages d'erreur, captures d'écran
+      description: Message affiché par Aska, sortie du terminal… Ne collez ni clé d'API ni contenu confidentiel.

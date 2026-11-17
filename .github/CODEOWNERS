@@ -1,0 +1,10 @@
+# Relecteurs demandés automatiquement sur chaque PR.
+# Ajoutez des lignes plus précises au fil de l'arrivée de mainteneurs, par exemple :
+#   /src/main/launch.js   @mainteneur-securite
+#   /.github/             @mainteneur-ci
+*                         @JunsyG92
+
+# Fichiers sensibles : sécurité de l'exécution des agents et chaîne de livraison.
+/src/main/security.js     @JunsyG92
+/src/main/launch.js       @JunsyG92
+/.github/                 @JunsyG92

@@ -9,7 +9,9 @@
 Claude Code, Codex, GitHub Copilot et Cursor dans une seule petite fenêtre,<br>
 pilotés par leurs CLI officiels. Linux et Windows.
 
-[![Tests](https://github.com/JunsyG92/aska/actions/workflows/tests.yml/badge.svg)](https://github.com/JunsyG92/aska/actions/workflows/tests.yml)
+[![CI](https://github.com/JunsyG92/aska/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JunsyG92/aska/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JunsyG92/aska?include_prereleases&label=version&color=d97757)](https://github.com/JunsyG92/aska/releases)
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 ![Linux](https://img.shields.io/badge/Linux-%E2%9C%93-2ea44f?logo=linux&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-%E2%9C%93-2ea44f)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A5%2020-5fa04e?logo=nodedotjs&logoColor=white)
@@ -337,13 +339,32 @@ Commencez par `aska --help` : la section « Agents » dit quel CLI est utilisé,
 
 </details>
 
+## Contribuer
+
+Les contributions sont bienvenues ! Le dépôt suit **GitHub Flow** : `main` est
+protégée, chaque changement arrive par une PR relue, testée sous Linux et
+Windows, puis fusionnée en squash. Les versions et le [CHANGELOG](CHANGELOG.md)
+sont produits automatiquement à partir des titres de PR ([Conventional Commits](https://www.conventionalcommits.org/fr/)).
+
+```sh
+git switch -c feat/ma-fonctionnalite
+npm install && npm run check        # lint + tests unitaires
+git push -u origin feat/ma-fonctionnalite
+# puis une PR vers main, titrée par exemple « feat(ui): raccourci pour épingler »
+```
+
+Tout est détaillé dans [CONTRIBUTING.md](CONTRIBUTING.md). Une faille de sécurité ?
+Voir [SECURITY.md](SECURITY.md), jamais d'issue publique. Le projet est sous
+[licence MIT](LICENSE) et suit un [code de conduite](CODE_OF_CONDUCT.md).
+
 ## Développement
 
 ```sh
 npm install
 npm start                               # lance l'app
+npm run lint                            # ESLint
 npm test                                # tests unitaires
 xvfb-run -a npm run test:e2e            # test de bout en bout, avec de faux CLI (Windows : npm run test:e2e)
 ```
 
-Chaque push lance ces tests sous Linux et Windows. Les images de cette page sont produites à partir de la vraie application par `scripts/readme-media.js`.
+Chaque PR lance ces contrôles sous Linux et Windows, ainsi qu'une analyse CodeQL. Les images de cette page sont produites à partir de la vraie application par `scripts/readme-media.js`.

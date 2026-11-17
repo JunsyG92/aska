@@ -8,7 +8,7 @@ const WIN = process.platform === 'win32';
 const { StringDecoder } = require('string_decoder');
 
 // Séquences ANSI/OSC et caractères de contrôle (hors \n et \t).
-const ANSI = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]|[\x00-\x08\x0b-\x1f\x7f]/g;
+const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]|[\x00-\x08\x0b-\x1f\x7f]/g;
 const clean = (s) => s.replace(/\r\n?/g, '\n').replace(ANSI, '');
 
 function short(v, n = 90) {

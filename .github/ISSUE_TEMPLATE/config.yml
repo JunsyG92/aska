@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Signaler une faille de sécurité
+    url: https://github.com/JunsyG92/aska/security/advisories/new
+    about: En privé, jamais dans une issue publique.
+  - name: Question ou discussion
+    url: https://github.com/JunsyG92/aska/discussions
+    about: Pour une question d'utilisation plutôt qu'un bug.

@@ -126,7 +126,7 @@ function isDangerousArg(arg) {
   return DANGEROUS_ARG.some((re) => re.test(arg));
 }
 
-const MODEL_RE = /^[A-Za-z0-9][\w.:\/\[\]-]{0,79}$/;
+const MODEL_RE = /^[A-Za-z0-9][\w.:/[\]-]{0,79}$/;
 const SESSION_RE = /^[A-Za-z0-9][\w-]{7,79}$/;
 const isModel = (m) => typeof m === 'string' && MODEL_RE.test(m);
 
