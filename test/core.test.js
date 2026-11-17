@@ -310,6 +310,32 @@ test('conversations : enregistrement privé, liste, réouverture, suppression', 
   assert.deepEqual(off.list(), []);
 });
 
+test('conversations : résumés de liste en cache, rafraîchis quand un fichier change', () => {
+  const d = path.join(tmp(), 'conv-cache');
+  const store = new ConversationStore(d);
+  const c = store.create('/p');
+  c.turns.push({ agent: 'claude', label: 'Claude', prompt: 'first', answer: 'one' });
+  store.save(c);
+  assert.equal(store.list()[0].preview, 'one');
+  // Un save via le store met à jour le résumé sans relire le fichier.
+  c.turns.push({ agent: 'codex', label: 'Codex', prompt: 'second', answer: 'two' });
+  store.save(c);
+  const [item] = store.list();
+  assert.equal(item.turns, 2);
+  assert.deepEqual(item.agentIds, ['claude', 'codex']);
+  // Un fichier modifié hors du store (autre instance, édition manuelle) est relu.
+  const file = path.join(d, c.id + '.json');
+  const disk = JSON.parse(fs.readFileSync(file, 'utf8'));
+  disk.turns[1].answer = 'changed outside';
+  fs.writeFileSync(file, JSON.stringify(disk));
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(file, later, later);
+  assert.equal(store.list()[0].preview, 'changed outside');
+  // Un fichier supprimé hors du store disparaît de la liste.
+  fs.unlinkSync(file);
+  assert.deepEqual(store.list(), []);
+});
+
 test('Cursor : --trust ajouté seulement une fois la confiance établie, jamais via extraArgs', () => {
   const { agents, warnings } = resolveAgents({ cursor: { extraArgs: ['--trust'] } });
   assert.deepEqual(agents.cursor.extraArgs, []);
