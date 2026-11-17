@@ -781,4 +781,99 @@ kbd {
 }
 .panel.mini.has-unread .mini-status { color: var(--ok); }
 
+/* ---------- onglets ---------- */
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in oklab, var(--surface-2) 45%, var(--surface));
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 1 230px;
+  min-width: 110px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  border-radius: 9px 9px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.tab:hover { background: color-mix(in oklab, var(--surface-2) 70%, transparent); color: var(--text); }
+.tab.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 0 var(--surface), inset 0 2px 0 var(--c, var(--agent));
+}
+.tab-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c, var(--faint));
+}
+/* Onglet qui travaille : le point devient un petit anneau qui tourne. */
+.tab.running .tab-dot {
+  width: 9px;
+  height: 9px;
+  background: none;
+  border: 2px solid color-mix(in oklab, var(--c, var(--agent)) 30%, transparent);
+  border-top-color: var(--c, var(--agent));
+  animation: rot 0.8s linear infinite;
+}
+/* Réponse arrivée dans un onglet qu'on ne regardait pas. */
+.tab.unread .tab-title { font-weight: 600; color: var(--text); }
+.tab.unread::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.tab-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--faint);
+  opacity: 0;
+}
+.tab:hover .tab-close, .tab.active .tab-close { opacity: 1; }
+.tab-close:hover { background: var(--surface-2); color: var(--text); }
+.tab-new {
+  flex: none;
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--faint);
+  font: 400 18px/1 var(--font);
+  cursor: pointer;
+}
+.tab-new:hover { background: var(--surface-2); color: var(--text); }
+.panel.mini .tabs { display: none; }
+
 [hidden] { display: none !important; }

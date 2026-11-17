@@ -9,6 +9,7 @@ const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('
 const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
+const { Tabs } = require('./tabs');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
@@ -30,8 +31,8 @@ let cfg = null;
 let agents = {};
 let warnings = [];
 let trust = null;
-let cwd = null;
-let current = null; // exécution en cours : { id, handle }
+let cwd = null; // dossier de l'onglet actif (et des nouveaux onglets)
+const MAX_RUNS = 4; // demandes simultanées au plus, tous onglets confondus
 let runSeq = 0;
 let dialogOpen = false;
 let shortcutOk = false;
@@ -43,7 +44,8 @@ let notifier = null;
 let savedPos = null; // ancrage choisi par l'utilisateur : bord gauche et bord BAS de la fenêtre
 let saveTimer = null;
 let store = null; // conversations enregistrées
-let conv = null; // conversation affichée
+let tabs = null; // onglets ouverts (voir tabs.js) ; chacun porte sa conversation et sa demande en cours
+let savedTabs = null; // onglets enregistrés, rouverts au démarrage
 const picked = {}; // modèle choisi par agent : { claude: 'opus' } (absent = défaut)
 const extraModels = {}; // modèles saisis à la main, par agent
 const discovered = {}; // modèles annoncés par chaque CLI : { cursor: { models, error } }
@@ -98,6 +100,7 @@ function loadEverything() {
       if (Object.hasOwn(agents, k) && Array.isArray(v)) extraModels[k] = v.filter(isModel).slice(0, 12);
     }
     if (typeof d.pinned === 'boolean') pinned = d.pinned;
+    savedTabs = { ids: d.tabs, active: d.activeTab };
     const pos = st.data && st.data.pos;
     if (pos && Number.isInteger(pos.x) && Number.isInteger(pos.bottom)) savedPos = { x: pos.x, bottom: pos.bottom };
     cwd = saved && !sec.checkWorkdir(saved, 'read').error ? saved : P.workspace;
@@ -113,7 +116,36 @@ function loadEverything() {
     },
   });
   store = new ConversationStore(P.conversations, { persist: cfg.savePrompts });
-  if (!conv) conv = store.create(cwd);
+  if (!tabs) {
+    tabs = new Tabs(store);
+    tabs.restore(cfg.savePrompts && savedTabs ? savedTabs.ids : [], savedTabs && savedTabs.active, cwd);
+    syncCwd();
+  } else tabs.store = store; // --reload
+}
+
+// Le dossier de travail suit l'onglet actif (un dossier disparu ramène à l'espace temporaire).
+function syncCwd() {
+  const c = tabs.active().conv.cwd;
+  cwd = typeof c === 'string' && !sec.checkWorkdir(c, 'read').error ? c : P.workspace;
+}
+
+// Barre d'onglets côté interface.
+function publicTabs() {
+  return tabs.list.map((t) => {
+    const last = t.conv.turns[t.conv.turns.length - 1];
+    return {
+      id: t.id,
+      title: t.conv.title || (last ? last.prompt.slice(0, 60) : ''),
+      color: last && agents[last.agent] ? agents[last.agent].color : null,
+      running: !!t.run,
+      unread: t.unread,
+      active: t.id === tabs.activeId,
+    };
+  });
+}
+
+function pushTabs() {
+  if (win && !win.isDestroyed()) win.webContents.send('aska:tabs', publicTabs());
 }
 
 function fsRealWorkspace() {
@@ -126,7 +158,8 @@ function fsRealWorkspace() {
 
 function saveState() {
   try {
-    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels, pinned }));
+    const open = tabs && cfg.savePrompts ? tabs.serialize() : {};
+    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels, pinned, ...open }));
   } catch { /* l'état est un confort, pas une nécessité */ }
 }
 
@@ -194,8 +227,11 @@ function publicState() {
     shortcut: shortcutOk ? cfg.shortcut : null,
     warnings,
     history: cfg.savePrompts ? sec.readRecentPrompts(P.audit) : [],
-    running: !!current,
-    conversation: { id: conv.id, title: conv.title, turns: conv.turns.map(publicTurn) },
+    running: !!tabs.active().run,
+    // Demande en cours de l'onglet actif : l'interface s'y raccroche pour suivre la réponse.
+    run: tabs.active().run ? { id: tabs.active().run.id } : null,
+    conversation: { id: tabs.active().conv.id, title: tabs.active().conv.title, turns: tabs.active().conv.turns.map(publicTurn) },
+    tabs: publicTabs(),
     historyEnabled: cfg.savePrompts,
     pinned,
     unread,
@@ -302,17 +338,16 @@ function setUnread(n) {
   if (win && !win.isDestroyed()) win.webContents.send('aska:unread', unread);
 }
 
-// Rouvre une conversation enregistrée (et son dossier de travail).
+// Rouvre une conversation enregistrée dans un onglet (et son dossier de travail,
+// dont dépend la reprise de session).
 function openConversationById(cid) {
-  if (current || !cid || conv.id === cid) return;
-  const c = store.load(cid);
-  if (!c) return;
-  conv = c;
-  // On retrouve le dossier de la conversation : la reprise de session en dépend.
-  if (typeof c.cwd === 'string' && !sec.checkWorkdir(c.cwd, 'read').error) {
-    cwd = c.cwd;
-    saveState();
-  }
+  if (typeof cid !== 'string' || !cid) return { error: 'Conversation introuvable' };
+  const r = tabs.open(cid);
+  if (r.error) return r;
+  syncCwd();
+  saveState();
+  pushTabs();
+  return { ok: true };
 }
 
 function toggleWindow() {
@@ -352,8 +387,12 @@ function send(payload) {
 }
 
 function startRun(req) {
-  if (current) return { error: 'Une demande est déjà en cours' };
   if (!req || typeof req !== 'object') return { error: 'Requête invalide' };
+  const tab = typeof req.tabId === 'string' ? tabs.get(req.tabId) : null;
+  if (!tab) return { error: 'Onglet introuvable' };
+  if (tab.run) return { error: 'Une demande est déjà en cours dans cet onglet' };
+  if (tabs.running().length >= MAX_RUNS) return { error: `${MAX_RUNS} demandes en cours au plus : attendez qu'une se termine` };
+  const conv = tab.conv;
   const { agentId, mode, prompt, trust: trustChoice } = req;
   const agent = typeof agentId === 'string' && Object.hasOwn(agents, agentId) ? agents[agentId] : null;
   if (!agent) return { error: 'Agent inconnu' };
@@ -364,7 +403,8 @@ function startRun(req) {
   }
   if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 100000) return { error: 'Prompt invalide' };
 
-  const dir = sec.checkWorkdir(cwd, mode, os.homedir(), [fsRealWorkspace()]);
+  const tabCwd = typeof conv.cwd === 'string' && !sec.checkWorkdir(conv.cwd, 'read').error ? conv.cwd : P.workspace;
+  const dir = sec.checkWorkdir(tabCwd, mode, os.homedir(), [fsRealWorkspace()]);
   if (dir.error) return { error: dir.error };
 
   // Écrire dans un dossier demande l'accord explicite de l'utilisateur.
@@ -418,13 +458,14 @@ function startRun(req) {
       else if (ev.type === 'meta' && ev.model) turn.model = ev.model;
       else if (ev.type === 'error') streamError = ev.text;
       else if (ev.type === 'denied') denied = ev;
-      if (ev.type !== 'session') send({ id, ...ev });
+      if (ev.type !== 'session') send({ id, tabId: tab.id, ...ev });
     }
   );
-  current = { id, handle: handleRun };
+  tab.run = { id, handle: handleRun };
+  pushTabs();
 
   handleRun.done.then((res) => {
-    current = null;
+    tab.run = null;
     const ok = res.ok && !streamError;
     turn.status = ok ? 'ok' : res.reason === 'cancel' ? 'cancel' : 'error';
     turn.durationMs = res.durationMs;
@@ -464,11 +505,17 @@ function startRun(req) {
       code: res.code ?? null,
       durationMs: res.durationMs,
     });
+    // Réponse arrivée hors de vue (autre onglet, ou fenêtre masquée) : l'onglet la signale.
+    const onScreen = !!win && win.isVisible() && !hideTimer && !mini && tabs.activeId === tab.id;
+    if (turn.status !== 'cancel' && !onScreen && tabs.get(tab.id)) tab.unread = true;
+    saveState();
     send({
       id,
+      tabId: tab.id,
       type: 'end',
       turn: publicTurn(turn),
       title: thread.title,
+      tabs: publicTabs(),
     });
     // Une fenêtre en train de se masquer (animation de sortie) compte comme masquée.
     const seen = { visible: !!win && win.isVisible() && !hideTimer, focused: !!win && win.isFocused(), mini, status: turn.status };
@@ -533,8 +580,9 @@ function registerIpc() {
   });
   handle('aska:state', () => publicState());
   handle('aska:run', startRun);
-  handle('aska:cancel', () => {
-    if (current) current.handle.cancel();
+  handle('aska:cancel', (tabId) => {
+    const tab = typeof tabId === 'string' ? tabs.get(tabId) : tabs.active();
+    if (tab && tab.run) tab.run.handle.cancel();
     return true;
   });
   handle('aska:hide', () => hideWindow());
@@ -543,19 +591,48 @@ function registerIpc() {
     saveState();
     return pinned;
   });
+  // ----- onglets -----
+  const tabChanged = (extra = {}) => {
+    syncCwd();
+    saveState();
+    return { ...publicState(), ...extra };
+  };
+  // Nouvel onglet, dans le dossier de l'onglet actif.
+  handle('aska:tab-new', () => {
+    const r = tabs.create(cwd);
+    return tabChanged(r.error ? { error: r.error } : {});
+  });
+  handle('aska:tab-activate', (id) => {
+    if (typeof id === 'string') tabs.activate(id);
+    return tabChanged();
+  });
+  handle('aska:tab-cycle', (dir) => {
+    tabs.cycle(dir === -1 ? -1 : 1);
+    return tabChanged();
+  });
+  // Fermer un onglet qui travaille demande une confirmation : sa demande sera annulée.
+  handle('aska:tab-close', (req) => {
+    // Sans identifiant : l'onglet actif. Un identifiant mal formé est refusé, jamais remplacé.
+    const id = !req || req.id === undefined ? tabs.activeId : typeof req.id === 'string' ? req.id : null;
+    const r = tabs.close(id, { force: !!(req && req.force === true), cwd });
+    return tabChanged(r.needsConfirm ? { needsConfirm: id } : r.error ? { error: r.error } : {});
+  });
   handle('aska:conv-new', () => {
-    if (!current) conv = store.create(cwd);
-    return publicState();
+    const r = tabs.create(cwd);
+    return tabChanged(r.error ? { error: r.error } : {});
   });
   handle('aska:conv-list', () => publicList());
   handle('aska:conv-open', (cid) => {
-    if (typeof cid === 'string') openConversationById(cid);
-    return publicState();
+    const r = openConversationById(cid);
+    return { ...publicState(), ...(r.error ? { error: r.error } : {}) };
   });
   handle('aska:conv-delete', (cid) => {
-    if (current && conv.id === cid) return publicList();
+    if (typeof cid !== 'string') return publicList();
+    // Une conversation ouverte dans un onglet qui travaille n'est pas supprimée.
+    if (tabs.forget(cid, cwd).error) return publicList();
     store.delete(cid);
-    if (conv.id === cid) conv = store.create(cwd);
+    syncCwd();
+    saveState();
     return publicList();
   });
   handle('aska:set-model', (req) => {
@@ -594,7 +671,9 @@ function registerIpc() {
     return true;
   });
   handle('aska:reset-dir', () => {
+    if (tabs.active().run) return publicState();
     cwd = P.workspace;
+    tabs.active().conv.cwd = cwd;
     saveState();
     return publicState();
   });
@@ -608,8 +687,9 @@ function registerIpc() {
       });
       if (!r.canceled && r.filePaths[0]) {
         const d = sec.checkWorkdir(r.filePaths[0], 'read');
-        if (!d.error) {
+        if (!d.error && !tabs.active().run) {
           cwd = d.path;
+          tabs.active().conv.cwd = cwd; // le dossier appartient à l'onglet
           saveState();
         }
       }
@@ -739,7 +819,7 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
 
   app.on('before-quit', () => {
     quitting = true;
-    if (current) current.handle.cancel();
+    for (const t of tabs ? tabs.running() : []) t.run.handle.cancel();
   });
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();

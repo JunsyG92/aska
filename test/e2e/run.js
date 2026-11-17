@@ -97,20 +97,33 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     // L'interface est bien isolée de Node.
     assert.deepEqual(await page.evaluate(() => [typeof require, typeof process]), ['undefined', 'undefined']);
     // Le processus principal revalide tout ce que l'interface envoie.
-    const bad = await page.evaluate(async () => [
-      await window.aska.run({ agentId: '__proto__', mode: 'read', prompt: 'x' }),
-      await window.aska.run({ agentId: 'claude', mode: 'auto', prompt: 'x', trust: 'always' }),
-      await window.aska.run({ agentId: 'claude', mode: 'bypass', prompt: 'x' }),
-      await window.aska.run({ agentId: 'claude', mode: 'read', prompt: 42 }),
-      (await window.aska.setModel('claude', '--dangerously-skip-permissions')).agents.find((a) => a.id === 'claude').model,
-      (await window.aska.openConversation('../../../etc/passwd')).conversation.turns.length,
-    ]);
+    const bad = await page.evaluate(async () => {
+      const tabId = (await window.aska.getState()).conversation.id;
+      return [
+        await window.aska.run({ tabId, agentId: '__proto__', mode: 'read', prompt: 'x' }),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'auto', prompt: 'x', trust: 'always' }),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'bypass', prompt: 'x' }),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'read', prompt: 42 }),
+        (await window.aska.setModel('claude', '--dangerously-skip-permissions')).agents.find((a) => a.id === 'claude').model,
+        (await window.aska.openConversation('../../../etc/passwd')).conversation.turns.length,
+        await window.aska.run({ tabId: '__proto__', agentId: 'claude', mode: 'read', prompt: 'x' }),
+        await window.aska.run({ agentId: 'claude', mode: 'read', prompt: 'x' }),
+        (await window.aska.activateTab('../../x')).conversation.id === tabId,
+        await window.aska.closeTab(42),
+      ];
+    });
     assert.match(bad[0].error, /inconnu/);
     assert.match(bad[1].error, /autonome est désactivé/);
     assert.match(bad[2].error, /Mode inconnu/);
     assert.match(bad[3].error, /invalide/);
     assert.equal(bad[4], null);
     assert.equal(bad[5], 0);
+    // Onglet inexistant ou absent : refusé, et rien ne change.
+    assert.match(bad[6].error, /Onglet introuvable/);
+    assert.match(bad[7].error, /Onglet introuvable/);
+    assert.equal(bad[8], true);
+    assert.match(bad[9].error, /Onglet introuvable/);
+    assert.equal(bad[9].tabs.length, 1);
 
     // Clic à l'extérieur : le chat se masque (comportement par défaut)…
     const blur = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit('blur'));
@@ -461,18 +474,81 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await visible(), true);
     assert.equal(await turns(), 9);
 
-    // Navigation et ouverture de fenêtre bloquées.
+    // ---------- onglets : plusieurs conversations, qui travaillent en même temps ----------
+    const tabTitles = () => page.locator('.tab .tab-title').allTextContents();
+    const activeTitle = () => page.locator('.tab.active .tab-title').textContent();
+    await page.keyboard.press('Control+t');
+    await page.waitForSelector('#tabs:not([hidden])');
+    assert.equal(await page.locator('.tab').count(), 2);
+    assert.equal(await activeTitle(), 'Nouvelle conversation');
+    assert.equal(await turns(), 0, 'nouvel onglet : fil vide');
+    // Une demande longue dans l'onglet 2…
+    await page.keyboard.type('Analyse longue dans le deuxième onglet');
+    await page.keyboard.press('Enter');
+    await settled('running');
+    // … et pendant ce temps, retour à l'onglet 1 (Ctrl+1) où l'on travaille aussi.
+    await page.keyboard.type('brouillon');
+    await page.keyboard.press('Control+1');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 9);
+    assert.equal(await page.locator('.tab.running').count(), 1, 'l\'onglet 2 travaille en arrière-plan');
+    assert.equal(await page.inputValue('#input'), '', 'chaque onglet a son propre brouillon');
+    await shot('9-tabs-running-light');
+    await send('Pendant ce temps, une question rapide [text]');
+    await settled('done');
+    assert.equal(await turns(), 10);
+    // La réponse de l'onglet 2 arrive alors qu'on ne le regarde pas : il est marqué.
+    await page.waitForSelector('.tab.unread', { timeout: 20000 });
+    assert.equal(await page.locator('.tab.running').count(), 0);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(400);
+    await shot('9-tabs-unread-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.keyboard.press('Control+Tab');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 1);
+    assert.match(await page.locator('.turn .output').first().textContent(), /trois points sur main\.js/);
+    assert.equal(await page.locator('.tab.unread').count(), 0, 'lu une fois l\'onglet ouvert');
+    assert.equal(await page.inputValue('#input'), 'brouillon', 'le brouillon de l\'onglet 2 est retrouvé');
+    await page.fill('#input', '');
+    // Se raccrocher à une réponse en cours : on quitte l'onglet pendant qu'il répond, on y revient.
+    await send('Deuxième réponse, suivie à distance');
+    await settled('running');
+    await page.keyboard.press('Control+Shift+Tab');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 10);
+    await page.keyboard.press('Control+2');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 2);
+    assert.equal(await page.getAttribute('.panel', 'data-state'), 'running');
+    await settled('done');
+    assert.match(await page.locator('.turn .output').nth(1).textContent(), /Suite de la session|trois points/);
+    // Fermer un onglet qui travaille : confirmation, puis la demande est annulée.
+    await send('Demande à abandonner [hang]');
+    await settled('running');
+    await page.keyboard.press('Control+w');
+    assert.match(await page.textContent('#status'), /fermez à nouveau/);
+    assert.equal(await page.locator('.tab').count(), 2);
+    await page.keyboard.press('Control+w');
+    await page.waitForFunction(() => document.querySelector('#tabs').hidden);
+    assert.equal(await turns(), 10, 'retour à l\'onglet restant');
+    await page.waitForTimeout(500);
+    assert.equal(JSON.parse(fs.readFileSync(P.audit, 'utf8').trim().split('\n').pop()).result, 'cancel');
+    // Les onglets ouverts sont enregistrés pour le prochain démarrage.
+    const st = JSON.parse(fs.readFileSync(P.state, 'utf8'));
+    assert.equal(st.tabs.length, 1);
+    assert.equal(st.activeTab, st.tabs[0]);
+    assert.deepEqual(await tabTitles(), ['Résume main.js (deny)']);
+
+    // Cursor exige --trust sans interface : accordé d'office dans le dossier vide d'Aska.
+    const before = calls().length;
+    assert.equal((await page.evaluate(async () => window.aska.run({ tabId: (await window.aska.getState()).conversation.id, agentId: 'cursor', mode: 'read', prompt: 'salut' }))).ok, true);
+    await page.waitForTimeout(1500);
+    const cur = calls()[before];
+    assert.deepEqual(cur.args.slice(0, 6), ['-p', '--output-format', 'stream-json', '--mode', 'ask', '--trust']);
+
+    // Navigation et ouverture de fenêtre bloquées (en dernier : Playwright attend ensuite
+    // une navigation qui n'aura jamais lieu).
     await page.evaluate(() => { window.open('https://example.com'); location.href = 'https://example.com'; });
     await page.waitForTimeout(300);
     assert.match(page.url(), /^file:.*index\.html$/);
     assert.equal((await app.windows()).length, 1);
-
-    // Cursor exige --trust sans interface : accordé d'office dans le dossier vide d'Aska.
-    const before = calls().length;
-    assert.equal((await page.evaluate(() => window.aska.run({ agentId: 'cursor', mode: 'read', prompt: 'salut' }))).ok, true);
-    await page.waitForTimeout(1500);
-    const cur = calls()[before];
-    assert.deepEqual(cur.args.slice(0, 6), ['-p', '--output-format', 'stream-json', '--mode', 'ask', '--trust']);
 
     console.log('E2E OK — captures dans', OUT);
   } finally {

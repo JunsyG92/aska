@@ -598,3 +598,96 @@ test('macOS : dossiers système réels (/private/etc…) et Homebrew dans le PAT
   const linux = extendedPath({ env: { PATH: '/usr/bin' }, home: '/home/u', platform: 'linux' }).split(':');
   assert.ok(!linux.includes('/opt/homebrew/bin'));
 });
+
+// ---------- onglets ----------
+
+const { Tabs } = require('../src/main/tabs');
+
+function tabsFixture() {
+  const store = new ConversationStore(path.join(tmp(), 'conv'));
+  const saved = (title, cwd = '/p') => {
+    const c = store.create(cwd);
+    c.turns.push({ agent: 'claude', label: 'Claude', prompt: title, answer: 'ok', status: 'ok' });
+    store.save(c);
+    return c.id;
+  };
+  return { store, saved, tabs: new Tabs(store, { max: 3 }) };
+}
+
+test('onglets : création, réutilisation de l\'onglet vide, limite', () => {
+  const { tabs } = tabsFixture();
+  tabs.restore([], null, '/p');
+  assert.equal(tabs.list.length, 1);
+  const first = tabs.active();
+  // L'onglet actif est encore vide : « nouvel onglet » le réutilise.
+  assert.equal(tabs.create('/p').tab, first);
+  first.conv.turns.push({ agent: 'claude', prompt: 'q', answer: '' });
+  const second = tabs.create('/p').tab;
+  assert.notEqual(second, first);
+  assert.equal(tabs.activeId, second.id);
+  second.conv.turns.push({ agent: 'codex', prompt: 'q2', answer: '' });
+  tabs.create('/q').tab.conv.turns.push({ agent: 'codex', prompt: 'q3', answer: '' });
+  assert.match(tabs.create('/p').error, /3 onglets au plus/);
+  assert.equal(tabs.cycle(1).id, first.id); // en boucle
+  assert.equal(tabs.cycle(-1).id, tabs.list[2].id);
+});
+
+test('onglets : ouvrir une conversation enregistrée, sans doublon', () => {
+  const { tabs, saved } = tabsFixture();
+  const a = saved('Sujet A');
+  const b = saved('Sujet B');
+  tabs.restore([], null, '/p');
+  const emptyId = tabs.activeId;
+  // L'onglet vide est remplacé par la conversation ouverte.
+  tabs.open(a);
+  assert.deepEqual(tabs.list.map((t) => t.id), [a]);
+  assert.ok(!tabs.get(emptyId));
+  tabs.open(b);
+  assert.deepEqual(tabs.list.map((t) => t.id), [a, b]);
+  // Déjà ouverte : simplement activée.
+  tabs.open(a);
+  assert.equal(tabs.list.length, 2);
+  assert.equal(tabs.activeId, a);
+  assert.match(tabs.open('0123456789abcdef').error, /introuvable/);
+});
+
+test('onglets : fermer un onglet qui travaille demande confirmation et annule sa demande', () => {
+  const { tabs, saved } = tabsFixture();
+  const a = saved('A');
+  const b = saved('B');
+  tabs.restore([a, b], a, '/p');
+  let cancelled = 0;
+  tabs.get(a).run = { id: 1, handle: { cancel: () => { cancelled += 1; } } };
+  assert.deepEqual(tabs.close(a), { needsConfirm: true });
+  assert.equal(tabs.list.length, 2);
+  assert.equal(cancelled, 0);
+  assert.deepEqual(tabs.close(a, { force: true }), { ok: true });
+  assert.equal(cancelled, 1);
+  assert.equal(tabs.activeId, b, 'l\'onglet voisin devient actif');
+  // Fermer le dernier onglet en rouvre un vide : il en reste toujours un.
+  tabs.close(b);
+  assert.equal(tabs.list.length, 1);
+  assert.equal(tabs.active().conv.turns.length, 0);
+  // Supprimer de l'historique une conversation qui travaille est refusé.
+  tabs.open(a);
+  tabs.get(a).run = { id: 2, handle: { cancel() {} } };
+  assert.match(tabs.forget(a).error, /en cours/);
+});
+
+test('onglets : enregistrés puis rouverts, réponses non lues effacées à l\'activation', () => {
+  const { store, tabs, saved } = tabsFixture();
+  const a = saved('A');
+  const b = saved('B');
+  tabs.restore([a, b], b, '/p');
+  tabs.create('/p'); // onglet vide : non enregistré
+  assert.deepEqual(tabs.serialize(), { tabs: [a, b], activeTab: b });
+  tabs.get(a).unread = true;
+  tabs.activate(a);
+  assert.equal(tabs.get(a).unread, false);
+  // Rouverture : conversation supprimée ignorée, identifiants invalides ignorés.
+  store.delete(b);
+  const again = new Tabs(store);
+  again.restore([a, b, 42, a], b, '/p');
+  assert.deepEqual(again.list.map((t) => t.id), [a]);
+  assert.equal(again.activeId, a);
+});
