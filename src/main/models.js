@@ -13,7 +13,7 @@ const { clean } = require('./runner');
 function parseModelLines(text) {
   const out = [];
   for (const raw of clean(text).split('\n')) {
-    const m = raw.match(/^\s*(?:[*•>-]\s+)?([A-Za-z0-9][\w.:\/\[\]-]*)\s+[-–—:]\s+(.+?)\s*$/);
+    const m = raw.match(/^\s*(?:[*•>-]\s+)?([A-Za-z0-9][\w.:/[\]-]*)\s+[-–—:]\s+(.+?)\s*$/);
     if (!m || !isModel(m[1])) continue;
     const label = m[2].replace(/\s*\((current|default|actuel)[^)]*\)\s*/gi, ' ').trim();
     out.push({ id: m[1], label: label && label !== m[1] ? label.slice(0, 60) : null });

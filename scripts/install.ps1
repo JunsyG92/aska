@@ -44,25 +44,14 @@ try {
 }
 if (-not (Test-Path $Electron)) { throw "Electron est introuvable après installation ($Electron)." }
 
-# Raccourcis (menu Démarrer, démarrage automatique).
-$shell = New-Object -ComObject WScript.Shell
-function New-Shortcut([string]$Path, [string]$Arguments) {
-  New-Item -ItemType Directory -Force -Path (Split-Path $Path) | Out-Null
-  $lnk = $shell.CreateShortcut($Path)
-  $lnk.TargetPath = $Electron
-  $lnk.Arguments = "`"$Root`" $Arguments"
-  $lnk.WorkingDirectory = $Root
-  $lnk.Description = "Demander une action à un agent IA (Claude, Codex, Copilot, Cursor)"
-  $lnk.IconLocation = "$Electron,0"
-  $lnk.Save()
-}
-$programs = [Environment]::GetFolderPath('Programs')
-New-Shortcut (Join-Path $programs 'Aska.lnk') '--toggle'
-$startupLnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Aska.lnk'
-if ($NoAutostart) {
-  Remove-Item -Force -ErrorAction SilentlyContinue $startupLnk
-} else {
-  New-Shortcut $startupLnk '--hidden'
+# Raccourcis (menu Démarrer, démarrage automatique). Ils sont écrits par Electron,
+# seul à pouvoir y inscrire l'identité de l'application, sans laquelle Windows
+# n'affiche pas ses notifications.
+$shortcutArgs = @($Root, '--install-shortcuts')
+if ($NoAutostart) { $shortcutArgs += '--no-autostart' }
+$made = & $Electron @shortcutArgs | Out-String
+if ($LASTEXITCODE -ne 0 -or $made -notmatch 'appUserModelId') {
+  throw "La création des raccourcis a échoué : $made"
 }
 
 # Commande « aska » (aska --quit, aska --reload…).

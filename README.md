@@ -9,7 +9,9 @@
 Claude Code, Codex, GitHub Copilot et Cursor dans une seule petite fenêtre,<br>
 pilotés par leurs CLI officiels. Linux et Windows.
 
-[![Tests](https://github.com/JunsyG92/aska/actions/workflows/tests.yml/badge.svg)](https://github.com/JunsyG92/aska/actions/workflows/tests.yml)
+[![CI](https://github.com/JunsyG92/aska/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JunsyG92/aska/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JunsyG92/aska?include_prereleases&label=version&color=d97757)](https://github.com/JunsyG92/aska/releases)
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 ![Linux](https://img.shields.io/badge/Linux-%E2%9C%93-2ea44f?logo=linux&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-%E2%9C%93-2ea44f)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A5%2020-5fa04e?logo=nodedotjs&logoColor=white)
@@ -24,7 +26,8 @@ pilotés par leurs CLI officiels. Linux et Windows.
 - 💬 **Un vrai fil de discussion** : chaque message garde le contexte des précédents, même si vous changez d'agent en route.
 - 🔌 **Vos CLI, vos comptes** : Aska n'appelle aucune API et ne stocke aucune clé. Il lance les CLI déjà installés et connectés chez vous, avec leurs MCP et leurs skills.
 - 🛡️ **Lecture seule par défaut** : l'agent ne modifie rien tant que vous ne changez pas de mode, et jamais sans votre accord pour le dossier.
-- 📌 **Toujours sous la main** : la fenêtre reste au premier plan où vous la posez, et se réduit en pastille pendant que l'agent travaille.
+- 📌 **Discret ou toujours là** : un clic à l'extérieur masque le chat ; épinglé, il reste au premier plan où vous le posez. Réduit en pastille, il vous montre où en est l'agent.
+- 🔔 **Prévenu dès que l'IA répond** : une notification système (agent et début de la réponse) quand le chat est masqué ou réduit ; un clic vous ramène à la conversation.
 - 🌗 **Clair ou sombre**, selon le thème de votre système.
 
 ## Aperçu
@@ -130,6 +133,7 @@ L'aide liste les options, les raccourcis, et surtout **l'état de chaque agent**
 | `aska` / `aska --toggle` | affiche ou masque la fenêtre (démarre l'app si besoin) |
 | `aska --hidden` | démarre en arrière-plan |
 | `aska --reload` | relit la configuration |
+| `aska --restart` | redémarre Aska (après une mise à jour) |
 | `aska --quit` | quitte |
 | `aska --help` / `--version` | aide et diagnostic / version |
 
@@ -148,9 +152,24 @@ L'aide liste les options, les raccourcis, et surtout **l'état de chaque agent**
 | `↑` / `↓` | rappeler un message déjà envoyé |
 | `Ctrl+Maj+C` | copier la dernière réponse |
 | `Ctrl+M` | réduire en pastille / agrandir |
+| `Ctrl+P` | épingler : le chat reste affiché quand vous cliquez ailleurs |
 | `Échap` | annuler la demande en cours, sinon masquer |
 
-La fenêtre se déplace par la poignée à gauche ou par la barre du bas, et sa position est mémorisée. Si elle est masquée pendant qu'un agent travaille, une notification signale la fin.
+Un clic en dehors du chat le masque ; l'agent continue de travailler. Pour le garder affiché, épinglez-le (📌 ou `Ctrl+P`) : le choix est mémorisé. Réduit en pastille, il reste toujours visible. La fenêtre se déplace par la poignée à gauche ou par la barre du bas, et sa position est mémorisée.
+
+## Notifications
+
+Quand une réponse arrive alors que le chat est masqué ou réduit en pastille, Aska envoie une notification système : l'agent, et le début de la réponse en texte brut (ou la cause d'un échec). Un clic sur la notification rouvre le chat sur la bonne conversation. La pastille affiche aussi « Nouvelle réponse » avec un point vert, jusqu'à ce que vous rouvriez le chat. Une demande que vous annulez ne notifie jamais.
+
+| Option (`config.json`) | Effet |
+| --- | --- |
+| `"notify": "hidden"` | par défaut : quand le chat est masqué ou réduit |
+| `"notify": "unfocused"` | aussi quand le chat est visible mais que vous travaillez dans une autre fenêtre |
+| `"notify": "never"` | jamais |
+| `"notifyPreview": false` | n'affiche pas le contenu de la réponse (écran verrouillé, partage d'écran), seulement le titre de la conversation |
+| `"notifySound": false` | notification silencieuse |
+
+Sous Windows, les notifications exigent un raccourci du menu Démarrer portant l'identité de l'application : `scripts\install.ps1` le crée.
 
 ## Conversations
 
@@ -268,8 +287,11 @@ Linux : `~/.config/aska/config.json` (droits `600`). Windows : `%APPDATA%\aska\c
   "timeoutSec": 600,
   "maxOutputKb": 2048,
   "savePrompts": true,
-  "hideOnBlur": false,
+  "hideOnBlur": true,
   "alwaysOnTop": true,
+  "notify": "hidden",
+  "notifyPreview": true,
+  "notifySound": true,
   "envPassthrough": [],
   "agents": {
     "claude": { "model": "sonnet", "extraArgs": ["--max-turns", "20"] },
@@ -287,9 +309,7 @@ Linux : `~/.config/aska/config.json` (droits `600`). Windows : `%APPDATA%\aska\c
 }
 ```
 
-`hideOnBlur: true` redonne un comportement de lanceur éphémère (la fenêtre se
-masque dès qu'elle perd le focus) ; `alwaysOnTop: false` la laisse passer
-derrière les autres fenêtres.
+`hideOnBlur` règle le comportement par défaut au clic extérieur (`true` : le chat se masque ; `false` : il reste, comme s'il était épinglé) ; l'épingle de l'interface le change ensuite. `alwaysOnTop: false` laisse la fenêtre passer derrière les autres.
 
 Un agent personnalisé (comme `gemini` ci-dessus) déclare son binaire en chemin
 absolu et les arguments de chaque mode (`read`, `edit`, `auto`) ; `prompt` vaut
@@ -299,12 +319,18 @@ absolu et les arguments de chaque mode (`read`, `edit`, `auto`) ; `prompt` vaut
 
 ## Dépannage
 
-Commencez par `aska --help` : la section « Agents » dit quel CLI est utilisé, ou pourquoi il manque.
+Commencez par `aska --help` : la section « Agents » dit quel CLI est utilisé, ou pourquoi il manque ; la section « État » indique si le chat se masque au clic extérieur et si une ancienne version tourne encore.
 
 <details>
 <summary><b>Problèmes connus</b></summary>
 
 <br>
+
+- **Le chat ne se masque pas quand je clique à l'extérieur, ou une nouveauté est absente.**
+  1. *Après un `git pull`*, Aska doit être relancé : tant que l'ancien processus tourne, `aska` ne fait que le rouvrir. Depuis cette version, Aska détecte et remplace tout seul une ancienne instance ; avec une version plus ancienne encore, lancez une fois `aska --quit` puis `aska`. `aska --restart` force un redémarrage.
+  2. Le chat est peut-être **épinglé** (📌 en surbrillance, `Ctrl+P` pour basculer) : un chat épinglé reste affiché. `Échap` le masque dans tous les cas.
+  3. Une ancienne configuration contient `"hideOnBlur": false` : retirez cette ligne, ou désépinglez avec `Ctrl+P` (le choix de l'interface prime).
+  4. Sous Wayland, certains bureaux n'envoient pas la perte de focus aux applications XWayland : dans ce cas, utilisez `Échap` ou le bouton ✕, et signalez le bureau concerné dans une issue.
 
 - **Ubuntu 24.04+ : « The SUID sandbox helper binary was found, but is not
   configured correctly » (arrêt par SIGTRAP)** : Ubuntu bloque le bac à sable
@@ -323,13 +349,32 @@ Commencez par `aska --help` : la section « Agents » dit quel CLI est utilisé,
 
 </details>
 
+## Contribuer
+
+Les contributions sont bienvenues ! Le dépôt suit **GitHub Flow** : `main` est
+protégée, chaque changement arrive par une PR relue, testée sous Linux et
+Windows, puis fusionnée en squash. Les versions et le [CHANGELOG](CHANGELOG.md)
+sont produits automatiquement à partir des titres de PR ([Conventional Commits](https://www.conventionalcommits.org/fr/)).
+
+```sh
+git switch -c feat/ma-fonctionnalite
+npm install && npm run check        # lint + tests unitaires
+git push -u origin feat/ma-fonctionnalite
+# puis une PR vers main, titrée par exemple « feat(ui): raccourci pour épingler »
+```
+
+Tout est détaillé dans [CONTRIBUTING.md](CONTRIBUTING.md). Une faille de sécurité ?
+Voir [SECURITY.md](SECURITY.md), jamais d'issue publique. Le projet est sous
+[licence MIT](LICENSE) et suit un [code de conduite](CODE_OF_CONDUCT.md).
+
 ## Développement
 
 ```sh
 npm install
 npm start                               # lance l'app
+npm run lint                            # ESLint
 npm test                                # tests unitaires
 xvfb-run -a npm run test:e2e            # test de bout en bout, avec de faux CLI (Windows : npm run test:e2e)
 ```
 
-Chaque push lance ces tests sous Linux et Windows. Les images de cette page sont produites à partir de la vraie application par `scripts/readme-media.js`.
+Chaque PR lance ces contrôles sous Linux et Windows, ainsi qu'une analyse CodeQL. Les images de cette page sont produites à partir de la vraie application par `scripts/readme-media.js`.

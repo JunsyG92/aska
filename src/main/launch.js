@@ -15,7 +15,7 @@ const path = require('path');
 const WIN = process.platform === 'win32';
 const SCRIPT_EXT = /\.(c|m)?js$/i;
 // Arguments sans danger pour cmd.exe : flags, noms de modèles, identifiants.
-const CMD_SAFE_ARG = /^[A-Za-z0-9_.:\/\\=,@+\[\]-]*$/;
+const CMD_SAFE_ARG = /^[A-Za-z0-9_.:/\\=,@+[\]-]*$/;
 
 /** Cherche un fichier exécutable (par son nom exact) dans une liste de dossiers. */
 function findOnPath(name, envPath) {

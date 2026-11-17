@@ -1,18 +1,36 @@
 {
   "name": "aska",
   "version": "0.1.0",
-  "description": "Lanceur Linux : un raccourci, un champ, et vos agents IA en CLI (Claude, Codex, Copilot, Cursor).",
+  "description": "Lanceur Linux et Windows : un raccourci, un champ, et vos agents IA en CLI (Claude, Codex, Copilot, Cursor).",
   "main": "src/main/main.js",
   "license": "MIT",
   "private": true,
   "scripts": {
     "postinstall": "node node_modules/electron/install.js",
     "start": "electron .",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "test": "node --test test/core.test.js",
-    "test:e2e": "node test/e2e/run.js"
+    "test:e2e": "node test/e2e/run.js && node test/e2e/instances.js",
+    "test:click": "bash test/e2e/outside-click.sh",
+    "check": "npm run lint && npm test"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.5",
     "electron": "^45.3.3",
+    "eslint": "9.39.5",
+    "globals": "17.14.0",
     "playwright": "1.63.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JunsyG92/aska.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JunsyG92/aska/issues"
+  },
+  "homepage": "https://github.com/JunsyG92/aska#readme",
+  "engines": {
+    "node": ">=20"
   }
 }

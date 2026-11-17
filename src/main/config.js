@@ -25,6 +25,7 @@ function paths(env = process.env, home = os.homedir(), platform = process.platfo
     config: path.join(configDir, 'config.json'),
     trust: path.join(configDir, 'trusted.json'),
     state: path.join(stateDir, 'state.json'),
+    run: path.join(stateDir, 'run.json'),
     audit: path.join(stateDir, 'history.jsonl'),
     conversations: path.join(stateDir, 'conversations'),
     workspace: path.join(dataDir, 'workspace'),
@@ -39,8 +40,11 @@ const DEFAULTS = {
   timeoutSec: 600,
   maxOutputKb: 2048,
   savePrompts: true,
-  hideOnBlur: false,
+  hideOnBlur: true, // cliquer à l'extérieur masque le chat (sauf s'il est épinglé)
   alwaysOnTop: true,
+  notify: 'hidden', // hidden | unfocused | never
+  notifyPreview: true, // début de la réponse dans la notification
+  notifySound: true,
   envPassthrough: [],
   agents: {},
 };
@@ -74,6 +78,10 @@ function loadConfig(file) {
   if (typeof u.savePrompts === 'boolean') cfg.savePrompts = u.savePrompts;
   if (typeof u.hideOnBlur === 'boolean') cfg.hideOnBlur = u.hideOnBlur;
   if (typeof u.alwaysOnTop === 'boolean') cfg.alwaysOnTop = u.alwaysOnTop;
+  if (['hidden', 'unfocused', 'never'].includes(u.notify)) cfg.notify = u.notify;
+  else if (u.notify === false) cfg.notify = 'never';
+  if (typeof u.notifyPreview === 'boolean') cfg.notifyPreview = u.notifyPreview;
+  if (typeof u.notifySound === 'boolean') cfg.notifySound = u.notifySound;
   if (Array.isArray(u.envPassthrough)) {
     cfg.envPassthrough = u.envPassthrough.filter((s) => typeof s === 'string' && /^[A-Za-z_][A-Za-z0-9_]*\*?$/.test(s));
   }
