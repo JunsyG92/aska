@@ -48,7 +48,7 @@ test('le prompt n\'est jamais interprété comme une option ni par un shell', ()
   const c = buildInvocation(agents.claude, 'read', evil);
   assert.equal(c.stdin, evil);
   assert.ok(!c.argv.includes(evil));
-  assert.deepEqual(c.argv.slice(-2), ['--permission-mode', 'plan']);
+  assert.deepEqual(c.argv.slice(-4), ['--permission-mode', 'plan', '--setting-sources', 'user']);
   const k = buildInvocation(agents.cursor, 'read', evil);
   assert.equal(k.argv.at(-1), ' ' + evil);
   assert.ok(!k.logArgv.join(' ').includes('rm -rf'));
@@ -143,6 +143,19 @@ test('configuration : ignorée si modifiable par d\'autres, bornée sinon', () =
     assert.match(r.warnings[0], /ignorée/);
   }
   assert.equal(loadConfig(path.join(d, 'absent.json')).config.defaultMode, 'read');
+  // BOM UTF-8 (Windows PowerShell 5.1, Bloc-notes) : la configuration reste lue.
+  const bom = path.join(d, 'bom.json');
+  fs.writeFileSync(bom, '\uFEFF' + JSON.stringify({ allowAutoMode: true }), { mode: 0o600 });
+  r = loadConfig(bom);
+  assert.deepEqual(r.warnings, []);
+  assert.equal(r.config.allowAutoMode, true);
+});
+
+test('Claude en lecture seule : les réglages du projet (hooks) ne sont pas chargés', () => {
+  const { agents } = resolveAgents({ claude: { extraArgs: ['--setting-sources', 'project', '--setting-sources=project,user'] } });
+  const argv = buildInvocation(agents.claude, 'read', 'x').argv;
+  assert.equal(argv[argv.indexOf('--setting-sources') + 1], 'user');
+  assert.equal(argv.filter((a) => /^--setting-sources/.test(a)).length, 1);
 });
 
 test('confiance et journal : fichiers privés (0600)', () => {

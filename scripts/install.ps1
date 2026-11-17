@@ -89,14 +89,16 @@ $confDir = Join-Path $env:APPDATA 'aska'
 $conf = Join-Path $confDir 'config.json'
 New-Item -ItemType Directory -Force -Path $confDir | Out-Null
 if (-not (Test-Path $conf)) {
-  @'
+  $json = @'
 {
   "shortcut": "Control+Alt+Space",
   "defaultAgent": "claude",
   "defaultMode": "read",
   "allowAutoMode": false
 }
-'@ | Set-Content -Encoding UTF8 -Path $conf
+'@
+  # UTF-8 sans BOM : sous Windows PowerShell 5.1, « Set-Content -Encoding UTF8 » en ajoute un.
+  [IO.File]::WriteAllText($conf, $json, (New-Object Text.UTF8Encoding $false))
 }
 
 Write-Host ""
