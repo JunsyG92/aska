@@ -509,3 +509,64 @@ test('configuration : masquage au clic extérieur et notifications', () => {
   fs.writeFileSync(f, JSON.stringify({ notify: 'toujours' }), { mode: 0o600 });
   assert.equal(loadConfig(f).config.notify, 'hidden');
 });
+
+// ---------- instances ----------
+
+const { buildId, runningInstance } = require('../src/main/build');
+
+test('identifiant de code : stable, sensible au contenu, remplaçable pour les tests', () => {
+  const d = tmp();
+  fs.mkdirSync(path.join(d, 'sub'));
+  fs.writeFileSync(path.join(d, 'a.js'), 'un');
+  fs.writeFileSync(path.join(d, 'sub', 'b.js'), 'deux');
+  const a = buildId(d, {});
+  assert.equal(a, buildId(d, {}));
+  assert.match(a, /^[0-9a-f]{12}$/);
+  fs.writeFileSync(path.join(d, 'sub', 'b.js'), 'deux modifié');
+  assert.notEqual(buildId(d, {}), a);
+  assert.equal(buildId(d, { ASKA_BUILD_ID: 'test-1' }), 'test-1');
+  assert.equal(buildId(path.join(d, 'absent'), {}).length, 12); // sources illisibles : jamais bloquant
+});
+
+test('instance active : lue depuis run.json, ignorée si son processus a disparu', () => {
+  const d = tmp();
+  const f = path.join(d, 'run.json');
+  const read = sec.readOwnedJson;
+  assert.equal(runningInstance(read, f), null);
+  fs.writeFileSync(f, JSON.stringify({ pid: process.pid, build: 'abc' }), { mode: 0o600 });
+  assert.deepEqual(runningInstance(read, f), { pid: process.pid, build: 'abc' });
+  fs.writeFileSync(f, JSON.stringify({ pid: 2 ** 22 + 12345, build: 'abc' }), { mode: 0o600 });
+  assert.equal(runningInstance(read, f), null);
+  fs.writeFileSync(f, JSON.stringify({ pid: 'x' }), { mode: 0o600 });
+  assert.equal(runningInstance(read, f), null);
+});
+
+test('aska --help : comportement du clic extérieur et état de l\'instance', () => {
+  const { execFileSync } = require('child_process');
+  const home = tmp();
+  const env = WIN
+    ? { ...baseEnv(), USERPROFILE: home, APPDATA: path.join(home, 'R'), LOCALAPPDATA: path.join(home, 'L'), NO_COLOR: '1' }
+    : { ...baseEnv(), HOME: home, NO_COLOR: '1' };
+  for (const k of Object.keys(env)) if (/^XDG_/.test(k)) delete env[k];
+  const cli = path.join(__dirname, '..', 'src', 'cli.js');
+  const help = () => execFileSync(process.execPath, [cli, '--help'], { env, encoding: 'utf8' });
+  const P = require('../src/main/config').paths(env, home);
+  let out = help();
+  assert.match(out, /Clic extérieur\s+Masque le chat/);
+  assert.match(out, /Instance\s+Aska n'est pas lancé/);
+  assert.match(out, /--restart/);
+  // Ancienne configuration avec hideOnBlur:false : le chat n'est pas masqué, et l'aide le dit.
+  fs.mkdirSync(P.configDir, { recursive: true });
+  fs.writeFileSync(P.config, JSON.stringify({ hideOnBlur: false }), { mode: 0o600 });
+  assert.match(help(), /Clic extérieur\s+Ne masque pas le chat : il est épinglé/);
+  // L'épingle choisie dans l'interface l'emporte sur la configuration.
+  fs.mkdirSync(P.stateDir, { recursive: true });
+  fs.writeFileSync(P.state, JSON.stringify({ pinned: false }), { mode: 0o600 });
+  assert.match(help(), /Clic extérieur\s+Masque le chat/);
+  // Une instance d'un autre code est signalée.
+  fs.writeFileSync(P.run, JSON.stringify({ pid: process.pid, build: 'ancien' }), { mode: 0o600 });
+  out = help();
+  assert.match(out, /Une ancienne version tourne encore .* « aska --restart »/);
+  fs.writeFileSync(P.run, JSON.stringify({ pid: process.pid, build: buildId() }), { mode: 0o600 });
+  assert.match(help(), /Instance\s+En cours d'exécution/);
+});

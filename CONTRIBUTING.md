@@ -75,6 +75,10 @@ xvfb-run -a npm run test:e2e  # test de bout en bout (Linux) ; sous Windows : np
 npm run check                 # lint + tests unitaires, avant chaque push
 ```
 
+Deux tests complètent celui-ci : `test/e2e/instances.js` (remplacement d'une
+ancienne instance d'Aska) et, sous Linux seulement, `npm run test:click` (vrai
+clic sur une autre fenêtre, sous Openbox ; demande `openbox`, `xdotool` et `xterm`).
+
 Le test de bout en bout lance la vraie application avec de faux CLI d'agents
 (`test/fixtures/fake-agent.js`) : il n'a besoin d'aucun compte ni d'aucune clé.
 

@@ -79,6 +79,12 @@ jobs:
       - name: Test de bout en bout (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a -s "-screen 0 1400x900x24" npm run test:e2e
+      - name: Clic extérieur, avec un vrai gestionnaire de fenêtres (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends openbox xdotool xterm
+          xvfb-run -a -s "-screen 0 1400x900x24" bash test/e2e/outside-click.sh
       - name: Test de bout en bout (Windows)
         if: runner.os == 'Windows'
         run: npm run test:e2e

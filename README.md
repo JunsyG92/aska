@@ -133,6 +133,7 @@ L'aide liste les options, les raccourcis, et surtout **l'état de chaque agent**
 | `aska` / `aska --toggle` | affiche ou masque la fenêtre (démarre l'app si besoin) |
 | `aska --hidden` | démarre en arrière-plan |
 | `aska --reload` | relit la configuration |
+| `aska --restart` | redémarre Aska (après une mise à jour) |
 | `aska --quit` | quitte |
 | `aska --help` / `--version` | aide et diagnostic / version |
 
@@ -315,12 +316,18 @@ absolu et les arguments de chaque mode (`read`, `edit`, `auto`) ; `prompt` vaut
 
 ## Dépannage
 
-Commencez par `aska --help` : la section « Agents » dit quel CLI est utilisé, ou pourquoi il manque.
+Commencez par `aska --help` : la section « Agents » dit quel CLI est utilisé, ou pourquoi il manque ; la section « État » indique si le chat se masque au clic extérieur et si une ancienne version tourne encore.
 
 <details>
 <summary><b>Problèmes connus</b></summary>
 
 <br>
+
+- **Le chat ne se masque pas quand je clique à l'extérieur, ou une nouveauté est absente.**
+  1. *Après un `git pull`*, Aska doit être relancé : tant que l'ancien processus tourne, `aska` ne fait que le rouvrir. Depuis cette version, Aska détecte et remplace tout seul une ancienne instance ; avec une version plus ancienne encore, lancez une fois `aska --quit` puis `aska`. `aska --restart` force un redémarrage.
+  2. Le chat est peut-être **épinglé** (📌 en surbrillance, `Ctrl+P` pour basculer) : un chat épinglé reste affiché. `Échap` le masque dans tous les cas.
+  3. Une ancienne configuration contient `"hideOnBlur": false` : retirez cette ligne, ou désépinglez avec `Ctrl+P` (le choix de l'interface prime).
+  4. Sous Wayland, certains bureaux n'envoient pas la perte de focus aux applications XWayland : dans ce cas, utilisez `Échap` ou le bouton ✕, et signalez le bureau concerné dans une issue.
 
 - **Ubuntu 24.04+ : « The SUID sandbox helper binary was found, but is not
   configured correctly » (arrêt par SIGTRAP)** : Ubuntu bloque le bac à sable

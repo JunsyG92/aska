@@ -12,9 +12,11 @@ const { shouldNotify, notificationContent, createNotifier } = require('./notify'
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
+const { buildId, runningInstance } = require('./build');
 const { wantsCliOutput, printCli } = require('../cli');
 
 const P = paths();
+const BUILD = buildId();
 const INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
 const INDEX_URL = pathToFileURL(INDEX).href;
 const WIN_W = 748; // taille initiale ; la fenêtre épouse ensuite le panneau
@@ -629,6 +631,23 @@ if (wantsCliOutput(argv)) {
 }
 const wants = (flag) => argv.includes(flag);
 
+const APP_FLAGS = ['--toggle', '--hidden', '--reload', '--restart', '--replaced', '--quit', '--no-autostart'];
+
+// Remplace l'instance en cours : une instance auxiliaire lui transmet « --quit »
+// (compris même par les anciennes versions), puis on se relance à sa place.
+// « --replaced » évite toute boucle si l'ancienne instance refuse de se fermer.
+function replaceRunningInstance() {
+  const { spawn } = require('child_process');
+  const root = app.getAppPath();
+  const chromiumFlags = argv.filter((a) => a.startsWith('--') && !APP_FLAGS.includes(a));
+  spawn(process.execPath, [...chromiumFlags, root, '--quit'], { detached: true, stdio: 'ignore', env: process.env }).unref();
+  setTimeout(() => {
+    const userArgs = argv.filter((a) => APP_FLAGS.includes(a) && a !== '--restart');
+    app.relaunch({ args: [...chromiumFlags, root, ...userArgs, '--replaced'] });
+    app.exit(0);
+  }, 2500);
+}
+
 // Windows : les notifications ne s'affichent que si un raccourci du menu Démarrer
 // porte l'identité de l'application (AppUserModelID). Seule l'API de raccourcis
 // d'Electron sait l'écrire : scripts/install.ps1 appelle donc « --install-shortcuts ».
@@ -669,7 +688,12 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
   }).catch((e) => done(1, `Création des raccourcis impossible : ${e.message}`));
 } else if (!app.requestSingleInstanceLock()) {
   // Une instance tourne déjà : elle reçoit nos arguments (« second-instance ») et bascule.
-  app.quit();
+  // Mais si elle exécute un autre code que le nôtre (Aska mis à jour sans avoir été
+  // relancé), ses fonctions sont périmées : on la remplace plutôt que de la rouvrir.
+  const running = runningInstance(sec.readOwnedJson, P.run);
+  const stale = !running || running.build !== BUILD;
+  if ((stale || wants('--restart')) && !wants('--quit') && !wants('--replaced')) replaceRunningInstance();
+  else app.quit();
 } else {
   app.on('second-instance', (_e, secondArgv) => {
     if (secondArgv.includes('--quit')) {
@@ -688,6 +712,10 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
 
   app.whenReady().then(() => {
     if (wants('--quit')) return app.quit();
+    // Instance active : ce fichier permet de la reconnaître (aska --help, remplacement).
+    try {
+      sec.writePrivate(P.run, JSON.stringify({ pid: process.pid, build: BUILD, version: app.getVersion(), startedAt: new Date().toISOString() }));
+    } catch { /* confort seulement */ }
     // Aucune permission web (caméra, géoloc, notifications web…) n'est accordée.
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
@@ -710,6 +738,13 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     quitting = true;
     if (current) current.handle.cancel();
   });
-  app.on('will-quit', () => globalShortcut.unregisterAll());
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
+    // On ne retire le fichier que s'il est encore le nôtre (une nouvelle instance a pu le réécrire).
+    try {
+      const r = sec.readOwnedJson(P.run);
+      if (r.data && r.data.pid === process.pid) require('fs').rmSync(P.run, { force: true });
+    } catch { /* déjà supprimé */ }
+  });
   app.on('window-all-closed', () => {}); // l'app reste résidente
 }

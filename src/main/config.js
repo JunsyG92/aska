@@ -25,6 +25,7 @@ function paths(env = process.env, home = os.homedir(), platform = process.platfo
     config: path.join(configDir, 'config.json'),
     trust: path.join(configDir, 'trusted.json'),
     state: path.join(stateDir, 'state.json'),
+    run: path.join(stateDir, 'run.json'),
     audit: path.join(stateDir, 'history.jsonl'),
     conversations: path.join(stateDir, 'conversations'),
     workspace: path.join(dataDir, 'workspace'),

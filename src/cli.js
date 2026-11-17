@@ -9,7 +9,8 @@ const path = require('path');
 const pkg = require('../package.json');
 const { paths, loadConfig } = require('./main/config');
 const { resolveAgents } = require('./main/agents');
-const { resolveBinary } = require('./main/security');
+const { resolveBinary, readOwnedJson } = require('./main/security');
+const { buildId, runningInstance } = require('./main/build');
 const { resolveLaunch, extendedPath } = require('./main/launch');
 
 const HELP_FLAGS = ['-h', '--help', '-?', '/?'];
@@ -51,12 +52,24 @@ function sandboxProblem() {
   return "Ubuntu 24.04+ : le bac à sable d'Electron n'est pas réglé, Aska ne démarrera pas. Lancez : scripts/install.sh --sandbox-fix";
 }
 
+function instanceLine(s, instance) {
+  if (!instance) return 'Aska n\'est pas lancé (aska, ou aska --hidden en arrière-plan)';
+  if (instance.build && instance.build !== buildId()) {
+    return s.red(`Une ancienne version tourne encore (pid ${instance.pid}) : lancez « aska --restart »`);
+  }
+  return `En cours d'exécution (pid ${instance.pid})`;
+}
+
 function helpText(stream = process.stdout, env = process.env) {
   const s = styles(stream);
   const P = paths(env, os.homedir());
   const { config: cfg, warnings } = loadConfig(P.config);
   const win = process.platform === 'win32';
   const shortcut = cfg.shortcut ? cfg.shortcut.replace(/Control/g, 'Ctrl').replace('Space', 'Espace') : 'aucun';
+  // Épinglé : choix fait dans l'interface (état enregistré), sinon selon « hideOnBlur ».
+  const st = readOwnedJson(P.state).data || {};
+  const pinned = typeof st.pinned === 'boolean' ? st.pinned : !cfg.hideOnBlur;
+  const instance = runningInstance(readOwnedJson, P.run);
   const row = (k, v) => `  ${s.bold(k.padEnd(20))} ${v}`;
 
   const lines = [
@@ -68,6 +81,7 @@ function helpText(stream = process.stdout, env = process.env) {
     row('--toggle', 'Affiche ou masque la fenêtre, et démarre Aska si besoin (par défaut)'),
     row('--hidden', 'Démarre en arrière-plan, sans afficher la fenêtre'),
     row('--reload', 'Relit la configuration (agents, raccourci, modèles…)'),
+    row('--restart', 'Redémarre Aska (à lancer après une mise à jour)'),
     row('--quit', 'Quitte Aska (annule la demande en cours)'),
     row('-h, --help', 'Affiche cette aide'),
     row('-v, --version', 'Affiche la version'),
@@ -83,9 +97,13 @@ function helpText(stream = process.stdout, env = process.env) {
     row('Ctrl+N  /  Ctrl+H', 'Nouvelle conversation  /  historique'),
     row('Ctrl+O', 'Dossier de travail'),
     row('Ctrl+M', 'Réduire en pastille'),
-    row('Ctrl+P', 'Épingler : rester affiché quand on clique ailleurs'),
+    row('Ctrl+P', 'Épingler / désépingler (un chat épinglé ne se masque pas au clic extérieur)'),
     row('Ctrl+Maj+C', 'Copier la dernière réponse'),
     row('Échap', 'Annuler la demande en cours, sinon masquer'),
+    '',
+    s.bold('État'),
+    row('Clic extérieur', pinned ? "Ne masque pas le chat : il est épinglé (Ctrl+P pour désépingler)" : 'Masque le chat (Ctrl+P pour l\'épingler)'),
+    row('Instance', instanceLine(s, instance)),
     '',
     s.bold('Notifications'),
     row('Quand ?', {
