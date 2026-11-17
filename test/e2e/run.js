@@ -167,7 +167,15 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForTimeout(400);
     const grown = await bounds();
     assert.ok(grown.height > 300, `hauteur avec réponse ${grown.height}`);
-    assert.equal(grown.y + grown.height, idle.y + idle.height, 'le bord bas (la saisie) ne doit pas bouger');
+    // Le bord bas (la saisie) ne bouge pas… tant qu'il y a la place au-dessus. Sur un
+    // petit écran, la fenêtre s'arrête en haut de l'écran et descend plutôt que d'en sortir.
+    const wa = await app.evaluate(({ screen, BrowserWindow }) => screen.getDisplayMatching(BrowserWindow.getAllWindows()[0].getBounds()).workArea);
+    if (idle.y + idle.height - grown.height >= wa.y) {
+      assert.equal(grown.y + grown.height, idle.y + idle.height, 'le bord bas (la saisie) ne doit pas bouger');
+    } else {
+      assert.equal(grown.y, wa.y, 'petit écran : la fenêtre s\'arrête en haut de l\'écran');
+    }
+    assert.ok(grown.y + grown.height <= wa.y + wa.height, 'la fenêtre reste entière à l\'écran');
     // Dès la première réponse, le panneau s'agrandit pour la lecture, en restant centré.
     assert.ok(await page.locator('.panel.wide').count(), 'panneau agrandi');
     // Largeur agrandie : 1040 px au plus, en laissant une marge sur les petits écrans.
