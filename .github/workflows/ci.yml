@@ -98,7 +98,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          ./scripts/install.ps1 -NoAutostart
+          # Windows PowerShell 5.1, as documented in the README (not pwsh).
+          powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -NoAutostart
+          if ($LASTEXITCODE -ne 0) { throw 'install.ps1 failed' }
+          $bytes = [IO.File]::ReadAllBytes((Join-Path $env:APPDATA 'aska\config.json'))
+          if ($bytes[0] -eq 0xEF) { throw 'config.json starts with a UTF-8 BOM' }
           $programs = [Environment]::GetFolderPath('Programs')
           if (-not (Test-Path (Join-Path $programs 'Aska.lnk'))) { throw 'Start menu shortcut missing' }
           if (-not (Test-Path (Join-Path $env:APPDATA 'aska\config.json'))) { throw 'configuration missing' }

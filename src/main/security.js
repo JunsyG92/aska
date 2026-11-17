@@ -176,22 +176,28 @@ function writePrivate(file, data) {
 
 /** Reads a JSON file only if it belongs to the user and only they can write it. */
 function readOwnedJson(file) {
-  let st;
+  // The checks and the read go through the same descriptor: the file cannot be
+  // swapped between the two (symbolic links are followed, as before).
+  let fd;
   try {
-    st = fs.lstatSync(file);
+    fd = fs.openSync(file, 'r');
   } catch {
     return { missing: true };
   }
-  if (st.isSymbolicLink()) st = fs.statSync(file);
-  if (POSIX && st.uid !== uid()) return { error: t('security.fileNotOwned', { file }) };
-  if (POSIX && st.mode & 0o022) {
-    return { error: t('security.fileWritable', { file }) };
-  }
   try {
-    // UTF-8 BOM stripped: Windows PowerShell 5.1 and Notepad add one.
-    return { data: JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) };
-  } catch (e) {
-    return { error: t('security.invalidJson', { file, error: e.message }) };
+    const st = fs.fstatSync(fd);
+    if (POSIX && st.uid !== uid()) return { error: t('security.fileNotOwned', { file }) };
+    if (POSIX && st.mode & 0o022) {
+      return { error: t('security.fileWritable', { file }) };
+    }
+    try {
+      // UTF-8 BOM stripped: Windows PowerShell 5.1 and Notepad add one.
+      return { data: JSON.parse(fs.readFileSync(fd, 'utf8').replace(/^\uFEFF/, '')) };
+    } catch (e) {
+      return { error: t('security.invalidJson', { file, error: e.message }) };
+    }
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
