@@ -358,7 +358,7 @@ test('découverte des modèles : formats de chaque CLI, entrées invalides écar
 
 // ---------- Windows : lanceurs npm (.cmd) ----------
 
-const { resolveLaunch, buildCommand, parseNpmShim } = require('../src/main/launch');
+const { resolveLaunch, buildCommand, parseNpmShim, extendedPath } = require('../src/main/launch');
 
 // Contenu exact d'un lanceur généré par npm (cmd-shim).
 const npmShim = (target) => [
@@ -446,7 +446,9 @@ test('aska --help : options, raccourcis, agents détectés et fichiers ; --versi
     assert.ok(out.includes(expected), `« ${expected} » absent de l'aide`);
   }
   assert.match(out, new RegExp(`✓ Claude\\s+${fs.realpathSync(path.join(bin, exe('claude'))).replace(/[\\.]/g, '\\$&')}`));
-  assert.match(out, /✗ Codex\s+introuvable dans le PATH\n\s+installer : npm i -g @openai\/codex/);
+  // Le PATH élargi ajoute /usr/local/bin et /opt/homebrew/bin : Codex peut y être installé sur la machine de test.
+  const codexInstalled = !WIN && ['/usr/local/bin', '/opt/homebrew/bin'].some((d) => fs.existsSync(path.join(d, 'codex')));
+  if (!codexInstalled) assert.match(out, /✗ Codex\s+introuvable dans le PATH\n\s+installer : npm i -g @openai\/codex/);
   assert.ok(!/\x1b\[/.test(out), 'pas de couleurs hors terminal');
   assert.match(execFileSync(process.execPath, [cli, '--version'], { env, encoding: 'utf8' }), /^aska \d+\.\d+\.\d+\n$/);
 });
@@ -582,4 +584,17 @@ test('aska --help : comportement du clic extérieur et état de l\'instance', ()
   assert.match(out, /Une ancienne version tourne encore .* « aska --restart »/);
   fs.writeFileSync(P.run, JSON.stringify({ pid: process.pid, build: buildId() }), { mode: 0o600 });
   assert.match(help(), /Instance\s+En cours d'exécution/);
+});
+
+// ---------- macOS ----------
+
+test('macOS : dossiers système réels (/private/etc…) et Homebrew dans le PATH', () => {
+  const dirs = sec.posixSystemDirs('darwin');
+  for (const d of ['/etc', '/private/etc', '/System', '/Library']) assert.ok(dirs.includes(d), d);
+  assert.ok(!sec.posixSystemDirs('linux').includes('/private/etc'));
+  const mac = extendedPath({ env: { PATH: '/usr/bin' }, home: '/Users/u', platform: 'darwin' }).split(':');
+  assert.ok(mac.includes('/opt/homebrew/bin'));
+  assert.ok(mac.includes('/Users/u/.local/bin'));
+  const linux = extendedPath({ env: { PATH: '/usr/bin' }, home: '/home/u', platform: 'linux' }).split(':');
+  assert.ok(!linux.includes('/opt/homebrew/bin'));
 });

@@ -71,7 +71,7 @@ npm install
 npm start                     # lance l'application
 npm run lint                  # ESLint
 npm test                      # tests unitaires
-xvfb-run -a npm run test:e2e  # test de bout en bout (Linux) ; sous Windows : npm run test:e2e
+xvfb-run -a npm run test:e2e  # test de bout en bout (Linux) ; sous macOS et Windows : npm run test:e2e
 npm run check                 # lint + tests unitaires, avant chaque push
 ```
 

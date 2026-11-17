@@ -9,6 +9,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# macOS : installation dédiée (Electron.app, LaunchAgent, Aska.app).
+[ "$(uname -s)" = Darwin ] && exec "$ROOT/scripts/install-macos.sh" "$@"
 GNOME=0; AUTOSTART=1; SANDBOX_FIX=ask
 for a in "$@"; do
   case "$a" in

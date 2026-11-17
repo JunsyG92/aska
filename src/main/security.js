@@ -134,6 +134,12 @@ function windowsSystemDirs(env = process.env) {
 }
 
 const SYSTEM_DIRS = ['/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/boot', '/var', '/sys', '/proc', '/dev', '/run', '/root', '/snap'];
+// macOS : /etc et /var sont des liens vers /private/… (le chemin réel est comparé).
+const DARWIN_DIRS = ['/private/etc', '/private/var/db', '/private/var/root', '/System', '/Library', '/Applications'];
+
+function posixSystemDirs(platform = process.platform) {
+  return platform === 'darwin' ? [...SYSTEM_DIRS, ...DARWIN_DIRS] : SYSTEM_DIRS;
+}
 
 /** Valide le dossier de travail. En mode écriture, refuse les dossiers trop larges ou système. */
 function checkWorkdir(dir, mode, home = os.homedir(), ownDirs = []) {
@@ -151,7 +157,7 @@ function checkWorkdir(dir, mode, home = os.homedir(), ownDirs = []) {
       return { error: 'Écriture refusée dans votre dossier personnel entier : choisissez un dossier de projet (Ctrl+O)' };
     }
     const inHome = within(real, realHome);
-    const system = POSIX ? SYSTEM_DIRS : windowsSystemDirs();
+    const system = POSIX ? posixSystemDirs() : windowsSystemDirs();
     if (!inHome && system.some((d) => within(real, d))) {
       return { error: `Écriture refusée dans un dossier système (${real})` };
     }
@@ -246,5 +252,5 @@ function readRecentPrompts(file, limit = 50) {
 
 module.exports = {
   resolveBinary, buildEnv, checkWorkdir, readOwnedJson, writePrivate, ensurePrivateDir,
-  TrustStore, appendAudit, readRecentPrompts, BASE_ENV, setEnvVar, within,
+  TrustStore, appendAudit, readRecentPrompts, BASE_ENV, setEnvVar, within, posixSystemDirs,
 };

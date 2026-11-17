@@ -7,12 +7,13 @@
 **Un raccourci, un champ, et vos agents IA répondent.**
 
 Claude Code, Codex, GitHub Copilot et Cursor dans une seule petite fenêtre,<br>
-pilotés par leurs CLI officiels. Linux et Windows.
+pilotés par leurs CLI officiels. Linux, macOS et Windows.
 
 [![CI](https://github.com/JunsyG92/aska/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JunsyG92/aska/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/JunsyG92/aska?include_prereleases&label=version&color=d97757)](https://github.com/JunsyG92/aska/releases)
 [![Licence MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 ![Linux](https://img.shields.io/badge/Linux-%E2%9C%93-2ea44f?logo=linux&logoColor=white)
+![macOS](https://img.shields.io/badge/macOS-%E2%9C%93-2ea44f?logo=apple&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-%E2%9C%93-2ea44f)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A5%2020-5fa04e?logo=nodedotjs&logoColor=white)
 
@@ -110,6 +111,21 @@ aska --hidden &                         # ou reconnectez-vous (démarrage automa
 
 - **Ubuntu 24.04+** : le script propose de régler le bac à sable d'Electron (mot de passe `sudo` demandé). Sans cela, Aska ne démarre pas ; `--sandbox-fix` le fait sans poser la question.
 - **Wayland** : une application ne peut pas toujours capter un raccourci global. Si `Ctrl+Alt+Espace` ne répond pas, associez la commande `aska --toggle` à un raccourci dans les paramètres clavier de votre bureau (KDE, Sway, Hyprland…) et mettez `"shortcut": false` dans la configuration.
+
+### macOS
+
+```sh
+git clone https://github.com/JunsyG92/aska.git && cd aska
+./scripts/install.sh                    # raccourci global ⌃⌥Espace (Ctrl+Option+Espace)
+aska --hidden &                         # ou rouvrez votre session (démarrage automatique)
+```
+
+Aucun `sudo` n'est nécessaire. Le script pose la commande `aska` dans `~/.local/bin`, crée `~/Applications/Aska.app` (Spotlight, Launchpad) et lance Aska à l'ouverture de session (LaunchAgent ; `--no-autostart` pour l'éviter). Aska n'a pas d'icône dans le Dock.
+
+- **PATH** : `~/.local/bin` n'est pas dans le `PATH` par défaut de macOS. Ajoutez-le : `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`.
+- **Raccourci** : les raccourcis de la fenêtre utilisent `Ctrl`, pas `⌘`. Si `⌃⌥Espace` sert déjà à changer de source de saisie (Réglages Système → Clavier → Raccourcis clavier → Sources de saisie), désactivez ce raccourci ou choisissez-en un autre avec `"shortcut"`.
+- **Notifications** : elles s'affichent au nom d'« Electron » ; autorisez-les dans Réglages Système → Notifications.
+- Les CLI installés avec Homebrew (`/opt/homebrew/bin`) sont trouvés même quand Aska est lancé hors d'un terminal.
 
 ### Windows 10 / 11
 
@@ -262,6 +278,9 @@ En résumé : **aucun shell** ne voit jamais le texte de vos demandes, l'agent n
 - Les options des CLI Copilot et Cursor évoluent vite ; si l'une change, corrigez-la
   dans la configuration sans attendre une mise à jour.
 
+**Sous macOS**
+- L'écriture est aussi refusée dans les dossiers système propres à macOS (`/System`, `/Library`, `/Applications`, `/private/etc`…), dont le chemin réel est vérifié.
+
 **Sous Windows**
 - Les CLI installés par npm sont des lanceurs `.cmd`. Aska lit le lanceur et exécute directement `node.exe` sur le script visé, sans passer par `cmd.exe`, qui interpréterait `%`, `&`, `^`… dans le texte de vos demandes. Un `.cmd` d'un autre format n'est accepté que pour des arguments sans risque ; pour un agent qui reçoit la demande en argument (Copilot, Cursor), indiquez alors son `.exe` avec `"bin"` dans la configuration.
 - Les vérifications de propriétaire et de droits (`600`) des fichiers n'existent pas sous Windows : Aska s'appuie sur la protection par défaut du profil utilisateur (`AppData`).
@@ -276,7 +295,7 @@ En résumé : **aucun shell** ne voit jamais le texte de vos demandes, l'agent n
 
 <br>
 
-Linux : `~/.config/aska/config.json` (droits `600`). Windows : `%APPDATA%\aska\config.json`. Puis `aska --reload`.
+Linux et macOS : `~/.config/aska/config.json` (droits `600`). Windows : `%APPDATA%\aska\config.json`. Puis `aska --reload`.
 
 ```json
 {
@@ -352,7 +371,7 @@ Commencez par `aska --help` : la section « Agents » dit quel CLI est utilisé,
 ## Contribuer
 
 Les contributions sont bienvenues ! Le dépôt suit **GitHub Flow** : `main` est
-protégée, chaque changement arrive par une PR relue, testée sous Linux et
+protégée, chaque changement arrive par une PR relue, testée sous Linux, macOS et
 Windows, puis fusionnée en squash. Les versions et le [CHANGELOG](CHANGELOG.md)
 sont produits automatiquement à partir des titres de PR ([Conventional Commits](https://www.conventionalcommits.org/fr/)).
 
@@ -374,7 +393,7 @@ npm install
 npm start                               # lance l'app
 npm run lint                            # ESLint
 npm test                                # tests unitaires
-xvfb-run -a npm run test:e2e            # test de bout en bout, avec de faux CLI (Windows : npm run test:e2e)
+xvfb-run -a npm run test:e2e            # test de bout en bout, avec de faux CLI (macOS, Windows : npm run test:e2e)
 ```
 
-Chaque PR lance ces contrôles sous Linux et Windows, ainsi qu'une analyse CodeQL. Les images de cette page sont produites à partir de la vraie application par `scripts/readme-media.js`.
+Chaque PR lance ces contrôles sous Linux, macOS et Windows, ainsi qu'une analyse CodeQL. Les images de cette page sont produites à partir de la vraie application par `scripts/readme-media.js`.

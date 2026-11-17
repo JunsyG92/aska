@@ -123,6 +123,7 @@ function extendedPath({ env = process.env, home = require('os').homedir(), platf
   } else {
     extra = ['.local/bin', 'bin', '.npm-global/bin', '.bun/bin', '.volta/bin'].map((d) => p.join(home, d));
     extra.push('/usr/local/bin');
+    if (platform === 'darwin') extra.push('/opt/homebrew/bin'); // Homebrew sur Apple Silicon
   }
   const parts = (get('PATH') || '').split(p.delimiter).filter((d) => d && p.isAbsolute(d));
   for (const d of extra) if (!parts.includes(d)) parts.push(d);

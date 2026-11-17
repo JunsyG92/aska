@@ -232,7 +232,8 @@ function createWindow() {
   });
   win.setMenu(null);
   if (cfg.alwaysOnTop) win.setAlwaysOnTop(true, 'floating');
-  win.setVisibleOnAllWorkspaces(true);
+  // macOS : visible aussi par-dessus une application en plein écran.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // La position choisie en déplaçant la fenêtre est conservée.
   win.on('moved', () => {
     const b = win.getBounds();
@@ -712,6 +713,8 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
 
   app.whenReady().then(() => {
     if (wants('--quit')) return app.quit();
+    // macOS : Aska est un outil d'arrière-plan, sans icône dans le Dock ni menu.
+    if (process.platform === 'darwin') app.setActivationPolicy('accessory');
     // Instance active : ce fichier permet de la reconnaître (aska --help, remplacement).
     try {
       sec.writePrivate(P.run, JSON.stringify({ pid: process.pid, build: BUILD, version: app.getVersion(), startedAt: new Date().toISOString() }));

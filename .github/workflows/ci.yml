@@ -64,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -94,6 +94,19 @@ jobs:
       - name: Test de bout en bout (Windows)
         if: runner.os == 'Windows'
         run: npm run test:e2e
+      - name: Test de bout en bout (macOS)
+        if: runner.os == 'macOS'
+        run: npm run test:e2e
+      - name: Installation (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ./scripts/install.sh --no-autostart
+          test -x "$HOME/.local/bin/aska" || { echo 'commande aska absente'; exit 1; }
+          test -x "$HOME/Applications/Aska.app/Contents/MacOS/Aska" || { echo 'Aska.app absente'; exit 1; }
+          test -f "$HOME/.config/aska/config.json" || { echo 'configuration absente'; exit 1; }
+          plutil -lint "$HOME/Applications/Aska.app/Contents/Info.plist"
+          "$HOME/.local/bin/aska" --help | tee /dev/stderr | grep -q 'Usage : aska'
+          "$HOME/.local/bin/aska" --version | grep -Eq '^aska [0-9]'
       - name: Installation (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
