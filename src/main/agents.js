@@ -27,7 +27,10 @@ const BUILTIN = {
     output: 'stream-json',
     base: ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'],
     modes: {
-      read: ['--permission-mode', 'plan'],
+      // Sans interface (-p), Claude Code ne demande pas la confiance du dossier et
+      // exécuterait les hooks de son .claude/settings.json : en lecture seule, seuls
+      // les réglages de l'utilisateur sont chargés.
+      read: ['--permission-mode', 'plan', '--setting-sources', 'user'],
       edit: ['--permission-mode', 'acceptEdits'],
       auto: ['--permission-mode', 'auto'],
     },
@@ -116,6 +119,7 @@ const DANGEROUS_ARG = [
   /bypassPermissions/i,
   /danger-full-access/i,
   /^--permission-mode/i,
+  /^--setting-sources/i,
   /^--sandbox/i,
   /^-s$/,
   /^--ask-for-approval/i,

@@ -188,7 +188,8 @@ function readOwnedJson(file) {
     return { error: `${file} est modifiable par d'autres utilisateurs (chmod 600 requis)` };
   }
   try {
-    return { data: JSON.parse(fs.readFileSync(file, 'utf8')) };
+    // BOM UTF-8 retiré : Windows PowerShell 5.1 et le Bloc-notes en ajoutent un.
+    return { data: JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) };
   } catch (e) {
     return { error: `${file} : JSON invalide (${e.message})` };
   }

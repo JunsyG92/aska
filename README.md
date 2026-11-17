@@ -178,7 +178,7 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
 
 | Mode | Claude | Codex | Copilot | Cursor |
 | --- | --- | --- | --- | --- |
-| **Lecture seule** | `--permission-mode plan` | `--sandbox read-only` | `--deny-tool shell --deny-tool write` | `--mode ask` |
+| **Lecture seule** | `--permission-mode plan --setting-sources user` | `--sandbox read-only` | `--deny-tool shell --deny-tool write` | `--mode ask` |
 | **Édition** | `--permission-mode acceptEdits` | `--sandbox workspace-write` | `--allow-tool write --deny-tool shell` | — |
 | **Autonome** (désactivé par défaut) | `--permission-mode auto` | `workspace-write` + réseau | `--allow-all-tools` + liste noire | `--force` |
 
@@ -191,6 +191,9 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
 - Cursor exige, sans interface, qu'on lui confirme la confiance dans le dossier
   (`--trust`). Aska le fait d'office dans son dossier vide ; ailleurs, il vous demande
   d'abord votre accord, même en lecture seule.
+- En lecture seule, Claude ne charge que vos réglages (`--setting-sources user`) :
+  les hooks et permissions du `.claude/settings.json` d'un projet non vérifié ne
+  s'exécutent pas.
 - Quand Claude signale des actions refusées, Aska l'affiche et propose de changer de mode.
 
 ## Sécurité
