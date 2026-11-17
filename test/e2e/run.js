@@ -80,6 +80,11 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   const shot = (name) => page.screenshot({ path: path.join(OUT, name + '.png'), omitBackground: true });
   const bounds = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
   const visible = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible());
+  // Attend que la fenêtre soit (in)visible : masquer ou montrer n'est pas instantané partout (macOS).
+  const waitVisible = async (want) => {
+    for (let i = 0; i < 40 && (await visible()) !== want; i++) await page.waitForTimeout(100);
+    assert.equal(await visible(), want, want ? 'fenêtre visible attendue' : 'fenêtre masquée attendue');
+  };
   const send = async (text) => {
     await page.fill('#input', text);
     await page.keyboard.press('Enter');
@@ -131,17 +136,14 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     const toggle = () => app.evaluate(({ app }) => app.emit('second-instance', {}, ['--toggle']));
     assert.equal(await page.getAttribute('#pin-btn', 'aria-pressed'), 'false');
     await blur();
-    await page.waitForTimeout(400);
-    assert.equal(await visible(), false);
+    await waitVisible(false);
     await toggle();
-    await page.waitForTimeout(400);
-    assert.equal(await visible(), true);
+    await waitVisible(true);
     // … sauf s'il est épinglé (Ctrl+P), choix mémorisé.
     await page.keyboard.press('Control+p');
     assert.equal(await page.getAttribute('#pin-btn', 'aria-pressed'), 'true');
     await blur();
-    await page.waitForTimeout(400);
-    assert.equal(await visible(), true);
+    await waitVisible(true);
     assert.equal(JSON.parse(fs.readFileSync(P.state, 'utf8')).pinned, true);
     await page.keyboard.press('Control+p');
     assert.equal(JSON.parse(fs.readFileSync(P.state, 'utf8')).pinned, false);
@@ -442,8 +444,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await send('Réponds pendant que je travaille ailleurs');
     await settled('running');
     await page.click('#close-btn'); // masque sans annuler
-    await page.waitForTimeout(300);
-    assert.equal(await visible(), false);
+    await waitVisible(false);
     await unreadShown();
     let notes = notifications();
     assert.equal(notes.length, 1);
@@ -451,8 +452,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     // Début de la réponse, en texte brut (le faux Claude reprend ici sa session).
     assert.equal(notes[0].body, 'Suite de la session : preload.js expose une API minimale.');
     await toggle();
-    await page.waitForTimeout(400);
-    assert.equal(await visible(), true);
+    await waitVisible(true);
     assert.equal(await page.locator('.panel.has-unread').count(), 0, 'réponse lue une fois le chat rouvert');
     assert.equal(await turns(), 8);
     // Réduit en pastille pendant le travail : notification, et la pastille signale la réponse.
@@ -473,11 +473,9 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
 
     // Échap masque la fenêtre ; une seconde instance (« aska --toggle ») la rouvre, fil intact.
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(400);
-    assert.equal(await visible(), false);
+    await waitVisible(false);
     await toggle();
-    await page.waitForTimeout(400);
-    assert.equal(await visible(), true);
+    await waitVisible(true);
     assert.equal(await turns(), 9);
 
     // ---------- onglets : plusieurs conversations, qui travaillent en même temps ----------
