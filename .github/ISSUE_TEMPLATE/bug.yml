@@ -1,62 +1,62 @@
-name: Signaler un bug
-description: Quelque chose ne fonctionne pas comme prévu.
-labels: [bug, à trier]
+name: Report a bug
+description: Something does not work as expected.
+labels: [bug, triage]
 body:
   - type: markdown
     attributes:
       value: |
-        Merci de prendre le temps de signaler ce problème.
-        **Une faille de sécurité ?** Ne l'ouvrez pas ici : suivez [SECURITY.md](../blob/main/SECURITY.md).
+        Thanks for taking the time to report this problem.
+        **A security vulnerability?** Do not open it here: follow [SECURITY.md](../blob/main/SECURITY.md).
   - type: textarea
-    id: probleme
+    id: problem
     attributes:
-      label: Que se passe-t-il ?
-      description: Ce que vous avez fait, ce que vous attendiez, ce qui s'est passé.
-      placeholder: "J'appuie sur Ctrl+Alt+Espace, la fenêtre ne s'ouvre pas…"
+      label: What happens?
+      description: What you did, what you expected, what happened.
+      placeholder: "I press Ctrl+Alt+Space, the window does not open..."
     validations:
       required: true
   - type: textarea
-    id: reproduire
+    id: steps
     attributes:
-      label: Étapes pour reproduire
+      label: Steps to reproduce
       placeholder: |
-        1. …
-        2. …
+        1. ...
+        2. ...
     validations:
       required: true
   - type: dropdown
     id: os
     attributes:
-      label: Système
+      label: Operating system
       options:
         - Linux (X11)
         - Linux (Wayland)
         - Windows 11
         - Windows 10
-        - Autre
+        - Other
     validations:
       required: true
   - type: input
     id: distribution
     attributes:
-      label: Distribution et bureau (Linux)
+      label: Distribution and desktop (Linux)
       placeholder: Ubuntu 24.04, GNOME 46
   - type: dropdown
     id: agents
     attributes:
-      label: Agent(s) concerné(s)
+      label: Agent(s) involved
       multiple: true
-      options: [Claude, Codex, Copilot, Cursor, Aucun en particulier]
+      options: [Claude, Codex, Copilot, Cursor, None in particular]
   - type: textarea
     id: diagnostic
     attributes:
-      label: Sortie de « aska --help »
-      description: Elle indique la version et l'état de chaque agent. Masquez ce qui vous semble privé.
+      label: Output of "aska --help"
+      description: It shows the version and the status of each agent. Mask anything you consider private.
       render: text
     validations:
       required: true
   - type: textarea
-    id: journal
+    id: logs
     attributes:
-      label: Messages d'erreur, captures d'écran
-      description: Message affiché par Aska, sortie du terminal… Ne collez ni clé d'API ni contenu confidentiel.
+      label: Error messages, screenshots
+      description: Message shown by Aska, terminal output... Do not paste API keys or confidential content.

@@ -1,17 +1,19 @@
 'use strict';
-// Onglets : plusieurs conversations ouvertes en même temps, chacune avec son
-// dossier de travail et sa propre demande en cours. Indépendant d'Electron.
+// Tabs: several conversations open at once, each with its own working folder
+// and its own running request. Independent of Electron.
 //
-// Un onglet = { id, conv, run, unread } où id est l'identifiant de la
-// conversation, run la demande en cours ({ id, handle }) et unread vaut true
-// quand une réponse est arrivée alors que l'onglet n'était pas sous les yeux.
+// A tab = { id, conv, run, unread } where id is the conversation id, run the
+// running request ({ id, handle }) and unread is true when an answer arrived
+// while the tab was not in view.
+
+const { t } = require('../i18n');
 
 const MAX_TABS = 8;
 
 class Tabs {
   /**
    * @param store  ConversationStore (create, load)
-   * @param max    nombre d'onglets au plus
+   * @param max    maximum number of tabs
    */
   constructor(store, { max = MAX_TABS } = {}) {
     this.store = store;
@@ -21,7 +23,7 @@ class Tabs {
   }
 
   get(id) {
-    return this.list.find((t) => t.id === id) || null;
+    return this.list.find((tab) => tab.id === id) || null;
   }
 
   active() {
@@ -29,7 +31,7 @@ class Tabs {
   }
 
   running() {
-    return this.list.filter((t) => t.run);
+    return this.list.filter((tab) => tab.run);
   }
 
   isEmpty(tab) {
@@ -50,25 +52,25 @@ class Tabs {
     return tab;
   }
 
-  /** Nouvel onglet vide, dans le dossier donné. Réutilise l'onglet actif s'il est encore vide. */
+  /** New empty tab, in the given folder. Reuses the active tab if it is still empty. */
   create(cwd) {
     const current = this.active();
     if (current && this.isEmpty(current) && current.conv.cwd === cwd) return { tab: current };
-    if (this.list.length >= this.max) return { error: `${this.max} onglets au plus : fermez-en un (Ctrl+W)` };
+    if (this.list.length >= this.max) return { error: t('errors.tooManyTabs', { max: this.max }) };
     const tab = this._add(this.store.create(cwd));
     this.activate(tab.id);
     return { tab };
   }
 
   /**
-   * Ouvre une conversation enregistrée : l'active si elle l'est déjà, sinon
-   * l'ouvre à la place de l'onglet actif s'il est vide, sinon dans un nouvel onglet.
+   * Opens a saved conversation: activates it if already open, otherwise opens it
+   * in place of the active tab if that one is empty, otherwise in a new tab.
    */
   open(convId) {
     const existing = this.get(convId);
     if (existing) return { tab: this.activate(convId) };
     const conv = this.store.load(convId);
-    if (!conv) return { error: 'Conversation introuvable' };
+    if (!conv) return { error: t('errors.conversationNotFound') };
     const current = this.active();
     if (current && this.isEmpty(current)) {
       const i = this.list.indexOf(current);
@@ -77,19 +79,19 @@ class Tabs {
       this.activeId = tab.id;
       return { tab };
     }
-    if (this.list.length >= this.max) return { error: `${this.max} onglets au plus : fermez-en un (Ctrl+W)` };
+    if (this.list.length >= this.max) return { error: t('errors.tooManyTabs', { max: this.max }) };
     const tab = this._add(conv);
     this.activate(tab.id);
     return { tab };
   }
 
   /**
-   * Ferme un onglet. Un onglet qui travaille n'est fermé que sur confirmation
-   * (force), et sa demande est alors annulée. Il reste toujours au moins un onglet.
+   * Closes a tab. A working tab is only closed once confirmed (force), and its
+   * request is then cancelled. There is always at least one tab left.
    */
   close(id, { force = false, cwd } = {}) {
     const tab = this.get(id);
-    if (!tab) return { error: 'Onglet introuvable' };
+    if (!tab) return { error: t('errors.tabNotFound') };
     if (tab.run && !force) return { needsConfirm: true };
     if (tab.run) tab.run.handle.cancel();
     const i = this.list.indexOf(tab);
@@ -103,28 +105,28 @@ class Tabs {
     return { ok: true };
   }
 
-  /** Onglet suivant ou précédent (dir = ±1), en boucle. */
+  /** Next or previous tab (dir = ±1), wrapping around. */
   cycle(dir) {
     if (this.list.length < 2) return this.active();
-    const i = this.list.findIndex((t) => t.id === this.activeId);
+    const i = this.list.findIndex((tab) => tab.id === this.activeId);
     return this.activate(this.list[(i + dir + this.list.length) % this.list.length].id);
   }
 
-  /** Une conversation supprimée de l'historique disparaît aussi de ses onglets. */
+  /** A conversation deleted from the history also leaves the tabs. */
   forget(convId, cwd) {
     const tab = this.get(convId);
     if (!tab) return { ok: true };
-    if (tab.run) return { error: 'Cette conversation est en cours : annulez sa demande avant de la supprimer' };
+    if (tab.run) return { error: t('errors.deleteRunning') };
     return this.close(convId, { cwd });
   }
 
-  /** Ce qu'on enregistre : les onglets qui ont un contenu, et l'onglet actif. */
+  /** What gets saved: the tabs that have content, and the active tab. */
   serialize() {
-    const ids = this.list.filter((t) => t.conv.turns.length).map((t) => t.id);
+    const ids = this.list.filter((tab) => tab.conv.turns.length).map((tab) => tab.id);
     return { tabs: ids, activeTab: ids.includes(this.activeId) ? this.activeId : ids[ids.length - 1] || null };
   }
 
-  /** Rouvre les onglets enregistrés ; les conversations disparues sont ignorées. */
+  /** Reopens the saved tabs; conversations that are gone are skipped. */
   restore(ids, activeId, cwd) {
     this.list = [];
     for (const id of Array.isArray(ids) ? ids.slice(0, this.max) : []) {

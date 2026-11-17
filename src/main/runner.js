@@ -1,13 +1,13 @@
 'use strict';
-// Lance un CLI d'agent sans shell, diffuse sa sortie, et garantit son arrêt
-// (annulation, délai dépassé, sortie trop volumineuse).
+// Runs an agent CLI without a shell, streams its output, and guarantees it stops
+// (cancellation, timeout, output too large).
 
 const { spawn, execFile } = require('child_process');
 
 const WIN = process.platform === 'win32';
 const { StringDecoder } = require('string_decoder');
 
-// Séquences ANSI/OSC et caractères de contrôle (hors \n et \t).
+// ANSI/OSC sequences and control characters (except \n and \t).
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]|[\x00-\x08\x0b-\x1f\x7f]/g;
 const clean = (s) => s.replace(/\r\n?/g, '\n').replace(ANSI, '');
 
@@ -23,8 +23,8 @@ function describeTool(name, input) {
 }
 
 /**
- * Interprète le format « stream-json » (une ligne JSON par événement) de
- * Claude Code et du CLI Cursor. Tolérant : tout événement inconnu est ignoré.
+ * Parses the "stream-json" format (one JSON line per event) of Claude Code
+ * and the Cursor CLI. Lenient: any unknown event is ignored.
  */
 function createStreamJsonParser(emit) {
   let buf = '';
@@ -42,7 +42,7 @@ function createStreamJsonParser(emit) {
 
   function handle(o) {
     if (!o || typeof o !== 'object') return;
-    if (o.parent_tool_use_id) return; // sortie interne d'un sous-agent
+    if (o.parent_tool_use_id) return; // internal output of a subagent
     switch (o.type) {
       case 'system':
         if (o.subtype === 'init' && o.model) emit({ type: 'meta', model: String(o.model) });
@@ -83,7 +83,7 @@ function createStreamJsonParser(emit) {
           emit({ type: 'denied', count: denials.length, tools: [...new Set(denials.map((d) => String(d.tool_name || '?')))].slice(0, 5) });
         }
         if (o.is_error || (o.subtype && o.subtype !== 'success')) {
-          emit({ type: 'error', text: short(o.result || o.subtype || 'erreur', 400) });
+          emit({ type: 'error', text: short(o.result || o.subtype || 'error', 400) });
         } else if (!shown && typeof o.result === 'string') {
           text(o.result);
         }
@@ -100,7 +100,7 @@ function createStreamJsonParser(emit) {
       try {
         handle(JSON.parse(s));
         return;
-      } catch { /* pas du JSON : affiché tel quel */ }
+      } catch { /* not JSON: shown as is */ }
     }
     text(clean(l) + '\n');
   }
@@ -152,8 +152,8 @@ function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600
       cwd,
       env,
       shell: false,
-      // Linux : groupe de processus dédié, pour tuer toute la descendance.
-      // Windows : « detached » ouvrirait une console ; l'arbre est tué par taskkill.
+      // Linux: dedicated process group, to kill all descendants.
+      // Windows: "detached" would open a console; the tree is killed by taskkill.
       detached: !WIN,
       windowsHide: true,
       windowsVerbatimArguments: verbatim,
@@ -169,19 +169,19 @@ function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600
   let treeKilled = false;
   const killGroup = (sig) => {
     if (WIN) {
-      // Windows n'a pas de signaux : on termine l'arbre de processus d'un coup.
+      // Windows has no signals: the whole process tree is terminated at once.
       if (treeKilled || !child.pid) return;
       treeKilled = true;
       const sys = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
       execFile(`${sys}\\System32\\taskkill.exe`, ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {
-        try { child.kill(); } catch { /* déjà terminé */ }
+        try { child.kill(); } catch { /* already exited */ }
       });
       return;
     }
     try {
       process.kill(-child.pid, sig);
     } catch {
-      try { child.kill(sig); } catch { /* déjà terminé */ }
+      try { child.kill(sig); } catch { /* already exited */ }
     }
   };
   const stop = (why) => {
@@ -209,7 +209,7 @@ function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600
     if (t.trim() && !reason) emit({ type: 'stderr', text: t });
   });
 
-  child.stdin.on('error', () => {}); // EPIPE si le CLI ne lit pas stdin
+  child.stdin.on('error', () => {}); // EPIPE if the CLI does not read stdin
   child.stdin.end(stdin ?? '');
 
   const done = new Promise((resolve) => {
@@ -223,7 +223,7 @@ function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600
     };
     child.on('error', (e) => finish({ ok: false, reason: 'spawn-error', error: e.message }));
     child.on('close', (code, signal) => {
-      if (reason) killGroup('SIGKILL'); // ne laisse aucun descendant derrière
+      if (reason) killGroup('SIGKILL'); // leave no descendant behind
       finish({ ok: !reason && code === 0, reason: reason || 'exit', code, signal });
     });
   });

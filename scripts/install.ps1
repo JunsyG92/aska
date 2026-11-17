@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-  Installe Aska pour l'utilisateur courant sous Windows (aucun droit administrateur requis).
+  Installs Aska for the current user on Windows (no administrator rights required).
 
 .DESCRIPTION
-  - installe les dépendances et télécharge Electron ;
-  - crée un raccourci « Aska » dans le menu Démarrer ;
-  - lance Aska en arrière-plan à l'ouverture de session (sauf -NoAutostart) ;
-  - crée la commande « aska » dans %LOCALAPPDATA%\aska\bin (à ajouter au PATH si souhaité).
+  - installs the dependencies and downloads Electron;
+  - creates an "Aska" shortcut in the Start menu;
+  - starts Aska in the background when you log in (unless -NoAutostart);
+  - creates the "aska" command in %LOCALAPPDATA%\aska\bin (add it to PATH if you like).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
@@ -20,44 +20,44 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
 # Node.js >= 20
 $node = Get-Command node -ErrorAction SilentlyContinue
-if (-not $node) { throw "Node.js (>= 20) est requis : https://nodejs.org" }
+if (-not $node) { throw "Node.js (>= 20) is required: https://nodejs.org" }
 $major = [int]((& node -p "process.versions.node.split('.')[0]").Trim())
-if ($major -lt 20) { throw "Node.js >= 20 est requis (version trouvée : $major)." }
+if ($major -lt 20) { throw "Node.js >= 20 is required (found version: $major)." }
 
-# Dépendances, puis binaire d'Electron (Electron >= 45 ne le télécharge plus à l'installation).
+# Dependencies, then the Electron binary (Electron >= 45 no longer downloads it on install).
 $Electron = Join-Path $Root 'node_modules\electron\dist\electron.exe'
 Push-Location $Root
 try {
   if (-not (Test-Path (Join-Path $Root 'node_modules\electron'))) {
     & npm install --no-fund --no-audit
-    if ($LASTEXITCODE -ne 0) { throw "npm install a échoué." }
+    if ($LASTEXITCODE -ne 0) { throw "npm install failed." }
   }
   if (-not (Test-Path $Electron)) {
-    Write-Host "Téléchargement d'Electron (environ 100 Mo)…"
+    Write-Host "Downloading Electron (about 100 MB)..."
     & node (Join-Path $Root 'node_modules\electron\install.js')
     if ($LASTEXITCODE -ne 0) {
-      throw "Le téléchargement d'Electron a échoué (accès à github.com, proxy : HTTPS_PROXY, ou miroir : ELECTRON_MIRROR)."
+      throw "Downloading Electron failed (access to github.com, proxy: HTTPS_PROXY, or mirror: ELECTRON_MIRROR)."
     }
   }
 } finally {
   Pop-Location
 }
-if (-not (Test-Path $Electron)) { throw "Electron est introuvable après installation ($Electron)." }
+if (-not (Test-Path $Electron)) { throw "Electron not found after installation ($Electron)." }
 
-# Raccourcis (menu Démarrer, démarrage automatique). Ils sont écrits par Electron,
-# seul à pouvoir y inscrire l'identité de l'application, sans laquelle Windows
-# n'affiche pas ses notifications.
+# Shortcuts (Start menu, autostart). They are written by Electron, the only one
+# able to store the application identity in them, without which Windows
+# does not show its notifications.
 $shortcutArgs = @($Root, '--install-shortcuts')
 if ($NoAutostart) { $shortcutArgs += '--no-autostart' }
 $made = & $Electron @shortcutArgs | Out-String
 if ($LASTEXITCODE -ne 0 -or $made -notmatch 'appUserModelId') {
-  throw "La création des raccourcis a échoué : $made"
+  throw "Creating the shortcuts failed: $made"
 }
 
-# Commande « aska » (aska --quit, aska --reload…).
+# "aska" command (aska --quit, aska --reload...).
 $binDir = Join-Path $env:LOCALAPPDATA 'aska\bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-# Aide et version dans le terminal ; sinon Aska est lancé sans bloquer le terminal.
+# Help and version in the terminal; otherwise Aska is started without blocking the terminal.
 $launcher = @"
 @echo off
 for %%A in (%*) do (
@@ -73,7 +73,7 @@ node "$Root\src\cli.js" %*
 "@
 Set-Content -Encoding ASCII -Path (Join-Path $binDir 'aska.cmd') -Value $launcher
 
-# Configuration par défaut (n'écrase jamais une configuration existante).
+# Default configuration (never overwrites an existing configuration).
 $confDir = Join-Path $env:APPDATA 'aska'
 $conf = Join-Path $confDir 'config.json'
 New-Item -ItemType Directory -Force -Path $confDir | Out-Null
@@ -86,13 +86,13 @@ if (-not (Test-Path $conf)) {
   "allowAutoMode": false
 }
 '@
-  # UTF-8 sans BOM : sous Windows PowerShell 5.1, « Set-Content -Encoding UTF8 » en ajoute un.
+  # UTF-8 without BOM: in Windows PowerShell 5.1, "Set-Content -Encoding UTF8" adds one.
   [IO.File]::WriteAllText($conf, $json, (New-Object Text.UTF8Encoding $false))
 }
 
 Write-Host ""
-Write-Host "Aska est installé. Lancez-le depuis le menu Démarrer, puis Ctrl+Alt+Espace."
+Write-Host "Aska is installed. Start it from the Start menu, then press Ctrl+Alt+Space."
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (-not ($userPath -split ';' | Where-Object { $_ -eq $binDir })) {
-  Write-Host "Pour la commande « aska » dans un terminal, ajoutez $binDir à votre PATH."
+  Write-Host "To use the ""aska"" command in a terminal, add $binDir to your PATH."
 }

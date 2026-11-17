@@ -1,10 +1,10 @@
-# Relecteurs demandés automatiquement sur chaque PR.
-# Ajoutez des lignes plus précises au fil de l'arrivée de mainteneurs, par exemple :
-#   /src/main/launch.js   @mainteneur-securite
-#   /.github/             @mainteneur-ci
+# Reviewers requested automatically on every PR.
+# Add more specific lines as maintainers join, for example:
+#   /src/main/launch.js   @security-maintainer
+#   /.github/             @ci-maintainer
 *                         @JunsyG92
 
-# Fichiers sensibles : sécurité de l'exécution des agents et chaîne de livraison.
+# Sensitive files: security of agent execution and the delivery pipeline.
 /src/main/security.js     @JunsyG92
 /src/main/launch.js       @JunsyG92
 /.github/                 @JunsyG92
