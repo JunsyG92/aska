@@ -1,21 +1,19 @@
 'use strict';
-// Définition des agents : comment chaque CLI est invoqué, et à quoi correspond
-// chaque mode de permission. Aucun mode n'utilise un flag « bypass » du CLI.
+// Agent definitions: how each CLI is invoked, and what each permission mode
+// maps to. No mode uses a CLI "bypass" flag.
 
-const MODES = {
-  read: {
-    label: 'Lecture seule',
-    hint: "L'agent lit et répond, sans rien modifier",
+const { t } = require('../i18n');
+
+// Labels and hints are read in the current language each time they are used.
+const modeInfo = (id) => ({
+  get label() {
+    return t(`modes.${id}.label`);
   },
-  edit: {
-    label: 'Édition',
-    hint: "L'agent peut modifier les fichiers du dossier",
+  get hint() {
+    return t(`modes.${id}.hint`);
   },
-  auto: {
-    label: 'Autonome',
-    hint: "L'agent peut modifier des fichiers et lancer des commandes",
-  },
-};
+});
+const MODES = { read: modeInfo('read'), edit: modeInfo('edit'), auto: modeInfo('auto') };
 const MODE_ORDER = ['read', 'edit', 'auto'];
 
 const BUILTIN = {
@@ -27,16 +25,16 @@ const BUILTIN = {
     output: 'stream-json',
     base: ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'],
     modes: {
-      // Sans interface (-p), Claude Code ne demande pas la confiance du dossier et
-      // exécuterait les hooks de son .claude/settings.json : en lecture seule, seuls
-      // les réglages de l'utilisateur sont chargés.
+      // Headless (-p), Claude Code does not ask whether to trust the folder and
+      // would run the hooks from its .claude/settings.json: in read-only mode, only
+      // the user's own settings are loaded.
       read: ['--permission-mode', 'plan', '--setting-sources', 'user'],
       edit: ['--permission-mode', 'acceptEdits'],
       auto: ['--permission-mode', 'auto'],
     },
     modelFlag: '--model',
     models: ['opus', 'sonnet', 'haiku'],
-    resumeFlag: '--resume', // reprise native : le CLI retrouve tout le contexte du fil
+    resumeFlag: '--resume', // native resume: the CLI restores the full thread context
     env: ['ANTHROPIC_*', 'CLAUDE_*'],
     install: 'npm i -g @anthropic-ai/claude-code',
   },
@@ -49,7 +47,7 @@ const BUILTIN = {
     base: ['exec', '--skip-git-repo-check', '--color', 'never'],
     modes: {
       read: ['--sandbox', 'read-only'],
-      // workspace-write : écritures limitées au dossier, sans réseau.
+      // workspace-write: writes limited to the folder, no network.
       edit: ['--sandbox', 'workspace-write'],
       auto: ['--sandbox', 'workspace-write', '-c', 'sandbox_workspace_write.network_access=true'],
     },
@@ -62,8 +60,8 @@ const BUILTIN = {
     label: 'Copilot',
     color: '#8250df',
     bin: ['copilot'],
-    // VS Code installe un faux « copilot » qui ne fait que proposer l'installation :
-    // on ne le retient que si aucun vrai CLI n'est trouvé.
+    // VS Code installs a fake "copilot" that only offers to install it:
+    // it is used only if no real CLI is found.
     avoidPath: /github\.copilot|\.vscode|[\\/]Code[\\/]/i,
     prompt: 'arg',
     promptFlag: '-p',
@@ -72,7 +70,7 @@ const BUILTIN = {
     modes: {
       read: ['--deny-tool', 'shell', '--deny-tool', 'write'],
       edit: ['--allow-tool', 'write', '--deny-tool', 'shell'],
-      // Copilot n'a pas de bac à sable : tout est permis sauf la liste noire.
+      // Copilot has no sandbox: everything is allowed except the deny list.
       auto: [
         '--allow-all-tools',
         '--deny-tool', 'shell(rm)',
@@ -88,16 +86,16 @@ const BUILTIN = {
     label: 'Cursor',
     color: '#3b82f6',
     bin: ['cursor-agent', 'agent'],
-    // Sans interface, le CLI Cursor exige qu'on lui confirme la confiance dans le
-    // dossier. Aska ne passe ce flag qu'après votre accord (ou dans son dossier vide).
+    // Headless, the Cursor CLI requires confirming that the folder is trusted.
+    // Aska only passes this flag after your approval (or in its own empty folder).
     trustFlag: '--trust',
     prompt: 'arg',
     output: 'stream-json',
     base: ['-p', '--output-format', 'stream-json'],
     modes: {
       read: ['--mode', 'ask'],
-      // Le CLI Cursor n'applique les modifications qu'avec --force, qui autorise
-      // aussi les commandes : il n'existe pas de mode « édition seule ».
+      // The Cursor CLI only applies changes with --force, which also allows
+      // commands: there is no "edit only" mode.
       auto: ['--force'],
     },
     modelFlag: '--model',
@@ -106,7 +104,7 @@ const BUILTIN = {
   },
 };
 
-// Flags refusés dans `extraArgs` : ils désactivent les garde-fous du CLI.
+// Flags rejected in `extraArgs`: they disable the CLI's safeguards.
 const DANGEROUS_ARG = [
   /^--dangerously/i,
   /^--allow-dangerously/i,
@@ -136,14 +134,14 @@ const isModel = (m) => typeof m === 'string' && MODEL_RE.test(m);
 
 const isStrArray = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string' && !s.includes('\0'));
 
-/** Fusionne les agents intégrés avec la config utilisateur (déjà validée en intégrité). */
+/** Merges the built-in agents with the user config (integrity already checked). */
 function resolveAgents(userAgents = {}) {
   const out = {};
   const warnings = [];
   const ids = new Set([...Object.keys(BUILTIN), ...Object.keys(userAgents || {})]);
   for (const id of ids) {
     if (!/^[a-z][a-z0-9_-]{0,31}$/.test(id)) {
-      warnings.push(`Agent ignoré : identifiant invalide « ${id} »`);
+      warnings.push(t('agents.invalidId', { id }));
       continue;
     }
     const base = BUILTIN[id];
@@ -153,15 +151,15 @@ function resolveAgents(userAgents = {}) {
     if (base) {
       agent = { ...base, id, modes: { ...base.modes }, models: [...(base.models || [])] };
     } else {
-      // Agent personnalisé : entièrement décrit par l'utilisateur.
+      // Custom agent: fully described by the user.
       if (!user.bin || !user.modes || typeof user.modes !== 'object') {
-        warnings.push(`Agent « ${id} » ignoré : "bin" et "modes" sont requis`);
+        warnings.push(t('agents.missingFields', { id }));
         continue;
       }
       const modes = {};
       for (const m of MODE_ORDER) if (isStrArray(user.modes[m])) modes[m] = user.modes[m];
       if (!Object.keys(modes).length) {
-        warnings.push(`Agent « ${id} » ignoré : aucun mode valide`);
+        warnings.push(t('agents.noValidMode', { id }));
         continue;
       }
       agent = {
@@ -188,11 +186,11 @@ function resolveAgents(userAgents = {}) {
     agent.extraArgs = [];
     if (user.extraArgs !== undefined) {
       if (!isStrArray(user.extraArgs)) {
-        warnings.push(`Agent « ${id} » : "extraArgs" doit être une liste de chaînes`);
+        warnings.push(t('agents.extraArgsType', { id }));
       } else {
         const bad = user.extraArgs.filter(isDangerousArg);
         if (bad.length) {
-          warnings.push(`Agent « ${id} » : arguments refusés (${bad.join(', ')}) — les permissions passent par les modes`);
+          warnings.push(t('agents.argsRejected', { id, args: bad.join(', ') }));
         }
         agent.extraArgs = user.extraArgs.filter((a) => !isDangerousArg(a));
       }
@@ -203,21 +201,21 @@ function resolveAgents(userAgents = {}) {
 }
 
 /**
- * Construit argv (sans shell). Le prompt est soit envoyé sur stdin, soit passé
- * comme un argument unique ; il n'est jamais interprété par un shell.
+ * Builds argv (no shell). The prompt is either sent on stdin or passed as a
+ * single argument; it is never interpreted by a shell.
  */
 function buildInvocation(agent, mode, prompt, { model, resume, trusted } = {}) {
   const modeArgs = agent.modes[mode];
-  if (!modeArgs) throw new Error(`${agent.label} ne propose pas le mode « ${MODES[mode]?.label || mode} »`);
-  if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Prompt vide');
-  if (prompt.includes('\0')) throw new Error('Prompt invalide');
+  if (!modeArgs) throw new Error(t('errors.modeNotOffered', { agent: agent.label, mode: MODES[mode]?.label || mode }));
+  if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('errors.emptyPrompt'));
+  if (prompt.includes('\0')) throw new Error(t('errors.invalidPrompt'));
 
-  if (model != null && !isModel(model)) throw new Error('Nom de modèle invalide');
-  if (resume != null && !SESSION_RE.test(resume)) throw new Error('Identifiant de session invalide');
+  if (model != null && !isModel(model)) throw new Error(t('errors.invalidModel'));
+  if (resume != null && !SESSION_RE.test(resume)) throw new Error(t('errors.invalidSession'));
 
   const argv = [...(agent.base || []), ...modeArgs];
   if (trusted && agent.trustFlag) argv.push(agent.trustFlag);
-  const chosen = model === undefined ? agent.model : model; // null = modèle par défaut du CLI
+  const chosen = model === undefined ? agent.model : model; // null = the CLI's default model
   if (chosen && agent.modelFlag) argv.push(agent.modelFlag, chosen);
   if (resume && agent.resumeFlag) argv.push(agent.resumeFlag, resume);
   argv.push(...(agent.extraArgs || []));
@@ -229,7 +227,7 @@ function buildInvocation(agent, mode, prompt, { model, resume, trusted } = {}) {
     argv.push(...(agent.tail || []));
     logArgv = [...argv];
   } else {
-    // Un prompt commençant par « - » ne doit pas être lu comme une option.
+    // A prompt starting with "-" must not be read as an option.
     const safePrompt = prompt.startsWith('-') ? ` ${prompt}` : prompt;
     logArgv = [...argv];
     if (agent.promptFlag) {

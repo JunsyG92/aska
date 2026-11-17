@@ -1,161 +1,176 @@
-# Contribuer à Aska
+# Contributing to Aska
 
-Merci de votre intérêt ! Ce guide décrit comment le projet est organisé, pour que
-chaque contribution arrive sur `main` de la même façon : relue, testée, et versionnée.
+Thanks for your interest! This guide describes how the project is organized, so that
+every contribution reaches `main` the same way: reviewed, tested, and versioned.
 
-## En bref
+## At a glance
 
-1. Créez une branche depuis `main` : `feat/notifications-son`, `fix/windows-lanceur`…
-2. Codez, avec des tests. Vérifiez en local : `npm run check`.
-3. Ouvrez une PR vers `main` avec un titre [Conventional Commits](https://www.conventionalcommits.org/fr/) :
-   `feat(notifications): son facultatif`.
-4. La CI doit être verte et un relecteur (voir `CODEOWNERS`) doit approuver.
-5. La PR est fusionnée en **squash** : un commit par PR sur `main`, avec le titre de la PR.
-6. La version et le CHANGELOG sont mis à jour automatiquement (voir [Versions](#versions-et-releases)).
+1. Create a branch from `main`: `feat/notification-sound`, `fix/windows-launcher`...
+2. Write the code, with tests. Check locally: `npm run check`.
+3. Open a PR to `main` with a [Conventional Commits](https://www.conventionalcommits.org/) title:
+   `feat(notifications): optional sound`.
+4. CI must be green and a reviewer (see `CODEOWNERS`) must approve.
+5. The PR is **squash**-merged: one commit per PR on `main`, with the PR title.
+6. The version and the CHANGELOG are updated automatically (see [Releases](#versions-and-releases)).
 
 ## Branches
 
-Le projet suit **GitHub Flow** : une seule branche permanente, `main`, toujours
-stable et protégée. Tout le reste passe par des branches courtes et des PR.
+The project follows **GitHub Flow**: a single permanent branch, `main`, always
+stable and protected. Everything else goes through short-lived branches and PRs.
 
-| Branche | Rôle |
+| Branch | Role |
 | --- | --- |
-| `main` | Branche par défaut, protégée : pas de push direct, pas de force-push, historique linéaire. |
-| `feat/…`, `fix/…`, `docs/…`, `refactor/…`, `ci/…`, `chore/…` | Branches de travail, une par sujet, supprimées après fusion. |
-| `release-please--…` | Créée par le robot de release, ne pas modifier à la main. |
+| `main` | Default branch, protected: no direct push, no force-push, linear history. |
+| `feat/...`, `fix/...`, `docs/...`, `refactor/...`, `ci/...`, `chore/...` | Work branches, one per topic, deleted after merge. |
+| `release-please--...` | Created by the release bot, do not edit by hand. |
 
-Gardez les branches courtes (quelques jours) et rebasez-les sur `main` si elles
-divergent : la protection exige une branche à jour avant fusion.
+Keep branches short-lived (a few days) and rebase them on `main` if they
+diverge: the protection requires an up-to-date branch before merging.
 
-## Titres de PR et messages de commit
+## PR titles and commit messages
 
-Le titre de la PR devient le message du commit sur `main`, et c'est lui qui
-détermine le prochain numéro de version et la ligne du CHANGELOG. La CI vérifie
-son format : `<type>(<portée facultative>): <description>`.
+The PR title becomes the commit message on `main`, and it is what
+determines the next version number and the CHANGELOG line. CI checks
+its format: `<type>(<optional scope>): <description>`.
 
-| Type | Quand | Effet sur la version |
+| Type | When | Effect on the version |
 | --- | --- | --- |
-| `feat` | nouvelle fonctionnalité | version mineure |
-| `fix` | correction de bug | correctif |
-| `perf` | amélioration de performance | correctif |
-| `refactor` | réorganisation sans changement de comportement | aucun |
-| `docs` | documentation | aucun |
-| `test` | tests seuls | aucun |
-| `build` | dépendances, outillage | aucun |
-| `ci` | GitHub Actions | aucun |
-| `chore` | divers | aucun |
-| `revert` | annulation d'un changement | correctif |
+| `feat` | new feature | minor version |
+| `fix` | bug fix | patch |
+| `perf` | performance improvement | patch |
+| `refactor` | restructuring without behavior change | none |
+| `docs` | documentation | none |
+| `test` | tests only | none |
+| `build` | dependencies, tooling | none |
+| `ci` | GitHub Actions | none |
+| `chore` | miscellaneous | none |
+| `revert` | reverting a change | patch |
 
-Un changement **incompatible** (configuration renommée, comportement par défaut
-modifié…) prend un `!` : `feat(config)!: renomme "notify" en "notifications"`, et
-la description de la PR explique la migration.
+A **breaking** change (renamed configuration, changed default
+behavior...) takes a `!`: `feat(config)!: rename "notify" to "notifications"`, and
+the PR description explains the migration.
 
-Portées courantes : `ui`, `agents`, `notifications`, `historique`, `modeles`,
-`securite`, `windows`, `linux`, `install`, `ci`, `docs`.
+Common scopes: `ui`, `agents`, `notifications`, `history`, `models`,
+`security`, `windows`, `linux`, `install`, `ci`, `docs`.
 
-## Relecture
+## Review
 
-- Au moins **une approbation** est requise ; `CODEOWNERS` désigne les relecteurs.
-- Une nouvelle modification après approbation annule l'approbation (relecture à refaire).
-- Toutes les conversations de relecture doivent être résolues avant la fusion.
-- Les changements qui touchent au **lancement des agents** (`src/main/launch.js`,
-  `runner.js`, `security.js`), aux **modes de permission** ou à l'**environnement
-  transmis** demandent une attention particulière : expliquez-les dans la PR.
+- At least **one approval** is required; `CODEOWNERS` designates the reviewers.
+- A new change after approval dismisses the approval (review needed again).
+- All review conversations must be resolved before merging.
+- Changes that touch **agent launching** (`src/main/launch.js`,
+  `runner.js`, `security.js`), **permission modes** or the **environment
+  passed on** need particular care: explain them in the PR.
 
-## Développer
+## Development
 
-Prérequis : Node.js ≥ 20 (`.nvmrc` indique la version de la CI).
+Requirements: Node.js ≥ 20 (`.nvmrc` gives the CI version).
 
 ```sh
 npm install
-npm start                     # lance l'application
+npm start                     # runs the application
 npm run lint                  # ESLint
-npm test                      # tests unitaires
-xvfb-run -a npm run test:e2e  # test de bout en bout (Linux) ; sous macOS et Windows : npm run test:e2e
-npm run check                 # lint + tests unitaires, avant chaque push
+npm test                      # unit tests
+xvfb-run -a npm run test:e2e  # end-to-end test (Linux); on macOS and Windows: npm run test:e2e
+npm run check                 # lint + unit tests, before every push
 ```
 
-Deux tests complètent celui-ci : `test/e2e/instances.js` (remplacement d'une
-ancienne instance d'Aska) et, sous Linux seulement, `npm run test:click` (vrai
-clic sur une autre fenêtre, sous Openbox ; demande `openbox`, `xdotool` et `xterm`).
+Two tests complement it: `test/e2e/instances.js` (replacing an old Aska
+instance) and, on Linux only, `npm run test:click` (a real click on another
+window, under Openbox; needs `openbox`, `xdotool` and `xterm`).
 
-Le test de bout en bout lance la vraie application avec de faux CLI d'agents
-(`test/fixtures/fake-agent.js`) : il n'a besoin d'aucun compte ni d'aucune clé.
+The end-to-end test runs the real application with fake agent CLIs
+(`test/fixtures/fake-agent.js`): it needs no account and no key.
 
-Si votre changement modifie l'interface, régénérez les images du README :
+If your change modifies the UI, regenerate the README images:
 
 ```sh
 xvfb-run -a -s "-screen 0 3200x2000x24" node scripts/readme-media.js
 ```
 
-### Règles du code
+### Code rules
 
-- **Jamais de shell** pour lancer un agent : arguments en tableau, demande sur
-  stdin ou en argument unique (voir `src/main/launch.js`).
-- L'interface reste en bac à sable : pas de Node dans `src/renderer/`, pas
-  d'`innerHTML` sur du contenu venant d'un agent.
-- Tout appel de l'interface est revalidé dans le processus principal.
-- Textes de l'interface et documentation en français.
-- Une correction de bug arrive avec le test qui l'aurait détecté.
+- **Never a shell** to launch an agent: arguments as an array, request on
+  stdin or as a single argument (see `src/main/launch.js`).
+- The UI stays sandboxed: no Node in `src/renderer/`, no
+  `innerHTML` on content coming from an agent.
+- Every call from the UI is revalidated in the main process.
+- Documentation in English; UI text goes through the translations (see below).
+- A bug fix comes with the test that would have caught it.
 
-## Intégration continue
+### Translations
 
-Chaque PR lance :
+Every user-visible string (window, notifications, errors, `aska --help`)
+lives in `src/i18n/`: `en.js` is the reference, `fr.js` the French version.
+Code calls `t('namespace.key', { placeholder })`; the renderer gets the `ui`
+subtree with the state. Dictionaries hold plain strings only: `{name}`
+placeholders, and plurals as `{ one, other }` objects.
 
-| Contrôle | Contenu |
+- New string: add the key to **every** dictionary.
+- New language: add `src/i18n/xx.js` with the same keys as `en.js` and
+  register it in `src/i18n/index.js`.
+- The tests enforce it: same keys and same placeholders in every language,
+  and no em dash.
+- Texts sent to the agents (conversation context) stay in English.
+
+## Continuous integration
+
+Every PR runs:
+
+| Check | Content |
 | --- | --- |
 | **Lint** | ESLint |
-| **Titre de la PR** | format Conventional Commits |
-| **Tests (ubuntu-latest)** | tests unitaires, test de bout en bout |
-| **Tests (windows-latest)** | tests unitaires, test de bout en bout, installation |
-| **CI** | résumé des contrôles ci-dessus : c'est le contrôle obligatoire |
-| **CodeQL** | analyse de sécurité du code |
+| **PR title** | Conventional Commits format |
+| **Tests (ubuntu-latest)** | unit tests, end-to-end test |
+| **Tests (windows-latest)** | unit tests, end-to-end test, installation |
+| **CI** | summary of the checks above: this is the required check |
+| **CodeQL** | code security analysis |
 
-Les captures d'écran du test de bout en bout sont téléchargeables dans l'onglet
-**Actions**, sur chaque exécution. Dependabot ouvre chaque semaine les mises à
-jour de dépendances et d'actions (toutes épinglées sur un commit précis).
+Screenshots from the end-to-end test can be downloaded from the
+**Actions** tab, on each run. Dependabot opens dependency and action updates
+every week (all pinned to a specific commit).
 
-## Versions et releases
+## Versions and releases
 
-Le projet suit le [versionnement sémantique](https://semver.org/lang/fr/). Avant
-la 1.0, un changement incompatible incrémente la version mineure.
+The project follows [semantic versioning](https://semver.org/). Before
+1.0, a breaking change bumps the minor version.
 
-Les releases sont automatisées par [release-please](https://github.com/googleapis/release-please) :
+Releases are automated by [release-please](https://github.com/googleapis/release-please):
 
-1. À chaque fusion sur `main`, une PR « chore(main): release x.y.z » est créée ou
-   mise à jour, avec le CHANGELOG et le numéro de version dans `package.json`.
-2. Quand on veut publier, un mainteneur fusionne cette PR.
-3. Le tag `vX.Y.Z` et la release GitHub sont créés, avec l'archive des sources et
-   son empreinte SHA-256.
+1. On every merge to `main`, a "chore(main): release x.y.z" PR is created or
+   updated, with the CHANGELOG and the version number in `package.json`.
+2. When we want to publish, a maintainer merges that PR.
+3. The `vX.Y.Z` tag and the GitHub release are created, with the source archive and
+   its SHA-256 checksum.
 
-Les tags `v*` sont protégés : seuls la release automatique et les administrateurs
-peuvent les créer.
+`v*` tags are protected: only the automated release and administrators
+can create them.
 
-> **Jeton de release (facultatif).** Avec le jeton par défaut de GitHub Actions,
-> la CI ne se lance pas sur la PR de release : seul un administrateur peut alors la
-> fusionner. Pour qu'elle soit testée comme les autres, créez un jeton à
-> granularité fine (droits *Contents* et *Pull requests* en écriture sur ce
-> dépôt) et enregistrez-le comme secret `RELEASE_TOKEN`.
+> **Release token (optional).** With the default GitHub Actions token,
+> CI does not run on the release PR: only an administrator can then
+> merge it. To have it tested like the others, create a fine-grained
+> token (*Contents* and *Pull requests* write permissions on this
+> repository) and save it as the `RELEASE_TOKEN` secret.
 
-## Mise en place du dépôt (mainteneurs)
+## Repository setup (maintainers)
 
-La protection de `main`, la fusion en squash, les alertes de sécurité et les
-étiquettes se règlent une fois, avec un compte administrateur :
+`main` protection, squash merging, security alerts and
+labels are configured once, with an administrator account:
 
 ```sh
 gh auth login
-./scripts/setup-github.sh --dry-run   # affiche ce qui sera fait
+./scripts/setup-github.sh --dry-run   # shows what will be done
 ./scripts/setup-github.sh
 ```
 
-Les règles de protection sont aussi dans `.github/rulesets/` : elles peuvent être
-importées à la main (Settings → Rules → Rulesets → Import a ruleset).
+The protection rules are also in `.github/rulesets/`: they can be
+imported by hand (Settings → Rules → Rulesets → Import a ruleset).
 
-## Signaler un problème
+## Reporting a problem
 
-- Bug ou idée : ouvrez une issue avec le modèle correspondant.
-- Faille de sécurité : **jamais en public**, voir [SECURITY.md](SECURITY.md).
+- Bug or idea: open an issue with the matching template.
+- Security flaw: **never in public**, see [SECURITY.md](SECURITY.md).
 
-En contribuant, vous acceptez que votre contribution soit publiée sous la
-[licence MIT](LICENSE) du projet, et vous vous engagez à respecter le
-[code de conduite](CODE_OF_CONDUCT.md).
+By contributing, you agree that your contribution is published under the
+project's [MIT license](LICENSE), and you commit to following the
+[code of conduct](CODE_OF_CONDUCT.md).

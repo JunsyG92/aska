@@ -1,29 +1,29 @@
-name: Proposer une amélioration
-description: Une idée pour rendre Aska plus utile.
-labels: [amélioration, à trier]
+name: Suggest an improvement
+description: An idea to make Aska more useful.
+labels: [enhancement, triage]
 body:
   - type: textarea
-    id: besoin
+    id: need
     attributes:
-      label: Quel besoin ?
-      description: Le problème que vous rencontrez aujourd'hui, avant la solution.
-      placeholder: "Quand je travaille sur deux projets, je dois rechoisir le dossier à chaque fois…"
+      label: What need?
+      description: The problem you run into today, before the solution.
+      placeholder: "When I work on two projects, I have to pick the folder again every time..."
     validations:
       required: true
   - type: textarea
-    id: proposition
+    id: proposal
     attributes:
-      label: Proposition
-      description: Ce que vous imaginez, comportement et interface.
+      label: Proposal
+      description: What you have in mind, behavior and UI.
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives envisagées
+      label: Alternatives considered
   - type: checkboxes
     id: contribution
     attributes:
       label: Contribution
       options:
-        - label: Je suis prêt·e à proposer une PR pour cette amélioration.
+        - label: I am willing to open a PR for this improvement.

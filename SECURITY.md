@@ -1,46 +1,46 @@
-# Politique de sécurité
+# Security policy
 
-Aska lance des agents IA capables de lire et de modifier des fichiers, et de
-lancer des commandes. La sécurité de ce lancement est au cœur du projet : merci
-de nous aider à la garder solide.
+Aska launches AI agents able to read and modify files, and to
+run commands. The security of that launch is at the heart of the project: thanks
+for helping us keep it solid.
 
-## Signaler une faille
+## Reporting a vulnerability
 
-**N'ouvrez pas d'issue publique.** Utilisez le signalement privé de GitHub :
+**Do not open a public issue.** Use GitHub's private reporting:
 [Security → Report a vulnerability](https://github.com/JunsyG92/aska/security/advisories/new).
 
-Indiquez si possible :
+If possible, include:
 
-- la version (`aska --version`), le système et l'agent concerné ;
-- les étapes pour reproduire, et ce qu'un attaquant peut obtenir ;
-- une proposition de correction, si vous en avez une.
+- the version (`aska --version`), the operating system and the agent involved;
+- the steps to reproduce, and what an attacker can gain;
+- a proposed fix, if you have one.
 
-## Ce qui nous intéresse en priorité
+## What we care about most
 
-- Un texte de demande, une réponse d'agent ou un fichier de projet qui mène à
-  l'exécution d'une commande non voulue (injection de shell, d'options, `cmd.exe`).
-- Un contournement des modes de permission (écriture en lecture seule, mode
-  autonome sans `allowAutoMode`, écriture hors du dossier autorisé).
-- Une fuite de variables d'environnement ou de jetons vers un agent qui ne
-  devrait pas les recevoir.
-- Du contenu d'agent qui exécute du code dans l'interface (HTML, liens, navigation).
-- Un binaire d'agent ou une configuration qu'un autre utilisateur de la machine
-  pourrait remplacer.
+- A request text, an agent answer or a project file that leads to
+  running an unintended command (shell, option or `cmd.exe` injection).
+- A bypass of the permission modes (writing in read-only, autonomous
+  mode without `allowAutoMode`, writing outside the allowed folder).
+- A leak of environment variables or tokens to an agent that
+  should not receive them.
+- Agent content that runs code in the UI (HTML, links, navigation).
+- An agent binary or a configuration that another user of the machine
+  could replace.
 
-Les failles des CLI d'agents eux-mêmes (Claude Code, Codex, Copilot, Cursor) sont
-à signaler à leurs éditeurs ; prévenez-nous aussi si Aska peut en limiter l'effet.
+Vulnerabilities in the agent CLIs themselves (Claude Code, Codex, Copilot, Cursor) should be
+reported to their vendors; let us know too if Aska can limit their impact.
 
-## Notre engagement
+## Our commitment
 
-| Étape | Délai visé |
+| Step | Target time |
 | --- | --- |
-| Accusé de réception | 3 jours ouvrés |
-| Première évaluation | 7 jours |
-| Correctif pour une faille grave | 30 jours |
+| Acknowledgment | 3 business days |
+| Initial assessment | 7 days |
+| Fix for a serious vulnerability | 30 days |
 
-Nous publions un avis de sécurité avec la version corrigée, et nous créditons
-l'auteur du signalement s'il le souhaite.
+We publish a security advisory with the fixed version, and we credit
+the reporter if they wish.
 
-## Versions prises en charge
+## Supported versions
 
-Seule la dernière version publiée reçoit des correctifs de sécurité.
+Only the latest published version receives security fixes.

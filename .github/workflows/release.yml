@@ -1,7 +1,7 @@
-# Versionnement automatique (release-please) : à chaque fusion sur main, une PR
-# « chore(main): release x.y.z » est tenue à jour avec le CHANGELOG et le numéro
-# de version, déduits des titres de PR (Conventional Commits). La fusionner crée
-# le tag vX.Y.Z et la release GitHub.
+# Automatic versioning (release-please): on every merge to main, a
+# "chore(main): release x.y.z" PR is kept up to date with the CHANGELOG and the
+# version number, derived from PR titles (Conventional Commits). Merging it creates
+# the vX.Y.Z tag and the GitHub release.
 name: Release
 
 on:
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   release-please:
-    name: Préparer la release
+    name: Prepare the release
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -32,14 +32,14 @@ jobs:
       - id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          # Jeton facultatif (voir CONTRIBUTING.md) : avec le jeton par défaut, la CI
-          # ne se lance pas sur la PR de release, que seul un administrateur peut alors fusionner.
+          # Optional token (see CONTRIBUTING.md): with the default token, CI does not
+          # run on the release PR, which only an administrator can then merge.
           token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
   archive:
-    name: Joindre l'archive à la release
+    name: Attach the archive to the release
     needs: release-please
     if: needs.release-please.outputs.created == 'true'
     runs-on: ubuntu-latest
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-please.outputs.tag }}
-      - name: Archive et empreinte
+      - name: Archive and checksum
         env:
           TAG: ${{ needs.release-please.outputs.tag }}
           GH_TOKEN: ${{ github.token }}

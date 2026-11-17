@@ -1,6 +1,6 @@
 'use strict';
-// Barre d'onglets : une conversation par onglet. Construite sans innerHTML ;
-// les actions (activer, fermer, ouvrir) sont confiées à app.js.
+// Tab bar: one conversation per tab. Built without innerHTML; the actions
+// (activate, close, open) are handed to app.js, along with the translations (t).
 
 (function () {
   const el = (tag, cls, text) => {
@@ -23,7 +23,7 @@
       if (e.target.closest('.tab-close')) handlers.onClose(tab.dataset.id);
       else handlers.onActivate(tab.dataset.id);
     });
-    // Clic du milieu : fermer, comme dans un navigateur.
+    // Middle click: close, as in a browser.
     nav.addEventListener('auxclick', (e) => {
       const tab = e.target.closest('.tab');
       if (tab && e.button === 1) {
@@ -32,36 +32,38 @@
       }
     });
     nav.addEventListener('mousedown', (e) => {
-      if (e.button === 1) e.preventDefault(); // pas de défilement automatique
+      if (e.button === 1) e.preventDefault(); // no autoscroll
     });
   }
 
   /** @param list  [{ id, title, color, running, unread, active }] */
   function update(list) {
     if (!nav) return;
-    // Un seul onglet : pas de barre, l'interface reste celle d'un simple chat.
+    const t = handlers.t || ((key) => key);
+    // A single tab: no bar, the interface stays a simple chat.
     nav.hidden = list.length < 2;
     nav.replaceChildren(
-      ...list.map((t, i) => {
-        const b = el('div', 'tab' + (t.active ? ' active' : '') + (t.running ? ' running' : '') + (t.unread ? ' unread' : ''));
-        b.dataset.id = t.id;
+      ...list.map((tab, i) => {
+        const title = tab.title || t('newConversation');
+        const b = el('div', 'tab' + (tab.active ? ' active' : '') + (tab.running ? ' running' : '') + (tab.unread ? ' unread' : ''));
+        b.dataset.id = tab.id;
         b.setAttribute('role', 'tab');
-        b.setAttribute('aria-selected', String(t.active));
-        b.title = `${t.title || 'Nouvelle conversation'}${i < 9 ? ` (Ctrl+${i + 1})` : ''}`;
+        b.setAttribute('aria-selected', String(tab.active));
+        b.title = `${title}${i < 9 ? ` (Ctrl+${i + 1})` : ''}`;
         const dot = el('span', 'tab-dot');
-        if (t.color) dot.style.setProperty('--c', t.color);
+        if (tab.color) dot.style.setProperty('--c', tab.color);
         const close = el('span', 'tab-close', '×');
         close.setAttribute('role', 'button');
-        close.setAttribute('aria-label', 'Fermer l’onglet');
-        close.title = t.running ? 'Fermer (annule la demande en cours)' : 'Fermer (Ctrl+W)';
-        b.append(dot, el('span', 'tab-title', t.title || 'Nouvelle conversation'), close);
+        close.setAttribute('aria-label', t('tabs.close'));
+        close.title = t(tab.running ? 'tabs.closeRunningTitle' : 'tabs.closeTitle');
+        b.append(dot, el('span', 'tab-title', title), close);
         return b;
       }),
       (() => {
         const plus = el('button', 'tab-new', '+');
         plus.type = 'button';
-        plus.title = 'Nouvel onglet (Ctrl+T)';
-        plus.setAttribute('aria-label', 'Nouvel onglet');
+        plus.title = t('tabs.newTabTitle');
+        plus.setAttribute('aria-label', t('tabs.newTab'));
         return plus;
       })()
     );

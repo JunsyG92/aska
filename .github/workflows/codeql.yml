@@ -1,4 +1,4 @@
-# Analyse de sécurité du code (CodeQL), sur chaque PR et chaque semaine.
+# Code security analysis (CodeQL), on every PR and every week.
 name: CodeQL
 
 on:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyse (JavaScript)
+    name: Analyze (JavaScript)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

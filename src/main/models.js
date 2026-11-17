@@ -1,15 +1,16 @@
 'use strict';
-// Découverte des modèles proposés par chaque CLI, pour offrir une vraie liste
-// au lieu d'une saisie à la main. Chaque source est lue de façon tolérante :
-// si le format change, on retombe simplement sur la liste intégrée.
+// Discovery of the models offered by each CLI, to show a real list instead of
+// manual input. Each source is parsed leniently: if the format changes, we
+// simply fall back to the built-in list.
 
 const os = require('os');
 const path = require('path');
 const { isModel } = require('./agents');
 const { readOwnedJson } = require('./security');
 const { clean } = require('./runner');
+const { t } = require('../i18n');
 
-/** « id - Libellé (current) », une ligne par modèle (cursor-agent --list-models). */
+/** "id - Label (current)", one line per model (cursor-agent --list-models). */
 function parseModelLines(text) {
   const out = [];
   for (const raw of clean(text).split('\n')) {
@@ -21,7 +22,7 @@ function parseModelLines(text) {
   return out;
 }
 
-/** Valeurs entre guillemets dans la description de l'option --model d'une aide (copilot help, claude --help). */
+/** Quoted values in the description of the --model option in a help text (copilot help, claude --help). */
 function parseHelpOption(text, flag = '--model') {
   const lines = clean(text).split('\n');
   const esc = flag.replace(/[-]/g, '\\-');
@@ -37,7 +38,7 @@ function parseHelpOption(text, flag = '--model') {
   return out;
 }
 
-/** Catalogue mis en cache par Codex dans son dossier de configuration. */
+/** Catalog cached by Codex in its config folder. */
 function parseCodexCache(data) {
   const list = data && Array.isArray(data.models) ? data.models : Array.isArray(data) ? data : [];
   const out = [];
@@ -52,7 +53,7 @@ function parseCodexCache(data) {
   return out;
 }
 
-// Où trouver les modèles de chaque agent intégré.
+// Where to find the models of each built-in agent.
 const SOURCES = {
   claude: { args: ['--help'], parse: (t) => parseHelpOption(t) },
   copilot: { args: ['help'], parse: (t) => parseHelpOption(t) },
@@ -64,7 +65,7 @@ const SOURCES = {
 };
 
 /**
- * @param runCommand (args) => Promise<{ ok, text }> : exécute le CLI de l'agent (sans shell)
+ * @param runCommand (args) => Promise<{ ok, text }>: runs the agent's CLI (no shell)
  * @returns {Promise<{ models: {id,label}[], error: string|null }>}
  */
 async function discoverModels(agentId, runCommand, env = process.env) {
@@ -77,7 +78,7 @@ async function discoverModels(agentId, runCommand, env = process.env) {
     }
     const res = await runCommand(src.args);
     const models = src.parse(res.text || '').slice(0, 400);
-    return { models, error: models.length || res.ok ? null : 'le CLI n\'a pas renvoyé sa liste de modèles' };
+    return { models, error: models.length || res.ok ? null : t('models.noList') };
   } catch (e) {
     return { models: [], error: e.message };
   }

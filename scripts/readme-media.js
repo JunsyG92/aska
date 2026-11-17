@@ -1,11 +1,11 @@
 'use strict';
-// Régénère les images du README (docs/*.png et docs/demo.gif) à partir de la
-// vraie application, pilotée avec de faux agents qui jouent un scénario.
+// Regenerates the README images (docs/*.png and docs/demo.gif) from the
+// real application, driven by fake agents playing a scenario.
 //
 //   xvfb-run -a -s "-screen 0 3200x2000x24" node scripts/readme-media.js
 //
-// Prérequis : Linux, ffmpeg, python3 avec Pillow (assemblage du GIF).
-// ASKA_E2E_NO_SANDBOX=1 si le script est lancé en root.
+// Requirements: Linux, ffmpeg, python3 with Pillow (GIF assembly).
+// ASKA_E2E_NO_SANDBOX=1 when the script runs as root.
 
 const fs = require('fs');
 const os = require('os');
@@ -16,13 +16,13 @@ const { _electron: electron } = require('playwright');
 const ROOT = path.join(__dirname, '..');
 const DOCS = path.join(ROOT, 'docs');
 
-// ---------- faux agents : un scénario crédible, joué en flux ----------
+// ---------- fake agents: a believable scenario, streamed ----------
 
 const AGENT_SCRIPT = String.raw`
 const args = process.argv.slice(2);
 const name = process.env.DEMO_AGENT;
 if (args[0] === '--help' || args[0] === 'help') {
-  console.log("  --model <model>  Modèle (e.g. 'fable', 'opus', or 'sonnet')");
+  console.log("  --model <model>  Model (e.g. 'fable', 'opus', or 'sonnet')");
   process.exit(0);
 }
 if (args[0] === '--list-models') {
@@ -30,41 +30,41 @@ if (args[0] === '--list-models') {
   process.exit(0);
 }
 const ANSWERS = [
-  [/sécurité|securite/i, [
-    'Les contrôles sont faits **côté serveur**, dans ' + '\x60src/api/auth.ts\x60' + ' :',
+  [/security/i, [
+    'Checks are done **server-side**, in ' + '\x60src/api/auth.ts\x60' + ':',
     '',
-    '| Contrôle | État | Détail |',
+    '| Check | Status | Detail |',
     '| :-- | :-: | :-- |',
-    '| Jeton de session | ✓ | signé, expire après 1 h |',
-    '| Limite de débit | ✓ | 60 requêtes / minute |',
-    '| Journal des accès | à faire | prévu dans ' + '\x60audit.ts\x60' + ' |',
+    '| Session token | ✓ | signed, expires after 1 h |',
+    '| Rate limit | ✓ | 60 requests / minute |',
+    '| Access log | to do | planned in ' + '\x60audit.ts\x60' + ' |',
     '',
-    '> Rien de bloquant, mais le journal des accès manque encore.',
+    '> Nothing blocking, but the access log is still missing.',
   ]],
   [/test/i, [
-    'Voici un test pour ' + '\x60parseDate\x60' + ' :',
+    'Here is a test for ' + '\x60parseDate\x60' + ':',
     '',
     '\x60\x60\x60ts',
-    "test('parseDate accepte le format ISO', () => {",
+    "test('parseDate accepts the ISO format', () => {",
     "  expect(parseDate('2026-11-16')).toEqual(new Date(2026, 10, 16));",
     '});',
     '\x60\x60\x60',
   ]],
   [/./, [
-    '## En trois points',
+    '## In three points',
     '',
-    '1. **Une API** en TypeScript, dans ' + '\x60src/api/\x60' + ', qui expose les commandes et les clients.',
-    '2. **Un tableau de bord** React qui consomme cette API.',
-    '3. **Des tâches planifiées** pour les relances et les exports.',
+    '1. **An API** in TypeScript, in ' + '\x60src/api/\x60' + ', exposing orders and customers.',
+    '2. **A dashboard** in React that consumes this API.',
+    '3. **Scheduled jobs** for reminders and exports.',
     '',
-    'Le point d’entrée est ' + '\x60src/server.ts\x60' + ' ; les tests se lancent avec ' + '\x60npm test\x60' + '.',
+    'The entry point is ' + '\x60src/server.ts\x60' + '; run the tests with ' + '\x60npm test\x60' + '.',
   ]],
 ];
 let stdin = '';
 process.stdin.on('data', (d) => (stdin += d));
 process.stdin.on('end', async () => {
   const all = stdin || args[args.length - 1] || '';
-  const prompt = all.split("Nouvelle demande de l'utilisateur :").pop();
+  const prompt = all.split('New request from the user:').pop();
   const text = ANSWERS.find(([re]) => re.test(prompt))[1].join('\n') + '\n';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (name === 'codex') {
@@ -101,10 +101,10 @@ function setupHome() {
     );
   }
   fs.mkdirSync(path.join(home, '.config', 'aska'), { recursive: true });
-  fs.writeFileSync(path.join(home, '.config', 'aska', 'config.json'), JSON.stringify({ shortcut: false }), { mode: 0o600 });
-  fs.mkdirSync(path.join(home, 'projets', 'boutique'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.config', 'aska', 'config.json'), JSON.stringify({ shortcut: false, language: 'en' }), { mode: 0o600 });
+  fs.mkdirSync(path.join(home, 'projects', 'shop'), { recursive: true });
 
-  // Quelques conversations passées, pour une page d'historique réaliste.
+  // A few past conversations, for a realistic history page.
   const dir = path.join(home, '.local', 'state', 'aska', 'conversations');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const ago = (days, h) => {
@@ -113,17 +113,17 @@ function setupHome() {
     d.setHours(h, 12, 0, 0);
     return d.toISOString();
   };
-  const cwd = path.join(home, 'projets', 'boutique');
+  const cwd = path.join(home, 'projects', 'shop');
   const seed = [
-    ['a1', 1, 17, 'Pourquoi le build échoue sur la CI ?', [['codex', 'Codex'], ['claude', 'Claude']], 'La CI utilise Node 18 alors que le projet demande Node 20 : il suffit de mettre à jour la version dans le workflow.'],
-    ['a2', 3, 10, 'Rédige le message de commit pour ces changements', [['copilot', 'Copilot']], 'Corrige le calcul de la TVA sur les commandes multi-devises.'],
-    ['a3', 5, 15, 'Compare les deux approches pour le cache', [['cursor', 'Cursor'], ['claude', 'Claude'], ['codex', 'Codex']], 'Le cache en mémoire est plus simple ; Redis devient utile dès que plusieurs instances tournent.'],
-    ['a4', 12, 9, 'Traduis la page d’accueil en anglais', [['claude', 'Claude']], 'Voici la traduction, section par section, en conservant le ton d’origine.'],
+    ['a1', 1, 17, 'Why does the build fail on CI?', [['codex', 'Codex'], ['claude', 'Claude']], 'CI uses Node 18 while the project requires Node 20: just update the version in the workflow.'],
+    ['a2', 3, 10, 'Write the commit message for these changes', [['copilot', 'Copilot']], 'Fix VAT calculation on multi-currency orders.'],
+    ['a3', 5, 15, 'Compare the two caching approaches', [['cursor', 'Cursor'], ['claude', 'Claude'], ['codex', 'Codex']], 'An in-memory cache is simpler; Redis becomes useful as soon as several instances run.'],
+    ['a4', 12, 9, 'Translate the home page into French', [['claude', 'Claude']], 'Here is the translation, section by section, keeping the original tone.'],
   ];
   for (const [suffix, days, h, title, agents, answer] of seed) {
     const id = (suffix + '0'.repeat(16)).slice(0, 16).replace(/[^a-f0-9]/g, 'c');
     const turns = agents.map(([agent, label], i) => ({
-      agent, label, mode: 'read', prompt: i ? 'Et ensuite ?' : title, answer, status: 'ok', ts: ago(days, h), durationMs: 2400,
+      agent, label, mode: 'read', prompt: i ? 'And then?' : title, answer, status: 'ok', ts: ago(days, h), durationMs: 2400,
     }));
     fs.writeFileSync(
       path.join(dir, `${id}.json`),
@@ -134,14 +134,14 @@ function setupHome() {
   return { home, bin, cwd };
 }
 
-// ---------- pilotage ----------
+// ---------- driving ----------
 
 async function main() {
   fs.mkdirSync(DOCS, { recursive: true });
   const { home, bin, cwd } = setupHome();
   const frames = path.join(home, 'frames');
   fs.mkdirSync(frames);
-  // Le dossier de travail affiché : un projet, plutôt que l'espace temporaire.
+  // The displayed working folder: a project, rather than the scratch space.
   fs.mkdirSync(path.join(home, '.local', 'state', 'aska'), { recursive: true });
   fs.writeFileSync(path.join(home, '.local', 'state', 'aska', 'state.json'), JSON.stringify({ cwd }), { mode: 0o600 });
 
@@ -184,11 +184,11 @@ async function main() {
   };
 
   try {
-    // --- Démo animée (thème sombre) : question, réponse en flux, suite avec un autre agent.
+    // --- Animated demo (dark theme): question, streamed answer, follow-up with another agent.
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.waitForTimeout(400);
     await frame(8);
-    await type('Explique ce projet en trois points');
+    await type('Explain this project in three points');
     await run(true);
     await frame(22);
     await page.keyboard.press('Tab'); // Codex
@@ -202,11 +202,11 @@ async function main() {
     await page.keyboard.press('Tab'); // Claude
     await page.waitForTimeout(250);
     await frame(4);
-    await type('Et côté sécurité ?');
+    await type('What about security?');
     await run(true);
     await frame(30);
 
-    // --- Captures fixes, en clair et en sombre.
+    // --- Still screenshots, in light and dark.
     await still('chat');
 
     await page.keyboard.press('Control+Shift+M');
@@ -220,16 +220,16 @@ async function main() {
     await still('historique');
     await page.keyboard.press('Escape');
 
-    // Accord avant écriture.
+    // Approval before writing.
     await page.keyboard.press('Shift+Tab');
-    await page.fill('#input', 'Ajoute un test pour parseDate');
+    await page.fill('#input', 'Add a test for parseDate');
     await page.keyboard.press('Enter');
     await page.waitForSelector('#confirm:not([hidden])');
     await still('accord');
     await page.keyboard.press('Enter');
     await page.waitForSelector('.panel[data-state="running"]');
     await page.waitForTimeout(150);
-    // Réduit en pastille pendant que l'agent travaille.
+    // Minimized to a pill while the agent works.
     await page.keyboard.press('Control+m');
     await page.waitForTimeout(500);
     await still('pastille');
@@ -241,7 +241,7 @@ async function main() {
     await app.close().catch(() => {});
   }
 
-  // --- Assemblage du GIF : chaque image est posée sur un fond fixe, bord bas aligné.
+  // --- GIF assembly: each frame is placed on a fixed background, bottom edges aligned.
   const composed = path.join(home, 'composed');
   fs.mkdirSync(composed);
   execFileSync('python3', ['-I', '-c', `
@@ -268,7 +268,7 @@ for f in sorted(glob.glob(os.path.join(src, '*.png'))):
 
   fs.rmSync(home, { recursive: true, force: true });
   const kb = (f) => Math.round(fs.statSync(path.join(DOCS, f)).size / 1024);
-  console.log(`${n} images → docs/demo.gif (${kb('demo.gif')} Ko)`);
+  console.log(`${n} images → docs/demo.gif (${kb('demo.gif')} KB)`);
 }
 
 main().catch((e) => {

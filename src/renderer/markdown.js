@@ -1,12 +1,13 @@
 'use strict';
-// Rendu Markdown sûr : uniquement createElement/textContent, jamais d'innerHTML.
-// La sortie d'un agent ne peut donc injecter ni balise ni script ; le HTML
-// éventuel reste du texte, et les images distantes ne sont jamais chargées.
-// Pris en charge : titres, paragraphes, listes (imbriquées, numérotées, cases à
-// cocher), citations, tableaux, blocs de code, filets, gras, italique, barré,
-// code en ligne, liens http(s).
+// Safe Markdown rendering: only createElement/textContent, never innerHTML.
+// Agent output therefore cannot inject tags or scripts; any HTML stays
+// plain text, and remote images are never loaded.
+// Supported: headings, paragraphs, lists (nested, numbered, checkboxes),
+// quotes, tables, code blocks, rules, bold, italic, strikethrough,
+// inline code, http(s) links.
 
 (function () {
+  const labels = { copy: 'Copy' }; // translated by app.js (renderMarkdown.labels)
   const el = (tag, cls, text) => {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -14,20 +15,20 @@
     return n;
   };
 
-  // ---------- en ligne ----------
+  // ---------- inline ----------
 
   const INLINE = new RegExp(
     [
-      '\\\\([\\\\`*_{}\\[\\]()#+\\-.!~|>])', // 1 : caractère échappé
-      '(`+)([\\s\\S]*?[^`])\\2(?!`)', // 2,3 : code
-      '!?\\[([^\\]\\n]*)\\]\\(\\s*<?([^\\s)>]+)>?(?:\\s+"[^"\\n]*")?\\s*\\)', // 4,5 : lien ou image
-      '<(https?:\\/\\/[^\\s<>]+)>', // 6 : lien entre chevrons
-      '(https?:\\/\\/[^\\s<>()\\[\\]]*[^\\s<>()\\[\\].,;:!?\'"*_])', // 7 : URL nue
-      '\\*\\*(?=\\S)([^\\n]+?)\\*\\*', // 8 : gras
-      '(?<![\\w])__(?=\\S)([^\\n]+?)__(?![\\w])', // 9 : gras
-      '~~(?=\\S)([^\\n]+?)~~', // 10 : barré
-      '\\*(?=[^\\s*])([^*\\n]+?)\\*', // 11 : italique
-      '(?<![\\w])_(?=[^\\s_])([^_\\n]+?)_(?![\\w])', // 12 : italique
+      '\\\\([\\\\`*_{}\\[\\]()#+\\-.!~|>])', // 1: escaped character
+      '(`+)([\\s\\S]*?[^`])\\2(?!`)', // 2,3: code
+      '!?\\[([^\\]\\n]*)\\]\\(\\s*<?([^\\s)>]+)>?(?:\\s+"[^"\\n]*")?\\s*\\)', // 4,5: link or image
+      '<(https?:\\/\\/[^\\s<>]+)>', // 6: angle-bracket link
+      '(https?:\\/\\/[^\\s<>()\\[\\]]*[^\\s<>()\\[\\].,;:!?\'"*_])', // 7: bare URL
+      '\\*\\*(?=\\S)([^\\n]+?)\\*\\*', // 8: bold
+      '(?<![\\w])__(?=\\S)([^\\n]+?)__(?![\\w])', // 9: bold
+      '~~(?=\\S)([^\\n]+?)~~', // 10: strikethrough
+      '\\*(?=[^\\s*])([^*\\n]+?)\\*', // 11: italic
+      '(?<![\\w])_(?=[^\\s_])([^_\\n]+?)_(?![\\w])', // 12: italic
     ].join('|'),
     'g'
   );
@@ -42,7 +43,7 @@
     }
     const a = el('a', 'md-link');
     a.href = href;
-    a.title = href; // la destination réelle est toujours visible au survol
+    a.title = href; // the real destination is always visible on hover
     if (label && label !== url) inline(a, label, depth + 1);
     else a.textContent = url;
     parent.append(a);
@@ -80,7 +81,7 @@
     if (last < text.length) parent.append(text.slice(last));
   }
 
-  // ---------- blocs ----------
+  // ---------- blocks ----------
 
   const FENCE = /^(\s*)(`{3,}|~{3,})\s*([\w+#.-]*)\s*$/;
   const HEADING = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
@@ -100,7 +101,7 @@
     const box = el('div', 'codeblock');
     const head = el('div', 'code-head');
     head.append(el('span', 'code-lang', lang || 'code'));
-    const copy = el('button', 'code-copy', 'Copier');
+    const copy = el('button', 'code-copy', labels.copy);
     copy.type = 'button';
     head.append(copy);
     const pre = el('pre');
@@ -133,7 +134,7 @@
 
   const indentOf = (line) => line.match(/^\s*/)[0].replace(/\t/g, '    ').length;
 
-  /** Lit une liste à partir de la ligne i ; renvoie [élément, index suivant]. */
+  /** Reads a list starting at line i; returns [element, next index]. */
   function list(lines, i, depth) {
     const first = lines[i].match(ITEM);
     const base = indentOf(lines[i]);
@@ -149,7 +150,7 @@
       const body = [m[3]];
       const inner = base + m[2].length + 1;
       i++;
-      // Suite de l'élément : lignes plus indentées, ou vides suivies d'une ligne indentée.
+      // Item continuation: more indented lines, or blank lines followed by an indented line.
       while (i < lines.length) {
         const l = lines[i];
         if (!l.trim()) {
@@ -168,7 +169,7 @@
         body[0] = task[2];
       }
       const content = blocks(body, depth + 1);
-      // Un élément simple n'a pas besoin d'un paragraphe autour de son texte.
+      // A simple item does not need a paragraph around its text.
       const firstChild = content.firstChild;
       if (firstChild && firstChild.tagName === 'P') {
         li.append(...firstChild.childNodes);
@@ -269,4 +270,5 @@
   }
 
   window.renderMarkdown = (src) => blocks(String(src).replace(/\r\n?/g, '\n').split('\n'));
+  window.renderMarkdown.labels = labels;
 })();
