@@ -134,6 +134,12 @@ function windowsSystemDirs(env = process.env) {
 }
 
 const SYSTEM_DIRS = ['/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/boot', '/var', '/sys', '/proc', '/dev', '/run', '/root', '/snap'];
+// macOS: /etc and /var are links to /private/… (the real path is compared).
+const DARWIN_DIRS = ['/private/etc', '/private/var/db', '/private/var/root', '/System', '/Library', '/Applications'];
+
+function posixSystemDirs(platform = process.platform) {
+  return platform === 'darwin' ? [...SYSTEM_DIRS, ...DARWIN_DIRS] : SYSTEM_DIRS;
+}
 
 /** Validates the working folder. In write modes, rejects folders that are too broad or system folders. */
 function checkWorkdir(dir, mode, home = os.homedir(), ownDirs = []) {
@@ -151,7 +157,7 @@ function checkWorkdir(dir, mode, home = os.homedir(), ownDirs = []) {
       return { error: t('security.homeRefused') };
     }
     const inHome = within(real, realHome);
-    const system = POSIX ? SYSTEM_DIRS : windowsSystemDirs();
+    const system = POSIX ? posixSystemDirs() : windowsSystemDirs();
     if (!inHome && system.some((d) => within(real, d))) {
       return { error: t('security.systemRefused', { path: real }) };
     }
@@ -252,5 +258,5 @@ function readRecentPrompts(file, limit = 50) {
 
 module.exports = {
   resolveBinary, buildEnv, checkWorkdir, readOwnedJson, writePrivate, ensurePrivateDir,
-  TrustStore, appendAudit, readRecentPrompts, BASE_ENV, setEnvVar, within,
+  TrustStore, appendAudit, readRecentPrompts, BASE_ENV, setEnvVar, within, posixSystemDirs,
 };

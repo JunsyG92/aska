@@ -7,12 +7,13 @@
 **One shortcut, one field, and your AI agents answer.**
 
 Claude Code, Codex, GitHub Copilot and Cursor in a single small window,<br>
-driven by their official CLIs. Linux and Windows.
+driven by their official CLIs. Linux, macOS and Windows.
 
 [![CI](https://github.com/JunsyG92/aska/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JunsyG92/aska/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/JunsyG92/aska?include_prereleases&label=version&color=d97757)](https://github.com/JunsyG92/aska/releases)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![Linux](https://img.shields.io/badge/Linux-%E2%9C%93-2ea44f?logo=linux&logoColor=white)
+![macOS](https://img.shields.io/badge/macOS-%E2%9C%93-2ea44f?logo=apple&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-%E2%9C%93-2ea44f)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A5%2020-5fa04e?logo=nodedotjs&logoColor=white)
 
@@ -112,6 +113,21 @@ aska --hidden &                         # or log in again (autostart)
 
 - **Ubuntu 24.04+**: the script offers to configure the Electron sandbox (asks for your `sudo` password). Without it, Aska does not start; `--sandbox-fix` does it without asking.
 - **Wayland**: an application cannot always grab a global shortcut. If `Ctrl+Alt+Space` does nothing, bind the command `aska --toggle` to a shortcut in your desktop's keyboard settings (KDE, Sway, Hyprland...) and set `"shortcut": false` in the configuration.
+
+### macOS
+
+```sh
+git clone https://github.com/JunsyG92/aska.git && cd aska
+./scripts/install.sh                    # global shortcut ⌃⌥Space (Ctrl+Option+Space)
+aska --hidden &                         # or log in again (autostart)
+```
+
+No `sudo` needed. The script puts an `aska` command in `~/.local/bin`, creates `~/Applications/Aska.app` (Spotlight, Launchpad) and starts Aska when you log in (LaunchAgent; `--no-autostart` to skip that). Aska has no Dock icon.
+
+- **PATH**: `~/.local/bin` is not in the default macOS `PATH`. Add it: `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`.
+- **Shortcut**: the window shortcuts use `Ctrl`, not `⌘`. If `⌃⌥Space` already switches input sources (System Settings → Keyboard → Keyboard Shortcuts → Input Sources), turn that shortcut off or pick another one with `"shortcut"`.
+- **Notifications**: they show up as "Electron"; allow them in System Settings → Notifications.
+- CLIs installed with Homebrew (`/opt/homebrew/bin`) are found even when Aska is started outside a terminal.
 
 ### Windows 10 / 11
 
@@ -284,6 +300,9 @@ In short: **no shell** ever sees the text of your requests, the agent only recei
 - The Copilot and Cursor CLI options change fast; if one changes, fix it
   in the configuration without waiting for an update.
 
+**On macOS**
+- Writing is also refused in macOS system folders (`/System`, `/Library`, `/Applications`, `/private/etc`…), checked on their real path.
+
 **On Windows**
 - CLIs installed by npm are `.cmd` launchers. Aska reads the launcher and runs `node.exe` directly on the target script, without going through `cmd.exe`, which would interpret `%`, `&`, `^`... in the text of your requests. A `.cmd` in another format is only accepted for harmless arguments; for an agent that receives the request as an argument (Copilot, Cursor), point to its `.exe` with `"bin"` in the configuration.
 - Owner and permission (`600`) checks on files do not exist on Windows: Aska relies on the default protection of the user profile (`AppData`).
@@ -298,7 +317,7 @@ In short: **no shell** ever sees the text of your requests, the agent only recei
 
 <br>
 
-Linux: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\aska\config.json`. Then `aska --reload`.
+Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\aska\config.json`. Then `aska --reload`.
 
 ```json
 {
@@ -377,7 +396,7 @@ Start with `aska --help`: the "Agents" section says which CLI is used, or why it
 ## Contributing
 
 Contributions are welcome! The repository follows **GitHub Flow**: `main` is
-protected, every change comes through a reviewed PR, tested on Linux and
+protected, every change comes through a reviewed PR, tested on Linux, macOS and
 Windows, then squash-merged. Releases and the [CHANGELOG](CHANGELOG.md)
 are generated automatically from PR titles ([Conventional Commits](https://www.conventionalcommits.org/)).
 
@@ -399,7 +418,7 @@ npm install
 npm start                               # runs the app
 npm run lint                            # ESLint
 npm test                                # unit tests
-xvfb-run -a npm run test:e2e            # end-to-end test, with fake CLIs (Windows: npm run test:e2e)
+xvfb-run -a npm run test:e2e            # end-to-end test, with fake CLIs (macOS, Windows: npm run test:e2e)
 ```
 
-Every PR runs these checks on Linux and Windows, plus a CodeQL analysis. The images on this page are generated from the real application by `scripts/readme-media.js`.
+Every PR runs these checks on Linux, macOS and Windows, plus a CodeQL analysis. The images on this page are generated from the real application by `scripts/readme-media.js`.

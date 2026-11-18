@@ -80,7 +80,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await waitFor(() => !fs.existsSync(P.run), 'suppression de run.json');
 
   await old.close().catch(() => {});
-  fs.rmSync(home, { recursive: true, force: true });
+  // An instance still shutting down may write to this folder: retry.
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   console.log('Instances OK');
 })().catch((e) => {
   console.error(e);

@@ -166,7 +166,10 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForTimeout(400);
     const grown = await bounds();
     assert.ok(grown.height > 300, `height with answer ${grown.height}`);
-    assert.equal(grown.y + grown.height, idle.y + idle.height, 'the bottom edge (the input) must not move');
+    // The bottom edge does not move, unless the window reached the top of the screen (small CI
+    // screen, macOS): it then stays below the menu bar.
+    const top = await app.evaluate(({ BrowserWindow, screen }) => screen.getDisplayMatching(BrowserWindow.getAllWindows()[0].getBounds()).workArea.y);
+    if (grown.y > top) assert.equal(grown.y + grown.height, idle.y + idle.height, 'the bottom edge (the input) must not move');
 
     // 2nd message: same thread, and Claude resumes its session instead of starting over.
     await send('And the preload file?');
@@ -421,7 +424,15 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
 
     // Notifications: send a request, then hide the chat while the agent works.
     assert.equal(notifications().length, 0, 'no notification while the chat is in view');
-    const unreadShown = () => page.waitForFunction(() => document.querySelector('.panel').classList.contains('has-unread'), null, { timeout: 20000, polling: 100 });
+    // Polling done from Node: in a hidden window, macOS throttles (or even freezes) the
+    // page's timers, and page.waitForFunction no longer polls the DOM there.
+    const unreadShown = async () => {
+      const end = Date.now() + 20000;
+      while (!(await page.evaluate(() => document.querySelector('.panel').classList.contains('has-unread')))) {
+        if (Date.now() > end) throw new Error('timeout: unread answer never flagged');
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    };
     await send('Reply while I work elsewhere');
     await settled('running');
     await page.click('#close-btn'); // hides without cancelling
