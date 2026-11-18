@@ -315,6 +315,32 @@ test('conversations: private storage, list, reopen, delete', () => {
   assert.deepEqual(off.list(), []);
 });
 
+test('conversations: list summaries cached, refreshed when a file changes', () => {
+  const d = path.join(tmp(), 'conv-cache');
+  const store = new ConversationStore(d);
+  const c = store.create('/p');
+  c.turns.push({ agent: 'claude', label: 'Claude', prompt: 'first', answer: 'one' });
+  store.save(c);
+  assert.equal(store.list()[0].preview, 'one');
+  // A save through the store updates the summary without rereading the file.
+  c.turns.push({ agent: 'codex', label: 'Codex', prompt: 'second', answer: 'two' });
+  store.save(c);
+  const [item] = store.list();
+  assert.equal(item.turns, 2);
+  assert.deepEqual(item.agentIds, ['claude', 'codex']);
+  // A file changed outside the store (other instance, manual edit) is reread.
+  const file = path.join(d, c.id + '.json');
+  const disk = JSON.parse(fs.readFileSync(file, 'utf8'));
+  disk.turns[1].answer = 'changed outside';
+  fs.writeFileSync(file, JSON.stringify(disk));
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(file, later, later);
+  assert.equal(store.list()[0].preview, 'changed outside');
+  // A file deleted outside the store disappears from the list.
+  fs.unlinkSync(file);
+  assert.deepEqual(store.list(), []);
+});
+
 test('Cursor: --trust added only once trust is established, never via extraArgs', () => {
   const { agents, warnings } = resolveAgents({ cursor: { extraArgs: ['--trust'] } });
   assert.deepEqual(agents.cursor.extraArgs, []);

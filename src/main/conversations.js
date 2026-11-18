@@ -35,11 +35,28 @@ function previewOf(turns) {
   return last ? plainText(last.answer, 140) : '';
 }
 
+/** Conversation list entry (without the turns themselves). */
+function summaryOf(c) {
+  return {
+    id: c.id,
+    title: c.title || titleOf(c.turns[0].prompt),
+    updatedAt: c.updatedAt,
+    turns: c.turns.length,
+    agents: [...new Set(c.turns.map((t) => t.label || t.agent))],
+    agentIds: [...new Set(c.turns.map((t) => t.agent))],
+    cwd: typeof c.cwd === 'string' ? c.cwd : null,
+    preview: previewOf(c.turns),
+  };
+}
+
 class ConversationStore {
   constructor(dir, { persist = true, max = 200 } = {}) {
     this.dir = dir;
     this.persist = persist;
     this.max = max;
+    // List summaries, by file name: { ctimeMs, size, item }. Avoids rereading and
+    // parsing every conversation (answers up to 200 KB) on each list/save.
+    this.summaries = new Map();
   }
 
   create(cwd) {
@@ -57,7 +74,9 @@ class ConversationStore {
     conv.updatedAt = new Date().toISOString();
     if (!conv.title) conv.title = titleOf(conv.turns[0].prompt);
     try {
-      writePrivate(this.file(conv.id), JSON.stringify(conv));
+      const file = this.file(conv.id);
+      writePrivate(file, JSON.stringify(conv));
+      this.remember(`${conv.id}.json`, file, summaryOf(conv));
       this.prune();
     } catch { /* history must never block an answer */ }
   }
@@ -76,29 +95,47 @@ class ConversationStore {
     return c;
   }
 
-  list() {
-    if (!this.persist) return [];
-    let names;
+  // Caches a summary, tied to the file's ctime and size (content, owner, permissions).
+  remember(name, file, item) {
     try {
-      names = fs.readdirSync(this.dir).filter((n) => validId(n.replace(/\.json$/, '')) && n.endsWith('.json'));
+      const st = fs.statSync(file);
+      this.summaries.set(name, { ctimeMs: st.ctimeMs, size: st.size, item });
+    } catch {
+      this.summaries.delete(name);
+    }
+  }
+
+  names() {
+    try {
+      return fs.readdirSync(this.dir).filter((n) => n.endsWith('.json') && validId(n.slice(0, -5)));
     } catch {
       return [];
     }
+  }
+
+  list() {
+    if (!this.persist) return [];
+    const names = this.names();
     const out = [];
     for (const n of names) {
-      const c = this.load(n.slice(0, -5));
-      if (!c || !c.turns.length) continue;
-      out.push({
-        id: c.id,
-        title: c.title || titleOf(c.turns[0].prompt),
-        updatedAt: c.updatedAt,
-        turns: c.turns.length,
-        agents: [...new Set(c.turns.map((t) => t.label || t.agent))],
-        agentIds: [...new Set(c.turns.map((t) => t.agent))],
-        cwd: typeof c.cwd === 'string' ? c.cwd : null,
-        preview: previewOf(c.turns),
-      });
+      const file = path.join(this.dir, n);
+      let st;
+      try {
+        st = fs.statSync(file);
+      } catch {
+        continue;
+      }
+      let hit = this.summaries.get(n);
+      // Only files changed since their last read are reparsed.
+      if (!hit || hit.ctimeMs !== st.ctimeMs || hit.size !== st.size) {
+        const c = this.load(n.slice(0, -5));
+        hit = { ctimeMs: st.ctimeMs, size: st.size, item: c && c.turns.length ? summaryOf(c) : null };
+        this.summaries.set(n, hit);
+      }
+      if (hit.item) out.push(hit.item);
     }
+    const live = new Set(names);
+    for (const n of this.summaries.keys()) if (!live.has(n)) this.summaries.delete(n);
     return out.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   }
 
@@ -107,9 +144,12 @@ class ConversationStore {
     try {
       fs.unlinkSync(this.file(id));
     } catch { /* already deleted */ }
+    this.summaries.delete(`${id}.json`);
   }
 
   prune() {
+    // Compter les fichiers suffit pour savoir s'il faut en supprimer.
+    if (this.names().length <= this.max) return;
     const all = this.list();
     for (const c of all.slice(this.max)) this.delete(c.id);
   }
