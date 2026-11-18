@@ -10,18 +10,21 @@ const ICONS = { idle: 'tray.png', running: 'tray-running.png' };
 
 /**
  * Ce que l'icône affiche pour un état donné.
- * L'info-bulle ne contient que le nom de l'agent, jamais le texte de la demande.
+ * `running` : nombre de demandes en cours (tous onglets) ; `agentLabels` : leurs agents.
+ * L'info-bulle ne contient que le nom des agents, jamais le texte des demandes.
  */
-function trayModel({ running = false, agentLabel = null, visible = false } = {}) {
+function trayModel({ running = 0, agentLabels = [], visible = false } = {}) {
+  const n = Number(running) || 0;
+  const names = [...new Set(agentLabels.filter(Boolean))].join(', ') || 'agent';
   return {
-    icon: running ? 'running' : 'idle',
-    tooltip: running ? `Aska : ${agentLabel || 'agent'} en cours…` : 'Aska',
+    icon: n ? 'running' : 'idle',
+    tooltip: !n ? 'Aska' : n === 1 ? `Aska : ${names} en cours…` : `Aska : ${n} demandes en cours (${names})`,
     items: [
       { id: 'toggle', label: visible ? 'Masquer Aska' : 'Afficher Aska', enabled: true },
       { type: 'separator' },
-      // Comme dans l'interface, on ne change pas de conversation pendant une exécution.
-      { id: 'new', label: 'Nouvelle conversation', enabled: !running },
-      { id: 'cancel', label: 'Annuler l’exécution', enabled: running },
+      // Ouvre un nouvel onglet : possible même pendant une exécution.
+      { id: 'new', label: 'Nouvelle conversation', enabled: true },
+      { id: 'cancel', label: n > 1 ? `Annuler les ${n} exécutions` : 'Annuler l’exécution', enabled: n > 0 },
       { type: 'separator' },
       { id: 'quit', label: 'Quitter Aska', enabled: true },
     ],

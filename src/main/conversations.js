@@ -17,17 +17,22 @@ function titleOf(prompt) {
 }
 
 /** Début de la dernière réponse, débarrassé de la syntaxe Markdown, pour la liste. */
-function previewOf(turns) {
-  const last = [...turns].reverse().find((t) => t.answer && t.answer.trim());
-  if (!last) return '';
-  const t = last.answer
+/** Texte brut d'une réponse Markdown, raccourci à n caractères (aperçus, notifications). */
+function plainText(md, n = 140) {
+  const t = String(md)
     .replace(/```[\s\S]*?(```|$)/g, ' ')
+    .replace(/^\s*\|.*$/gm, ' ') // lignes de tableau
     .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/[*_`~|]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return t.length > 140 ? t.slice(0, 139) + '…' : t;
+  return t.length > n ? t.slice(0, n - 1) + '…' : t;
+}
+
+function previewOf(turns) {
+  const last = [...turns].reverse().find((t) => t.answer && t.answer.trim());
+  return last ? plainText(last.answer, 140) : '';
 }
 
 class ConversationStore {
@@ -141,4 +146,4 @@ function buildContextPrompt(turns, prompt, maxChars = 24000) {
   ].join('\n');
 }
 
-module.exports = { ConversationStore, buildContextPrompt, validId, titleOf, MAX_ANSWER, ensurePrivateDir };
+module.exports = { ConversationStore, buildContextPrompt, plainText, validId, titleOf, MAX_ANSWER, ensurePrivateDir };

@@ -44,45 +44,50 @@ try {
 }
 if (-not (Test-Path $Electron)) { throw "Electron est introuvable après installation ($Electron)." }
 
-# Raccourcis (menu Démarrer, démarrage automatique).
-$shell = New-Object -ComObject WScript.Shell
-function New-Shortcut([string]$Path, [string]$Arguments) {
-  New-Item -ItemType Directory -Force -Path (Split-Path $Path) | Out-Null
-  $lnk = $shell.CreateShortcut($Path)
-  $lnk.TargetPath = $Electron
-  $lnk.Arguments = "`"$Root`" $Arguments"
-  $lnk.WorkingDirectory = $Root
-  $lnk.Description = "Demander une action à un agent IA (Claude, Codex, Copilot, Cursor)"
-  $lnk.IconLocation = "$Electron,0"
-  $lnk.Save()
-}
-$programs = [Environment]::GetFolderPath('Programs')
-New-Shortcut (Join-Path $programs 'Aska.lnk') '--toggle'
-$startupLnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Aska.lnk'
-if ($NoAutostart) {
-  Remove-Item -Force -ErrorAction SilentlyContinue $startupLnk
-} else {
-  New-Shortcut $startupLnk '--hidden'
+# Raccourcis (menu Démarrer, démarrage automatique). Ils sont écrits par Electron,
+# seul à pouvoir y inscrire l'identité de l'application, sans laquelle Windows
+# n'affiche pas ses notifications.
+$shortcutArgs = @($Root, '--install-shortcuts')
+if ($NoAutostart) { $shortcutArgs += '--no-autostart' }
+$made = & $Electron @shortcutArgs | Out-String
+if ($LASTEXITCODE -ne 0 -or $made -notmatch 'appUserModelId') {
+  throw "La création des raccourcis a échoué : $made"
 }
 
 # Commande « aska » (aska --quit, aska --reload…).
 $binDir = Join-Path $env:LOCALAPPDATA 'aska\bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-Set-Content -Encoding ASCII -Path (Join-Path $binDir 'aska.cmd') -Value "@`"$Electron`" `"$Root`" %*"
+# Aide et version dans le terminal ; sinon Aska est lancé sans bloquer le terminal.
+$launcher = @"
+@echo off
+for %%A in (%*) do (
+  if /i "%%~A"=="--help" goto cli
+  if /i "%%~A"=="-h" goto cli
+  if /i "%%~A"=="--version" goto cli
+  if /i "%%~A"=="-v" goto cli
+)
+start "" "$Electron" "$Root" %*
+exit /b
+:cli
+node "$Root\src\cli.js" %*
+"@
+Set-Content -Encoding ASCII -Path (Join-Path $binDir 'aska.cmd') -Value $launcher
 
 # Configuration par défaut (n'écrase jamais une configuration existante).
 $confDir = Join-Path $env:APPDATA 'aska'
 $conf = Join-Path $confDir 'config.json'
 New-Item -ItemType Directory -Force -Path $confDir | Out-Null
 if (-not (Test-Path $conf)) {
-  @'
+  $json = @'
 {
   "shortcut": "Control+Alt+Space",
   "defaultAgent": "claude",
   "defaultMode": "read",
   "allowAutoMode": false
 }
-'@ | Set-Content -Encoding UTF8 -Path $conf
+'@
+  # UTF-8 sans BOM : sous Windows PowerShell 5.1, « Set-Content -Encoding UTF8 » en ajoute un.
+  [IO.File]::WriteAllText($conf, $json, (New-Object Text.UTF8Encoding $false))
 }
 
 Write-Host ""

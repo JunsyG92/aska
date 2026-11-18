@@ -1,19 +1,26 @@
 'use strict';
 const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell, Tray, Menu, nativeImage } = require('electron');
+
+const MAC = process.platform === 'darwin';
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('./agents');
+const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel, canPickModel } = require('./agents');
 const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
+const { shouldNotify, notificationContent, createNotifier } = require('./notify');
+const { Tabs } = require('./tabs');
 const sec = require('./security');
 const { runAgent } = require('./runner');
-const { resolveLaunch, buildCommand } = require('./launch');
+const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
+const { buildId, runningInstance } = require('./build');
 const { createTray } = require('./tray');
+const { wantsCliOutput, printCli } = require('../cli');
 
 const P = paths();
+const BUILD = buildId();
 const INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
 const INDEX_URL = pathToFileURL(INDEX).href;
 const WIN_W = 748; // taille initiale ; la fenêtre épouse ensuite le panneau
@@ -27,46 +34,28 @@ let cfg = null;
 let agents = {};
 let warnings = [];
 let trust = null;
-let cwd = null;
-let current = null; // exécution en cours : { id, handle, label }
+let cwd = null; // dossier de l'onglet actif (et des nouveaux onglets)
+const MAX_RUNS = 4; // demandes simultanées au plus, tous onglets confondus
 let tray = null; // icône de la barre système
 let runSeq = 0;
 let dialogOpen = false;
 let shortcutOk = false;
 let quitting = false;
 let mini = false; // panneau réduit en pastille
+let pinned = null; // épinglé : reste affiché quand on clique ailleurs (null = selon la config)
+let unread = 0; // réponses arrivées pendant que le chat était hors de vue
+let notifier = null;
 let savedPos = null; // ancrage choisi par l'utilisateur : bord gauche et bord BAS de la fenêtre
 let saveTimer = null;
 let store = null; // conversations enregistrées
-let conv = null; // conversation affichée
-let picked = {}; // modèle choisi par agent : { claude: 'opus' } (absent = défaut)
-let extraModels = {}; // modèles saisis à la main, par agent
+let tabs = null; // onglets ouverts (voir tabs.js) ; chacun porte sa conversation et sa demande en cours
+let savedTabs = null; // onglets enregistrés, rouverts au démarrage
+const picked = {}; // modèle choisi par agent : { claude: 'opus' } (absent = défaut)
+const extraModels = {}; // modèles saisis à la main, par agent
 const discovered = {}; // modèles annoncés par chaque CLI : { cursor: { models, error } }
 
-// Une session graphique n'a pas toujours le PATH du terminal : on ajoute les
-// emplacements habituels des CLI installés par l'utilisateur.
-function searchPath() {
-  const home = os.homedir();
-  let extra;
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
-    const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-    extra = [
-      path.join(appData, 'npm'), // npm i -g
-      path.join(home, '.local', 'bin'), // installateur natif de Claude Code
-      path.join(local, 'cursor-agent'),
-      path.join(home, '.bun', 'bin'),
-      path.join(local, 'Volta', 'bin'),
-      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs'),
-    ];
-  } else {
-    extra = ['.local/bin', 'bin', '.npm-global/bin', '.bun/bin', '.volta/bin'].map((d) => path.join(home, d));
-    extra.push('/usr/local/bin');
-  }
-  const parts = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d));
-  for (const d of extra) if (!parts.includes(d)) parts.push(d);
-  return parts.join(path.delimiter);
-}
+// PATH élargi aux emplacements habituels des CLI (voir launch.js).
+const searchPath = () => extendedPath();
 
 // Environnement transmis à un agent : filtré, avec le PATH élargi ci-dessus.
 function agentEnv(agent) {
@@ -114,12 +103,54 @@ function loadEverything() {
     for (const [k, v] of Object.entries(d.extraModels && typeof d.extraModels === 'object' ? d.extraModels : {})) {
       if (Object.hasOwn(agents, k) && Array.isArray(v)) extraModels[k] = v.filter(isModel).slice(0, 12);
     }
+    if (typeof d.pinned === 'boolean') pinned = d.pinned;
+    savedTabs = { ids: d.tabs, active: d.activeTab };
     const pos = st.data && st.data.pos;
     if (pos && Number.isInteger(pos.x) && Number.isInteger(pos.bottom)) savedPos = { x: pos.x, bottom: pos.bottom };
     cwd = saved && !sec.checkWorkdir(saved, 'read').error ? saved : P.workspace;
   }
+  if (pinned === null) pinned = !cfg.hideOnBlur;
+  notifier = createNotifier({
+    Notification,
+    sound: cfg.notifySound,
+    logFile: process.env.ASKA_NOTIFY_LOG || null,
+    onClick: (cid) => {
+      openConversationById(cid);
+      showWindow();
+    },
+  });
   store = new ConversationStore(P.conversations, { persist: cfg.savePrompts });
-  if (!conv) conv = store.create(cwd);
+  if (!tabs) {
+    tabs = new Tabs(store);
+    tabs.restore(cfg.savePrompts && savedTabs ? savedTabs.ids : [], savedTabs && savedTabs.active, cwd);
+    syncCwd();
+  } else tabs.store = store; // --reload
+}
+
+// Le dossier de travail suit l'onglet actif (un dossier disparu ramène à l'espace temporaire).
+function syncCwd() {
+  const c = tabs.active().conv.cwd;
+  cwd = typeof c === 'string' && !sec.checkWorkdir(c, 'read').error ? c : P.workspace;
+}
+
+// Barre d'onglets côté interface.
+function publicTabs() {
+  return tabs.list.map((t) => {
+    const last = t.conv.turns[t.conv.turns.length - 1];
+    return {
+      id: t.id,
+      title: t.conv.title || (last ? last.prompt.slice(0, 60) : ''),
+      color: last && agents[last.agent] ? agents[last.agent].color : null,
+      running: !!t.run,
+      unread: t.unread,
+      active: t.id === tabs.activeId,
+    };
+  });
+}
+
+function pushTabs() {
+  if (win && !win.isDestroyed()) win.webContents.send('aska:tabs', publicTabs());
+  refreshTray();
 }
 
 function fsRealWorkspace() {
@@ -132,7 +163,8 @@ function fsRealWorkspace() {
 
 function saveState() {
   try {
-    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels }));
+    const open = tabs && cfg.savePrompts ? tabs.serialize() : {};
+    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels, pinned, ...open }));
   } catch { /* l'état est un confort, pas une nécessité */ }
 }
 
@@ -185,9 +217,10 @@ function publicState() {
     error: a.binError,
     install: a.install || null,
     modes: MODE_ORDER.filter((m) => a.modes[m] && (m !== 'auto' || cfg.allowAutoMode)),
-    canPickModel: !!a.modelFlag,
+    canPickModel: canPickModel(a),
     models: [...new Set([...(a.models || []), ...(extraModels[a.id] || [])])],
-    model: modelFor(a),
+    // Agent qui exige un modèle (Ollama) : on affiche celui qui sera réellement utilisé.
+    model: modelFor(a) || (a.requiresModel && discovered[a.id] && discovered[a.id].models[0] ? discovered[a.id].models[0].id : null),
   }));
   return {
     agents: list,
@@ -200,9 +233,19 @@ function publicState() {
     shortcut: shortcutOk ? cfg.shortcut : null,
     warnings,
     history: cfg.savePrompts ? sec.readRecentPrompts(P.audit) : [],
-    running: !!current,
-    conversation: { id: conv.id, title: conv.title, turns: conv.turns.map(publicTurn) },
+    running: !!tabs.active().run,
+    // Demande en cours de l'onglet actif : l'interface s'y raccroche pour suivre la réponse.
+    run: tabs.active().run ? { id: tabs.active().run.id } : null,
+    conversation: { id: tabs.active().conv.id, title: tabs.active().conv.title, turns: tabs.active().conv.turns.map(publicTurn) },
+    tabs: publicTabs(),
     historyEnabled: cfg.savePrompts,
+    pinned,
+    unread,
+    // Taille de l'écran : l'interface en déduit la taille du panneau agrandi.
+    display: (() => {
+      const wa = screen.getDisplayMatching(win ? win.getBounds() : screen.getPrimaryDisplay().workArea).workArea;
+      return { w: wa.width, h: wa.height };
+    })(),
   };
 }
 
@@ -251,8 +294,10 @@ function createWindow() {
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
+  // Clic à l'extérieur : le chat se masque, sauf s'il est épinglé ou réduit en
+  // pastille (dont le rôle est justement de rester visible pendant le travail).
   win.on('blur', () => {
-    if (cfg.hideOnBlur && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
+    if (!pinned && !mini && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
   });
   win.on('show', refreshTray);
   win.on('hide', refreshTray);
@@ -284,8 +329,11 @@ function showWindow() {
     }
     win.setPosition(pos.x, pos.y);
   }
+  // macOS : un lanceur hors du Dock ne prend pas le focus de lui-même.
+  if (MAC) app.focus({ steal: true });
   win.show();
   win.focus();
+  if (!mini) setUnread(0);
   win.webContents.send('aska:shown', publicState());
 }
 
@@ -299,6 +347,23 @@ function hideWindow() {
   }, 150);
 }
 
+function setUnread(n) {
+  unread = n;
+  if (win && !win.isDestroyed()) win.webContents.send('aska:unread', unread);
+}
+
+// Rouvre une conversation enregistrée dans un onglet (et son dossier de travail,
+// dont dépend la reprise de session).
+function openConversationById(cid) {
+  if (typeof cid !== 'string' || !cid) return { error: 'Conversation introuvable' };
+  const r = tabs.open(cid);
+  if (r.error) return r;
+  syncCwd();
+  saveState();
+  pushTabs();
+  return { ok: true };
+}
+
 function toggleWindow() {
   if (win && win.isVisible() && win.isFocused() && !mini) hideWindow();
   else showWindow();
@@ -307,7 +372,9 @@ function toggleWindow() {
 // ---------- icône de la barre système ----------
 
 function refreshTray() {
-  if (tray) tray.update({ running: !!current, agentLabel: current && current.label, visible: !!win && win.isVisible() });
+  if (!tray) return;
+  const runs = tabs ? tabs.running() : [];
+  tray.update({ running: runs.length, agentLabels: runs.map((t) => t.run.label), visible: !!win && win.isVisible() });
 }
 
 function setupTray() {
@@ -322,13 +389,14 @@ function setupTray() {
       // Le menu enlève le focus à la fenêtre : on se fie seulement à sa visibilité.
       toggle: () => (win && win.isVisible() ? hideWindow() : showWindow()),
       new: () => {
-        if (current || !win) return;
+        if (!win) return;
         showWindow();
-        // Même chemin que Ctrl+N dans l'interface.
+        // Même chemin que Ctrl+N dans l'interface : un nouvel onglet.
         win.webContents.send('aska:new-conversation');
       },
+      // Annule toutes les demandes en cours, tous onglets confondus.
       cancel: () => {
-        if (current) current.handle.cancel();
+        for (const t of tabs ? tabs.running() : []) t.run.handle.cancel();
       },
       quit: () => {
         quitting = true;
@@ -375,8 +443,12 @@ function send(payload) {
 }
 
 function startRun(req) {
-  if (current) return { error: 'Une demande est déjà en cours' };
   if (!req || typeof req !== 'object') return { error: 'Requête invalide' };
+  const tab = typeof req.tabId === 'string' ? tabs.get(req.tabId) : null;
+  if (!tab) return { error: 'Onglet introuvable' };
+  if (tab.run) return { error: 'Une demande est déjà en cours dans cet onglet' };
+  if (tabs.running().length >= MAX_RUNS) return { error: `${MAX_RUNS} demandes en cours au plus : attendez qu'une se termine` };
+  const conv = tab.conv;
   const { agentId, mode, prompt, trust: trustChoice } = req;
   const agent = typeof agentId === 'string' && Object.hasOwn(agents, agentId) ? agents[agentId] : null;
   if (!agent) return { error: 'Agent inconnu' };
@@ -387,7 +459,8 @@ function startRun(req) {
   }
   if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 100000) return { error: 'Prompt invalide' };
 
-  const dir = sec.checkWorkdir(cwd, mode, os.homedir(), [fsRealWorkspace()]);
+  const tabCwd = typeof conv.cwd === 'string' && !sec.checkWorkdir(conv.cwd, 'read').error ? conv.cwd : P.workspace;
+  const dir = sec.checkWorkdir(tabCwd, mode, os.homedir(), [fsRealWorkspace()]);
   if (dir.error) return { error: dir.error };
 
   // Écrire dans un dossier demande l'accord explicite de l'utilisateur.
@@ -406,7 +479,9 @@ function startRun(req) {
   const sess = conv.sessions[agent.id];
   const resume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length ? sess.id : null;
   const fullPrompt = resume ? prompt : buildContextPrompt(conv.turns, prompt);
-  const model = modelFor(agent);
+  // Un agent qui exige un modèle (Ollama) prend, à défaut de choix, le premier installé.
+  const known = discovered[agent.id] && discovered[agent.id].models[0];
+  const model = modelFor(agent) || (agent.requiresModel && known ? known.id : null);
 
   let inv;
   try {
@@ -441,15 +516,14 @@ function startRun(req) {
       else if (ev.type === 'meta' && ev.model) turn.model = ev.model;
       else if (ev.type === 'error') streamError = ev.text;
       else if (ev.type === 'denied') denied = ev;
-      if (ev.type !== 'session') send({ id, ...ev });
+      if (ev.type !== 'session') send({ id, tabId: tab.id, ...ev });
     }
   );
-  current = { id, handle: handleRun, label: agent.label };
-  refreshTray();
+  tab.run = { id, handle: handleRun, label: agent.label };
+  pushTabs();
 
   handleRun.done.then((res) => {
-    current = null;
-    refreshTray();
+    tab.run = null;
     const ok = res.ok && !streamError;
     turn.status = ok ? 'ok' : res.reason === 'cancel' ? 'cancel' : 'error';
     turn.durationMs = res.durationMs;
@@ -489,21 +563,32 @@ function startRun(req) {
       code: res.code ?? null,
       durationMs: res.durationMs,
     });
+    // Réponse arrivée hors de vue (autre onglet, ou fenêtre masquée) : l'onglet la signale.
+    const onScreen = !!win && win.isVisible() && !hideTimer && !mini && tabs.activeId === tab.id;
+    if (turn.status !== 'cancel' && !onScreen && tabs.get(tab.id)) tab.unread = true;
+    saveState();
     send({
       id,
+      tabId: tab.id,
       type: 'end',
       turn: publicTurn(turn),
       title: thread.title,
+      tabs: publicTabs(),
     });
-    if (win && !win.isVisible() && res.reason !== 'cancel' && Notification.isSupported()) {
-      const n = new Notification({
-        title: ok ? `${agent.label} a terminé` : `${agent.label} : échec`,
-        body: prompt.slice(0, 120),
-        silent: true,
+    // Une fenêtre en train de se masquer (animation de sortie) compte comme masquée.
+    const seen = { visible: !!win && win.isVisible() && !hideTimer, focused: !!win && win.isFocused(), mini, status: turn.status };
+    if (shouldNotify(cfg.notify, seen)) {
+      const content = notificationContent({
+        agentLabel: agent.label,
+        status: turn.status,
+        answer: turn.answer,
+        notice: turn.notice,
+        title: thread.title,
+        preview: cfg.notifyPreview,
       });
-      n.on('click', showWindow);
-      n.show();
+      notifier({ conversationId: thread.id, ...content });
     }
+    if (turn.status !== 'cancel' && (!seen.visible || mini)) setUnread(unread + 1);
   });
   return { ok: true, id };
 }
@@ -512,7 +597,7 @@ function startRun(req) {
 // puis à la demande), complétés par la liste intégrée, la config et les saisies.
 async function listModels(req) {
   const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
-  if (!a || !a.modelFlag) return { models: [], current: null, error: null };
+  if (!a || !canPickModel(a)) return { models: [], current: null, error: null };
   if (a.binPath && (!discovered[a.id] || req.refresh === true)) {
     discovered[a.id] = await discoverModels(a.id, (args) => {
       let text = '';
@@ -553,38 +638,64 @@ function registerIpc() {
   });
   handle('aska:state', () => publicState());
   handle('aska:run', startRun);
-  handle('aska:cancel', () => {
-    if (current) current.handle.cancel();
+  handle('aska:cancel', (tabId) => {
+    const tab = typeof tabId === 'string' ? tabs.get(tabId) : tabs.active();
+    if (tab && tab.run) tab.run.handle.cancel();
     return true;
   });
   handle('aska:hide', () => hideWindow());
+  handle('aska:set-pinned', (v) => {
+    pinned = v === true;
+    saveState();
+    return pinned;
+  });
+  // ----- onglets -----
+  const tabChanged = (extra = {}) => {
+    syncCwd();
+    saveState();
+    return { ...publicState(), ...extra };
+  };
+  // Nouvel onglet, dans le dossier de l'onglet actif.
+  handle('aska:tab-new', () => {
+    const r = tabs.create(cwd);
+    return tabChanged(r.error ? { error: r.error } : {});
+  });
+  handle('aska:tab-activate', (id) => {
+    if (typeof id === 'string') tabs.activate(id);
+    return tabChanged();
+  });
+  handle('aska:tab-cycle', (dir) => {
+    tabs.cycle(dir === -1 ? -1 : 1);
+    return tabChanged();
+  });
+  // Fermer un onglet qui travaille demande une confirmation : sa demande sera annulée.
+  handle('aska:tab-close', (req) => {
+    // Sans identifiant : l'onglet actif. Un identifiant mal formé est refusé, jamais remplacé.
+    const id = !req || req.id === undefined ? tabs.activeId : typeof req.id === 'string' ? req.id : null;
+    const r = tabs.close(id, { force: !!(req && req.force === true), cwd });
+    return tabChanged(r.needsConfirm ? { needsConfirm: id } : r.error ? { error: r.error } : {});
+  });
   handle('aska:conv-new', () => {
-    if (!current) conv = store.create(cwd);
-    return publicState();
+    const r = tabs.create(cwd);
+    return tabChanged(r.error ? { error: r.error } : {});
   });
   handle('aska:conv-list', () => publicList());
   handle('aska:conv-open', (cid) => {
-    if (current) return publicState();
-    const c = store.load(cid);
-    if (c) {
-      conv = c;
-      // On retrouve le dossier de la conversation : la reprise de session en dépend.
-      if (typeof c.cwd === 'string' && !sec.checkWorkdir(c.cwd, 'read').error) {
-        cwd = c.cwd;
-        saveState();
-      }
-    }
-    return publicState();
+    const r = openConversationById(cid);
+    return { ...publicState(), ...(r.error ? { error: r.error } : {}) };
   });
   handle('aska:conv-delete', (cid) => {
-    if (current && conv.id === cid) return publicList();
+    if (typeof cid !== 'string') return publicList();
+    // Une conversation ouverte dans un onglet qui travaille n'est pas supprimée.
+    if (tabs.forget(cid, cwd).error) return publicList();
     store.delete(cid);
-    if (conv.id === cid) conv = store.create(cwd);
+    syncCwd();
+    saveState();
     return publicList();
   });
   handle('aska:set-model', (req) => {
     const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
-    if (!a || !a.modelFlag) return publicState();
+    if (!a || !canPickModel(a)) return publicState();
     if (req.model === null) delete picked[a.id];
     else if (isModel(req.model)) {
       picked[a.id] = req.model;
@@ -597,19 +708,25 @@ function registerIpc() {
   });
   handle('aska:set-mini', (v) => {
     mini = v === true;
+    if (!mini && win && win.isVisible()) setUnread(0);
   });
   // La fenêtre épouse le panneau : aucune zone transparente ne bloque les clics autour.
   handle('aska:resize', (size) => {
     if (!size || !Number.isFinite(size.w) || !Number.isFinite(size.h)) return;
-    const w = Math.round(Math.min(Math.max(size.w, 120), 900));
-    const h = Math.round(Math.min(Math.max(size.h, 40), 800));
     const b = win.getBounds();
+    const wa = screen.getDisplayMatching(b).workArea;
+    const w = Math.round(Math.min(Math.max(size.w, 120), wa.width - 16));
+    const h = Math.round(Math.min(Math.max(size.h, 40), wa.height - 16));
     if (b.width === w && b.height === h) return;
     // Le bord bas reste en place : la zone de saisie ne bouge pas quand le fil s'allonge.
-    const wa = screen.getDisplayMatching(b).workArea;
     const y = Math.max(wa.y, b.y + b.height - h);
+    // Le panneau qui s'élargit (ou revient à sa taille) reste centré ; la pastille,
+    // elle, se replie vers la gauche, là où commence le panneau.
+    let x = b.x;
+    if (b.width >= 600 && w >= 600) x = Math.round(b.x - (w - b.width) / 2);
+    x = Math.min(Math.max(x, wa.x), wa.x + wa.width - w);
     win.setResizable(true);
-    win.setBounds({ x: b.x, y, width: w, height: h });
+    win.setBounds({ x, y, width: w, height: h });
     win.setResizable(false);
   });
   handle('aska:copy', (text) => {
@@ -617,7 +734,9 @@ function registerIpc() {
     return true;
   });
   handle('aska:reset-dir', () => {
+    if (tabs.active().run) return publicState();
     cwd = P.workspace;
+    tabs.active().conv.cwd = cwd;
     saveState();
     return publicState();
   });
@@ -631,8 +750,9 @@ function registerIpc() {
       });
       if (!r.canceled && r.filePaths[0]) {
         const d = sec.checkWorkdir(r.filePaths[0], 'read');
-        if (!d.error) {
+        if (!d.error && !tabs.active().run) {
           cwd = d.path;
+          tabs.active().conv.cwd = cwd; // le dossier appartient à l'onglet
           saveState();
         }
       }
@@ -647,11 +767,77 @@ function registerIpc() {
 // ---------- cycle de vie ----------
 
 const argv = process.argv.slice(1);
+
+// « aska --help » / « --version » : réponse dans le terminal, sans ouvrir de fenêtre.
+if (wantsCliOutput(argv)) {
+  printCli(argv);
+  app.exit(0);
+}
 const wants = (flag) => argv.includes(flag);
 
-if (!app.requestSingleInstanceLock()) {
+const APP_FLAGS = ['--toggle', '--hidden', '--reload', '--restart', '--replaced', '--quit', '--no-autostart'];
+
+// Remplace l'instance en cours : une instance auxiliaire lui transmet « --quit »
+// (compris même par les anciennes versions), puis on se relance à sa place.
+// « --replaced » évite toute boucle si l'ancienne instance refuse de se fermer.
+function replaceRunningInstance() {
+  const { spawn } = require('child_process');
+  const root = app.getAppPath();
+  const chromiumFlags = argv.filter((a) => a.startsWith('--') && !APP_FLAGS.includes(a));
+  spawn(process.execPath, [...chromiumFlags, root, '--quit'], { detached: true, stdio: 'ignore', env: process.env }).unref();
+  setTimeout(() => {
+    const userArgs = argv.filter((a) => APP_FLAGS.includes(a) && a !== '--restart');
+    app.relaunch({ args: [...chromiumFlags, root, ...userArgs, '--replaced'] });
+    app.exit(0);
+  }, 2500);
+}
+
+// Windows : les notifications ne s'affichent que si un raccourci du menu Démarrer
+// porte l'identité de l'application (AppUserModelID). Seule l'API de raccourcis
+// d'Electron sait l'écrire : scripts/install.ps1 appelle donc « --install-shortcuts ».
+const APP_ID = 'aska';
+if (process.platform === 'win32' && wants('--install-shortcuts')) {
+  // Ne jamais rester bloqué : quoi qu'il arrive, le processus se termine.
+  const done = (code, out) => {
+    (code ? process.stderr : process.stdout).write(out + '\n');
+    app.exit(code);
+  };
+  setTimeout(() => done(2, 'Délai dépassé pendant la création des raccourcis.'), 30000).unref();
+  app.whenReady().then(() => {
+    const fs = require('fs');
+    const programs = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+    const root = path.join(__dirname, '..', '..');
+    const link = (file, args) => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      // « create » crée le raccourci ou l'écrase (« replace » échoue s'il n'existe pas).
+      const ok = shell.writeShortcutLink(file, 'create', {
+        target: process.execPath,
+        args: `"${root}" ${args}`,
+        cwd: root,
+        description: 'Demander une action à un agent IA (Claude, Codex, Copilot, Cursor)',
+        icon: process.execPath,
+        iconIndex: 0,
+        appUserModelId: APP_ID,
+      });
+      if (!ok) throw new Error(`impossible d'écrire ${file}`);
+      const back = shell.readShortcutLink(file);
+      if (back.appUserModelId !== APP_ID) throw new Error(`identité absente du raccourci ${file}`);
+      return { file, appUserModelId: back.appUserModelId, target: back.target };
+    };
+    const startup = path.join(programs, 'Startup', 'Aska.lnk');
+    const made = [link(path.join(programs, 'Aska.lnk'), '--toggle')];
+    if (wants('--no-autostart')) fs.rmSync(startup, { force: true });
+    else made.push(link(startup, '--hidden'));
+    done(0, JSON.stringify(made));
+  }).catch((e) => done(1, `Création des raccourcis impossible : ${e.message}`));
+} else if (!app.requestSingleInstanceLock()) {
   // Une instance tourne déjà : elle reçoit nos arguments (« second-instance ») et bascule.
-  app.quit();
+  // Mais si elle exécute un autre code que le nôtre (Aska mis à jour sans avoir été
+  // relancé), ses fonctions sont périmées : on la remplace plutôt que de la rouvrir.
+  const running = runningInstance(sec.readOwnedJson, P.run);
+  const stale = !running || running.build !== BUILD;
+  if ((stale || wants('--restart')) && !wants('--quit') && !wants('--replaced')) replaceRunningInstance();
+  else app.quit();
 } else {
   app.on('second-instance', (_e, secondArgv) => {
     if (secondArgv.includes('--quit')) {
@@ -667,16 +853,28 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   // Windows : identité de l'application, nécessaire aux notifications.
-  if (process.platform === 'win32') app.setAppUserModelId('aska');
+  if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 
   app.whenReady().then(() => {
     if (wants('--quit')) return app.quit();
+    if (MAC) {
+      // Lanceur : pas d'icône dans le Dock. Le menu Édition est indispensable sur
+      // macOS pour que ⌘C, ⌘V, ⌘X, ⌘A et ⌘Z fonctionnent dans les champs.
+      if (app.dock) app.dock.hide();
+      Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]));
+    }
+    // Instance active : ce fichier permet de la reconnaître (aska --help, remplacement).
+    try {
+      sec.writePrivate(P.run, JSON.stringify({ pid: process.pid, build: BUILD, version: app.getVersion(), startedAt: new Date().toISOString() }));
+    } catch { /* confort seulement */ }
     // Aucune permission web (caméra, géoloc, notifications web…) n'est accordée.
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
 
     loadEverything();
     registerIpc();
+    // Agents qui exigent un modèle (Ollama) : liste préchargée, pour en avoir un par défaut.
+    for (const a of Object.values(agents)) if (a.requiresModel && a.binPath) listModels({ agentId: a.id }).catch(() => {});
     registerShortcut();
     createWindow();
     setupTray();
@@ -692,11 +890,16 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     quitting = true;
-    if (current) current.handle.cancel();
+    for (const t of tabs ? tabs.running() : []) t.run.handle.cancel();
   });
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
     if (tray) tray.destroy();
+    // On ne retire le fichier que s'il est encore le nôtre (une nouvelle instance a pu le réécrire).
+    try {
+      const r = sec.readOwnedJson(P.run);
+      if (r.data && r.data.pid === process.pid) require('fs').rmSync(P.run, { force: true });
+    } catch { /* déjà supprimé */ }
   });
   app.on('window-all-closed', () => {}); // l'app reste résidente
 }

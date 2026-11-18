@@ -13,7 +13,7 @@ const { clean } = require('./runner');
 function parseModelLines(text) {
   const out = [];
   for (const raw of clean(text).split('\n')) {
-    const m = raw.match(/^\s*(?:[*•>-]\s+)?([A-Za-z0-9][\w.:\/\[\]-]*)\s+[-–—:]\s+(.+?)\s*$/);
+    const m = raw.match(/^\s*(?:[*•>-]\s+)?([A-Za-z0-9][\w.:/[\]-]*)\s+[-–—:]\s+(.+?)\s*$/);
     if (!m || !isModel(m[1])) continue;
     const label = m[2].replace(/\s*\((current|default|actuel)[^)]*\)\s*/gi, ' ').trim();
     out.push({ id: m[1], label: label && label !== m[1] ? label.slice(0, 60) : null });
@@ -52,8 +52,27 @@ function parseCodexCache(data) {
   return out;
 }
 
+/**
+ * « ollama list » : un tableau dont la première colonne est le nom du modèle.
+ *   NAME               ID              SIZE      MODIFIED
+ *   llama3.2:latest    a80c4f17acd5    2.0 GB    3 weeks ago
+ */
+function parseOllamaList(text) {
+  const out = [];
+  for (const raw of clean(text).split('\n')) {
+    // Une vraie ligne du tableau : le nom, puis l'identifiant (12 caractères hexadécimaux).
+    const cols = raw.trim().split(/\s+/);
+    const name = cols[0];
+    if (cols.length < 3 || !/^[0-9a-f]{12}$/.test(cols[1]) || !isModel(name) || out.some((o) => o.id === name)) continue;
+    const size = (raw.match(/\b(\d+(?:\.\d+)?\s?[KMGT]B)\b/) || [])[1];
+    out.push({ id: name, label: size ? `${name.replace(/:latest$/, '')} · ${size}` : null });
+  }
+  return out;
+}
+
 // Où trouver les modèles de chaque agent intégré.
 const SOURCES = {
+  ollama: { args: ['list'], parse: parseOllamaList },
   claude: { args: ['--help'], parse: (t) => parseHelpOption(t) },
   copilot: { args: ['help'], parse: (t) => parseHelpOption(t) },
   cursor: { args: ['--list-models'], parse: parseModelLines },
@@ -83,4 +102,4 @@ async function discoverModels(agentId, runCommand, env = process.env) {
   }
 }
 
-module.exports = { discoverModels, parseModelLines, parseHelpOption, parseCodexCache, SOURCES };
+module.exports = { discoverModels, parseModelLines, parseHelpOption, parseCodexCache, parseOllamaList, SOURCES };

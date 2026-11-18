@@ -47,11 +47,14 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   };
   wrap('claude', 'stream');
   wrap('cursor-agent', 'stream');
+  wrap('ollama', 'ollama');
   wrap('codex', ''); // comportement choisi par une balise [mode] dans le prompt
   const calls = () => fs.readFileSync(callLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 
   // Environnement de l'app : dossier personnel et PATH isolés (Windows : profil et AppData).
-  const env = { ...process.env, SECRET_TOKEN: 'ne-doit-pas-fuiter' };
+  const notifyLog = path.join(home, 'notifications.jsonl');
+  const notifications = () => (fs.existsSync(notifyLog) ? fs.readFileSync(notifyLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
+  const env = { ...process.env, SECRET_TOKEN: 'ne-doit-pas-fuiter', ASKA_NOTIFY_LOG: notifyLog };
   const setVar = (k, v) => {
     for (const x of Object.keys(env)) if (x.toUpperCase() === k.toUpperCase()) delete env[x];
     if (v !== undefined) env[k] = v;
@@ -77,6 +80,11 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   const shot = (name) => page.screenshot({ path: path.join(OUT, name + '.png'), omitBackground: true });
   const bounds = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
   const visible = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible());
+  // Attend que la fenêtre soit (in)visible : masquer ou montrer n'est pas instantané partout (macOS).
+  const waitVisible = async (want) => {
+    for (let i = 0; i < 40 && (await visible()) !== want; i++) await page.waitForTimeout(100);
+    assert.equal(await visible(), want, want ? 'fenêtre visible attendue' : 'fenêtre masquée attendue');
+  };
   const send = async (text) => {
     await page.fill('#input', text);
     await page.keyboard.press('Enter');
@@ -95,25 +103,52 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     // L'interface est bien isolée de Node.
     assert.deepEqual(await page.evaluate(() => [typeof require, typeof process]), ['undefined', 'undefined']);
     // Le processus principal revalide tout ce que l'interface envoie.
-    const bad = await page.evaluate(async () => [
-      await window.aska.run({ agentId: '__proto__', mode: 'read', prompt: 'x' }),
-      await window.aska.run({ agentId: 'claude', mode: 'auto', prompt: 'x', trust: 'always' }),
-      await window.aska.run({ agentId: 'claude', mode: 'bypass', prompt: 'x' }),
-      await window.aska.run({ agentId: 'claude', mode: 'read', prompt: 42 }),
-      (await window.aska.setModel('claude', '--dangerously-skip-permissions')).agents.find((a) => a.id === 'claude').model,
-      (await window.aska.openConversation('../../../etc/passwd')).conversation.turns.length,
-    ]);
+    const bad = await page.evaluate(async () => {
+      const tabId = (await window.aska.getState()).conversation.id;
+      return [
+        await window.aska.run({ tabId, agentId: '__proto__', mode: 'read', prompt: 'x' }),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'auto', prompt: 'x', trust: 'always' }),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'bypass', prompt: 'x' }),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'read', prompt: 42 }),
+        (await window.aska.setModel('claude', '--dangerously-skip-permissions')).agents.find((a) => a.id === 'claude').model,
+        (await window.aska.openConversation('../../../etc/passwd')).conversation.turns.length,
+        await window.aska.run({ tabId: '__proto__', agentId: 'claude', mode: 'read', prompt: 'x' }),
+        await window.aska.run({ agentId: 'claude', mode: 'read', prompt: 'x' }),
+        (await window.aska.activateTab('../../x')).conversation.id === tabId,
+        await window.aska.closeTab(42),
+      ];
+    });
     assert.match(bad[0].error, /inconnu/);
     assert.match(bad[1].error, /autonome est désactivé/);
     assert.match(bad[2].error, /Mode inconnu/);
     assert.match(bad[3].error, /invalide/);
     assert.equal(bad[4], null);
     assert.equal(bad[5], 0);
+    // Onglet inexistant ou absent : refusé, et rien ne change.
+    assert.match(bad[6].error, /Onglet introuvable/);
+    assert.match(bad[7].error, /Onglet introuvable/);
+    assert.equal(bad[8], true);
+    assert.match(bad[9].error, /Onglet introuvable/);
+    assert.equal(bad[9].tabs.length, 1);
 
-    // Fenêtre fixe : elle reste affichée quand elle perd le focus, et épouse le panneau.
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit('blur'));
-    await page.waitForTimeout(300);
-    assert.equal(await visible(), true);
+    // Clic à l'extérieur : le chat se masque (comportement par défaut)…
+    const blur = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit('blur'));
+    const toggle = () => app.evaluate(({ app }) => app.emit('second-instance', {}, ['--toggle']));
+    assert.equal(await page.getAttribute('#pin-btn', 'aria-pressed'), 'false');
+    await blur();
+    await waitVisible(false);
+    await toggle();
+    await waitVisible(true);
+    // … sauf s'il est épinglé (Ctrl+P), choix mémorisé.
+    await page.keyboard.press('Control+p');
+    assert.equal(await page.getAttribute('#pin-btn', 'aria-pressed'), 'true');
+    await blur();
+    await waitVisible(true);
+    assert.equal(JSON.parse(fs.readFileSync(P.state, 'utf8')).pinned, true);
+    await page.keyboard.press('Control+p');
+    assert.equal(JSON.parse(fs.readFileSync(P.state, 'utf8')).pinned, false);
+    await page.keyboard.press('Control+p'); // reste épinglé pour la suite du test
+    // La fenêtre épouse le panneau.
     const idle = await bounds();
     assert.equal(idle.width, 748);
     assert.ok(idle.height < 150, `hauteur au repos ${idle.height}`);
@@ -134,7 +169,21 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForTimeout(400);
     const grown = await bounds();
     assert.ok(grown.height > 300, `hauteur avec réponse ${grown.height}`);
-    assert.equal(grown.y + grown.height, idle.y + idle.height, 'le bord bas (la saisie) ne doit pas bouger');
+    // Le bord bas (la saisie) ne bouge pas… tant qu'il y a la place au-dessus. Sur un
+    // petit écran, la fenêtre s'arrête en haut de l'écran et descend plutôt que d'en sortir.
+    const wa = await app.evaluate(({ screen, BrowserWindow }) => screen.getDisplayMatching(BrowserWindow.getAllWindows()[0].getBounds()).workArea);
+    if (idle.y + idle.height - grown.height >= wa.y) {
+      assert.equal(grown.y + grown.height, idle.y + idle.height, 'le bord bas (la saisie) ne doit pas bouger');
+    } else {
+      assert.equal(grown.y, wa.y, 'petit écran : la fenêtre s\'arrête en haut de l\'écran');
+    }
+    assert.ok(grown.y + grown.height <= wa.y + wa.height, 'la fenêtre reste entière à l\'écran');
+    // Dès la première réponse, le panneau s'agrandit pour la lecture, en restant centré.
+    assert.ok(await page.locator('.panel.wide').count(), 'panneau agrandi');
+    // Largeur agrandie : 1040 px au plus, en laissant une marge sur les petits écrans.
+    const screenW = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea.width);
+    assert.equal(grown.width, Math.max(720, Math.min(1040, screenW - 96)) + 28, `largeur avec réponse ${grown.width}`);
+    assert.ok(Math.abs(grown.x + grown.width / 2 - (idle.x + idle.width / 2)) <= 1, 'agrandi autour du même centre');
 
     // 2e message : même fil, et Claude reprend sa session au lieu de repartir de zéro.
     await send('Et le fichier preload ?');
@@ -172,12 +221,14 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.keyboard.type('fab');
     assert.deepEqual(await page.locator('.model-opt').allTextContents(), ['fable']);
     await page.keyboard.press('Enter');
+    await page.waitForSelector('#model-menu', { state: 'hidden' }); // le choix est enregistré de façon asynchrone
     assert.equal(await page.textContent('#model-name'), 'fable');
     // Un nom absent de la liste reste utilisable.
     await page.click('#model');
     await page.keyboard.type('claude-custom-9');
     assert.deepEqual(await page.locator('.model-opt').allTextContents(), ['Utiliser « claude-custom-9 »']);
     await page.keyboard.press('Enter');
+    await page.waitForSelector('#model-menu', { state: 'hidden' });
     assert.equal(await page.textContent('#model-name'), 'claude-custom-9');
     await page.click('#model');
     await page.waitForFunction(() => document.querySelectorAll('.model-opt').length === 6);
@@ -251,7 +302,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await shot('5-mini-light');
     await page.click('#mini-btn');
     await page.waitForTimeout(500);
-    assert.equal((await bounds()).width, 748);
+    assert.equal((await bounds()).width, grown.width, 'rétabli à la taille agrandie');
     assert.equal(await turns(), 6);
 
     // Historique : nouvelle conversation, liste, réouverture, suppression.
@@ -341,6 +392,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.keyboard.press('Tab');
     assert.equal(await page.textContent('#agent-name'), 'Cursor');
     await page.keyboard.press('Tab');
+    assert.equal(await page.textContent('#agent-name'), 'Ollama');
+    await page.keyboard.press('Tab');
     assert.equal(await page.textContent('#agent-name'), 'Claude');
     await send('On reprend');
     await settled('running');
@@ -385,41 +438,160 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.ok(audit.every((a) => !JSON.stringify(a.argv).includes('historique')));
     if (POSIX) assert.equal(fs.statSync(logFile).mode & 0o777, 0o600);
 
+    // Notifications : on envoie une demande, puis on masque le chat pendant que l'agent travaille.
+    assert.equal(notifications().length, 0, 'aucune notification tant que le chat est sous les yeux');
+    const unreadShown = () => page.waitForFunction(() => document.querySelector('.panel').classList.contains('has-unread'), null, { timeout: 20000, polling: 100 });
+    await send('Réponds pendant que je travaille ailleurs');
+    await settled('running');
+    await page.click('#close-btn'); // masque sans annuler
+    await waitVisible(false);
+    await unreadShown();
+    let notes = notifications();
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].title, 'Claude a répondu');
+    // Début de la réponse, en texte brut (le faux Claude reprend ici sa session).
+    assert.equal(notes[0].body, 'Suite de la session : preload.js expose une API minimale.');
+    await toggle();
+    await waitVisible(true);
+    assert.equal(await page.locator('.panel.has-unread').count(), 0, 'réponse lue une fois le chat rouvert');
+    assert.equal(await turns(), 8);
+    // Réduit en pastille pendant le travail : notification, et la pastille signale la réponse.
+    await send('Et pendant que la fenêtre est réduite ?');
+    await settled('running');
+    await page.keyboard.press('Control+m');
+    await unreadShown();
+    assert.equal(await page.textContent('#mini-status'), 'Nouvelle réponse');
+    notes = notifications();
+    assert.equal(notes.length, 2);
+    assert.equal(notes[1].conversationId, notes[0].conversationId);
+    await page.waitForTimeout(500);
+    await shot('8-mini-unread-light');
+    await page.click('#mini-btn');
+    await page.waitForTimeout(400);
+    assert.equal(await page.locator('.panel.has-unread').count(), 0);
+    assert.equal(await turns(), 9);
+
     // Échap masque la fenêtre ; une seconde instance (« aska --toggle ») la rouvre, fil intact.
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(400);
-    assert.equal(await visible(), false);
-    await app.evaluate(({ app }) => app.emit('second-instance', {}, ['--toggle']));
-    await page.waitForTimeout(400);
-    assert.equal(await visible(), true);
-    assert.equal(await turns(), 7);
+    await waitVisible(false);
+    await toggle();
+    await waitVisible(true);
+    assert.equal(await turns(), 9);
 
-    // Navigation et ouverture de fenêtre bloquées.
-    await page.evaluate(() => { window.open('https://example.com'); location.href = 'https://example.com'; });
-    await page.waitForTimeout(300);
-    assert.match(page.url(), /^file:.*index\.html$/);
-    assert.equal((await app.windows()).length, 1);
+    // ---------- onglets : plusieurs conversations, qui travaillent en même temps ----------
+    const tabTitles = () => page.locator('.tab .tab-title').allTextContents();
+    const activeTitle = () => page.locator('.tab.active .tab-title').textContent();
+    await page.keyboard.press('Control+t');
+    await page.waitForSelector('#tabs:not([hidden])');
+    assert.equal(await page.locator('.tab').count(), 2);
+    assert.equal(await activeTitle(), 'Nouvelle conversation');
+    assert.equal(await turns(), 0, 'nouvel onglet : fil vide');
+    // Nouvelle conversation : retour à la taille normale.
+    await page.waitForTimeout(500);
+    assert.equal(await page.locator('.panel.wide').count(), 0);
+    assert.equal((await bounds()).width, 748, 'onglet vide : taille normale');
+    // Une demande longue dans l'onglet 2…
+    await page.keyboard.type('Analyse longue dans le deuxième onglet');
+    await page.keyboard.press('Enter');
+    await settled('running');
+    // … et pendant ce temps, retour à l'onglet 1 (Ctrl+1) où l'on travaille aussi.
+    await page.keyboard.type('brouillon');
+    await page.keyboard.press('Control+1');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 9);
+    assert.equal(await page.locator('.tab.running').count(), 1, 'l\'onglet 2 travaille en arrière-plan');
+    assert.equal(await page.inputValue('#input'), '', 'chaque onglet a son propre brouillon');
+    await shot('9-tabs-running-light');
+    await send('Pendant ce temps, une question rapide [text]');
+    await settled('done');
+    assert.equal(await turns(), 10);
+    // La réponse de l'onglet 2 arrive alors qu'on ne le regarde pas : il est marqué.
+    await page.waitForSelector('.tab.unread', { timeout: 20000 });
+    assert.equal(await page.locator('.tab.running').count(), 0);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(400);
+    await shot('9-tabs-unread-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.keyboard.press('Control+Tab');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 1);
+    assert.match(await page.locator('.turn .output').first().textContent(), /trois points sur main\.js/);
+    assert.equal(await page.locator('.tab.unread').count(), 0, 'lu une fois l\'onglet ouvert');
+    assert.equal(await page.inputValue('#input'), 'brouillon', 'le brouillon de l\'onglet 2 est retrouvé');
+    await page.fill('#input', '');
+    // Se raccrocher à une réponse en cours : on quitte l'onglet pendant qu'il répond, on y revient.
+    await send('Deuxième réponse, suivie à distance');
+    await settled('running');
+    await page.keyboard.press('Control+Shift+Tab');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 10);
+    await page.keyboard.press('Control+2');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 2);
+    assert.equal(await page.getAttribute('.panel', 'data-state'), 'running');
+    await settled('done');
+    assert.match(await page.locator('.turn .output').nth(1).textContent(), /Suite de la session|trois points/);
+    // Fermer un onglet qui travaille : confirmation, puis la demande est annulée.
+    await send('Demande à abandonner [hang]');
+    await settled('running');
+    await page.keyboard.press('Control+w');
+    assert.match(await page.textContent('#status'), /fermez à nouveau/);
+    assert.equal(await page.locator('.tab').count(), 2);
+    await page.keyboard.press('Control+w');
+    await page.waitForFunction(() => document.querySelector('#tabs').hidden);
+    assert.equal(await turns(), 10, 'retour à l\'onglet restant');
+    await page.waitForTimeout(500);
+    assert.equal(JSON.parse(fs.readFileSync(P.audit, 'utf8').trim().split('\n').pop()).result, 'cancel');
+    // Les onglets ouverts sont enregistrés pour le prochain démarrage.
+    const st = JSON.parse(fs.readFileSync(P.state, 'utf8'));
+    assert.equal(st.tabs.length, 1);
+    assert.equal(st.activeTab, st.tabs[0]);
+    assert.deepEqual(await tabTitles(), ['Résume main.js (deny)']);
+
+    // ---------- Ollama : modèles locaux, sans outils ----------
+    for (let i = 0; i < 6 && (await page.textContent('#agent-name')) !== 'Ollama'; i++) await page.keyboard.press('Tab');
+    assert.equal(await page.textContent('#agent-name'), 'Ollama');
+    assert.equal(await page.textContent('#mode-name'), 'Lecture seule');
+    // Premier modèle installé (« ollama list »), utilisé et affiché par défaut.
+    await page.waitForFunction(() => document.querySelector('#model-name').textContent === 'qwen3:8b', null, { timeout: 10000 }).catch(async () => {
+      await page.keyboard.press('Control+Shift+M');
+      await page.keyboard.press('Escape');
+    });
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.textContent('#mode-name'), 'Lecture seule', 'pas d\'autre mode pour Ollama');
+    const beforeOllama = calls().length;
+    await send('Bonjour Ollama');
+    await settled('done');
+    const answer = await page.locator('.turn .output').last().textContent();
+    assert.equal(answer.trim(), 'Réponse locale de qwen3:8b.');
+    assert.ok(!(await page.textContent('.thread')).includes('réfléchit à voix haute'), 'la réflexion n\'est pas affichée comme réponse');
+    assert.deepEqual(calls()[beforeOllama].args, ['run', 'qwen3:8b']);
+    await page.keyboard.press('Tab'); // retour à Claude
 
     // Cursor exige --trust sans interface : accordé d'office dans le dossier vide d'Aska.
     const before = calls().length;
-    assert.equal((await page.evaluate(() => window.aska.run({ agentId: 'cursor', mode: 'read', prompt: 'salut' }))).ok, true);
+    assert.equal((await page.evaluate(async () => window.aska.run({ tabId: (await window.aska.getState()).conversation.id, agentId: 'cursor', mode: 'read', prompt: 'salut' }))).ok, true);
     await page.waitForTimeout(1500);
     const cur = calls()[before];
     assert.deepEqual(cur.args.slice(0, 6), ['-p', '--output-format', 'stream-json', '--mode', 'ask', '--trust']);
 
     // « Nouvelle conversation » depuis le menu de l'icône de la barre système :
-    // la fenêtre masquée réapparaît avec un fil vide (même chemin que Ctrl+N).
+    // la fenêtre masquée réapparaît sur un nouvel onglet vide (même chemin que Ctrl+N).
     await page.waitForFunction(() => document.querySelectorAll('.turn').length > 0);
+    const tabsBefore = await page.locator('.tab').count();
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(400);
-    assert.equal(await visible(), false);
+    await waitVisible(false);
     await app.evaluate(({ BrowserWindow }) => {
       const w = BrowserWindow.getAllWindows()[0];
       w.show();
       w.webContents.send('aska:new-conversation');
     });
+    await waitVisible(true);
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
-    assert.equal(await visible(), true);
+    assert.equal(await page.locator('.tab').count(), tabsBefore + 1);
+
+    // Navigation et ouverture de fenêtre bloquées (en dernier : Playwright attend ensuite
+    // une navigation qui n'aura jamais lieu).
+    await page.evaluate(() => { window.open('https://example.com'); location.href = 'https://example.com'; });
+    await page.waitForTimeout(300);
+    assert.match(page.url(), /^file:.*index\.html$/);
+    assert.equal((await app.windows()).length, 1);
 
     console.log('E2E OK — captures dans', OUT);
   } finally {

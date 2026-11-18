@@ -15,7 +15,7 @@ const path = require('path');
 const WIN = process.platform === 'win32';
 const SCRIPT_EXT = /\.(c|m)?js$/i;
 // Arguments sans danger pour cmd.exe : flags, noms de modèles, identifiants.
-const CMD_SAFE_ARG = /^[A-Za-z0-9_.:\/\\=,@+\[\]-]*$/;
+const CMD_SAFE_ARG = /^[A-Za-z0-9_.:/\\=,@+[\]-]*$/;
 
 /** Cherche un fichier exécutable (par son nom exact) dans une liste de dossiers. */
 function findOnPath(name, envPath) {
@@ -98,4 +98,55 @@ function buildCommand(launch, argv) {
   return { command: comspec, args: ['/d', '/s', '/c', `""${launch.command}" ${args.join(' ')}"`], verbatim: true };
 }
 
-module.exports = { resolveLaunch, buildCommand, parseNpmShim, findOnPath, WIN };
+/** Dossiers bin des versions de Node installées par nvm, de la plus récente à la plus ancienne. */
+function nvmBins(versionsDir) {
+  let names;
+  try {
+    names = fs.readdirSync(versionsDir).filter((n) => /^v\d+\.\d+\.\d+$/.test(n));
+  } catch {
+    return [];
+  }
+  const num = (n) => n.slice(1).split('.').map(Number);
+  names.sort((a, b) => {
+    const [x, y] = [num(a), num(b)];
+    return y[0] - x[0] || y[1] - x[1] || y[2] - x[2];
+  });
+  return names.map((n) => path.join(versionsDir, n, 'bin'));
+}
+
+/**
+ * PATH élargi : une session graphique n'a pas toujours le PATH du terminal, on
+ * ajoute donc les emplacements habituels des CLI installés par l'utilisateur.
+ */
+function extendedPath({ env = process.env, home = require('os').homedir(), platform = process.platform } = {}) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const get = (name) => {
+    const k = Object.keys(env).find((x) => x.toUpperCase() === name.toUpperCase());
+    return k ? env[k] : undefined;
+  };
+  let extra;
+  if (platform === 'win32') {
+    const appData = get('APPDATA') || p.join(home, 'AppData', 'Roaming');
+    const local = get('LOCALAPPDATA') || p.join(home, 'AppData', 'Local');
+    extra = [
+      p.join(appData, 'npm'), // npm i -g
+      p.join(home, '.local', 'bin'), // installateur natif de Claude Code
+      p.join(local, 'cursor-agent'),
+      p.join(home, '.bun', 'bin'),
+      p.join(local, 'Volta', 'bin'),
+      p.join(get('ProgramFiles') || 'C:\\Program Files', 'nodejs'),
+    ];
+  } else {
+    extra = ['.local/bin', 'bin', '.npm-global/bin', '.bun/bin', '.volta/bin'].map((d) => p.join(home, d));
+    // nvm : les CLI installés par « npm i -g » vivent dans le dossier de chaque version de Node.
+    extra.push(...nvmBins(p.join(get('NVM_DIR') || p.join(home, '.nvm'), 'versions', 'node')));
+    // macOS : une application lancée hors du terminal n'a que /usr/bin:/bin:/usr/sbin:/sbin.
+    if (platform === 'darwin') extra.push('/opt/homebrew/bin', '/opt/homebrew/sbin');
+    extra.push('/usr/local/bin');
+  }
+  const parts = (get('PATH') || '').split(p.delimiter).filter((d) => d && p.isAbsolute(d));
+  for (const d of extra) if (!parts.includes(d)) parts.push(d);
+  return parts.join(p.delimiter);
+}
+
+module.exports = { resolveLaunch, buildCommand, parseNpmShim, findOnPath, extendedPath, nvmBins, WIN };

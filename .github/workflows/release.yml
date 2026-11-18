@@ -1,0 +1,60 @@
+# Versionnement automatique (release-please) : à chaque fusion sur main, une PR
+# « chore(main): release x.y.z » est tenue à jour avec le CHANGELOG et le numéro
+# de version, déduits des titres de PR (Conventional Commits). La fusionner crée
+# le tag vX.Y.Z et la release GitHub.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Préparer la release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          # Jeton facultatif (voir CONTRIBUTING.md) : avec le jeton par défaut, la CI
+          # ne se lance pas sur la PR de release, que seul un administrateur peut alors fusionner.
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  archive:
+    name: Joindre l'archive à la release
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - name: Archive et empreinte
+        env:
+          TAG: ${{ needs.release-please.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git archive --format=tar.gz --prefix="aska-${TAG}/" -o "aska-${TAG}.tar.gz" "$TAG"
+          sha256sum "aska-${TAG}.tar.gz" > "aska-${TAG}.tar.gz.sha256"
+          gh release upload "$TAG" "aska-${TAG}.tar.gz" "aska-${TAG}.tar.gz.sha256" --clobber

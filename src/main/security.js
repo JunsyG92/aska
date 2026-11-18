@@ -133,7 +133,9 @@ function windowsSystemDirs(env = process.env) {
   ];
 }
 
-const SYSTEM_DIRS = ['/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/boot', '/var', '/sys', '/proc', '/dev', '/run', '/root', '/snap'];
+// macOS en plus : /System, /Library, /Applications, et /private (où pointent /etc, /var, /tmp).
+const MAC_SYSTEM_DIRS = process.platform === 'darwin' ? ['/System', '/Library', '/Applications', '/private', '/cores'] : [];
+const SYSTEM_DIRS = [...MAC_SYSTEM_DIRS, '/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/boot', '/var', '/sys', '/proc', '/dev', '/run', '/root', '/snap'];
 
 /** Valide le dossier de travail. En mode écriture, refuse les dossiers trop larges ou système. */
 function checkWorkdir(dir, mode, home = os.homedir(), ownDirs = []) {
@@ -156,7 +158,8 @@ function checkWorkdir(dir, mode, home = os.homedir(), ownDirs = []) {
       return { error: `Écriture refusée dans un dossier système (${real})` };
     }
     const first = inHome ? path.relative(realHome, real).split(path.sep)[0] : '';
-    if (inHome && /^(\.(ssh|gnupg|config|local|aws|azure|kube|docker)|appdata)$/i.test(first)) {
+    // ~/Library (macOS) : trousseaux, préférences et données de toutes les applications.
+    if (inHome && /^(\.(ssh|gnupg|config|local|aws|azure|kube|docker)|appdata|library)$/i.test(first)) {
       return { error: `Écriture refusée dans un dossier sensible (~${path.sep}${path.relative(realHome, real)})` };
     }
   }
@@ -188,7 +191,8 @@ function readOwnedJson(file) {
     return { error: `${file} est modifiable par d'autres utilisateurs (chmod 600 requis)` };
   }
   try {
-    return { data: JSON.parse(fs.readFileSync(file, 'utf8')) };
+    // BOM UTF-8 retiré : Windows PowerShell 5.1 et le Bloc-notes en ajoutent un.
+    return { data: JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) };
   } catch (e) {
     return { error: `${file} : JSON invalide (${e.message})` };
   }

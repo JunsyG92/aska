@@ -16,6 +16,7 @@
   const status = $('status');
   const keys = $('keys');
   const api = window.aska;
+  const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
 
   let agents = [];
   let modes = {};
@@ -37,6 +38,12 @@
   let activityText = '';
   let view = 'chat'; // 'chat' | 'history'
   let menuOpen = false;
+  let pinned = false;
+  let unread = 0;
+  let tabList = []; // onglets : [{ id, title, color, running, unread, active }]
+  const tabUi = new Map(); // par onglet : { draft, agentId, mode }, gardé en changeant d'onglet
+  let closeArmed = null;
+  let wide = false; // panneau agrandi : la conversation a commencé à recevoir des réponses // onglet qui travaille, en attente de confirmation de fermeture
 
   const agent = () => agents.find((a) => a.id === agentId) || null;
   const el = (tag, cls, text) => {
@@ -72,7 +79,36 @@
   }
 
   function syncMini() {
-    $('mini-status').textContent = running ? activityText || 'En cours…' : status.textContent;
+    const others = tabList.filter((t) => t.running && !t.active).length;
+    $('mini-status').textContent = running
+      ? (activityText || 'En cours…') + (others ? ` · +${others}` : '')
+      : others
+        ? `${others} onglet${others > 1 ? 's' : ''} en cours`
+        : unread
+        ? unread > 1 ? `${unread} nouvelles réponses` : 'Nouvelle réponse'
+        : status.textContent;
+  }
+
+  // Réponses arrivées pendant que le chat était masqué ou réduit.
+  function setUnread(n) {
+    unread = n;
+    panel.classList.toggle('has-unread', unread > 0);
+    syncMini();
+  }
+
+  // Épinglé : le chat reste affiché quand on clique ailleurs.
+  function setPinned(v, save) {
+    pinned = v;
+    const btn = $('pin-btn');
+    btn.setAttribute('aria-pressed', String(pinned));
+    btn.title = pinned
+      ? 'Épinglé : reste affiché quand vous cliquez ailleurs (Ctrl+P pour désépingler)'
+      : 'Épingler : rester affiché quand on clique ailleurs (Ctrl+P)';
+    if (save) {
+      api.setPinned(pinned);
+      replay(btn, 'swap');
+      setStatus(pinned ? 'Épinglé' : 'Se masque au clic extérieur');
+    }
   }
 
   function setStatus(text, cls) {
@@ -109,6 +145,7 @@
     $('mini-btn').title = mini ? 'Agrandir (Ctrl+M)' : 'Réduire (Ctrl+M)';
     $('mini-btn').setAttribute('aria-label', mini ? 'Agrandir' : 'Réduire');
     api.setMini(mini);
+    window.AskaTabs.update(mini ? [] : tabList); // pas de barre d'onglets dans la pastille
     syncMini();
     if (!mini) {
       autosize();
@@ -169,7 +206,7 @@
   let modelSel = 0;
   let modelAll = [];
   let modelCurrent = null;
-  const MODEL_RE = /^[A-Za-z0-9][\w.:\/\[\]-]{0,79}$/;
+  const MODEL_RE = /^[A-Za-z0-9][\w.:/[\]-]{0,79}$/;
 
   function closeModelMenu() {
     menuOpen = false;
@@ -292,6 +329,7 @@
     turnCount = conversation.turns.length;
     thread.replaceChildren();
     for (const t of conversation.turns) addTurn(t, true);
+    setWide(conversation.turns.some((t) => t.answer || t.status !== 'running'));
     const last = conversation.turns[turnCount - 1];
     lastAnswer = last ? last.answer : '';
     panel.dataset.state = 'idle';
@@ -315,7 +353,12 @@
     $('cwd-name').textContent = s.cwd;
     $('cwd').title = (s.cwdIsScratch ? 'Dossier vide réservé à Aska' : s.cwd) + ' — Ctrl+O pour choisir un dossier';
     $('hist-btn').hidden = !s.historyEnabled;
-    if (!running && (s.conversation.id !== convId || s.conversation.turns.length !== turnCount)) renderThread(s.conversation);
+    setPinned(!!s.pinned, false);
+    setUnread(s.unread || 0);
+    sizeFromDisplay(s.display);
+    setTabs(s.tabs || []);
+    if (s.conversation.id !== convId) switchTo(s);
+    else if (!running && s.conversation.turns.length !== turnCount) renderThread(s.conversation);
     if (!agents.length) {
       input.disabled = true;
       input.placeholder = 'Aucun agent détecté';
@@ -326,6 +369,12 @@
       return;
     }
     input.disabled = false;
+    const saved = tabUi.get(convId);
+    if (saved && saved.agentId && agents.some((x) => x.id === saved.agentId)) {
+      agentId = saved.agentId;
+      mode = saved.mode || mode;
+      tabUi.set(convId, { ...saved, agentId: null }); // appliqué une fois, à l'arrivée sur l'onglet
+    }
     if (!agentId || !agent()) {
       const preferred = agents.find((a) => a.id === s.defaultAgent) || agents[0];
       if (!modes[mode] || !agentId) mode = s.defaultMode;
@@ -336,6 +385,98 @@
     setMode(a.modes.includes(mode) ? mode : a.modes[0], false);
     if (warnings.length && !turnCount && !running) showNotice(warnings.join('\n'), 'warn');
   }
+
+  // ---------- taille du panneau ----------
+
+  // Agrandi dès que l'IA répond ; un onglet vide revient à la taille normale.
+  function setWide(v) {
+    if (wide === v) return;
+    wide = v;
+    panel.classList.toggle('wide', wide);
+  }
+
+  function sizeFromDisplay(d) {
+    if (!d || !d.w || !d.h) return;
+    panel.style.setProperty('--wide-w', `${Math.max(720, Math.min(1040, d.w - 96))}px`);
+    panel.style.setProperty('--wide-h', `${Math.max(392, Math.min(760, Math.round(d.h * 0.62) - 140))}px`);
+  }
+
+  // ---------- onglets ----------
+
+  function setTabs(list) {
+    tabList = list;
+    window.AskaTabs.update(mini ? [] : list);
+    syncMini();
+  }
+
+  // Arrivée sur un autre onglet : on range le brouillon et les choix de l'onglet
+  // quitté, on affiche le fil du nouveau, et on se raccroche à sa demande en cours.
+  function switchTo(s) {
+    if (convId) tabUi.set(convId, { draft: input.value, agentId, mode });
+    clearTimeout(renderTimer);
+    renderTimer = null;
+    closeArmed = null;
+    pendingTrust = null;
+    confirmBox.hidden = true;
+    if (view === 'history') showHistory(false);
+    showNotice('');
+    renderThread(s.conversation);
+    const ui = tabUi.get(s.conversation.id);
+    input.value = ui ? ui.draft || '' : '';
+    histIdx = -1;
+    running = !!s.run;
+    live = null;
+    runId = null;
+    if (s.run) {
+      const node = thread.lastElementChild;
+      if (node) {
+        live = { node, meta: node.querySelector('.meta'), answerEl: node.querySelector('.output'), text: s.conversation.turns[s.conversation.turns.length - 1].answer || '' };
+        node.classList.add('live');
+      }
+      runId = s.run.id;
+      panel.dataset.state = 'running';
+      setActivity('En cours…');
+    } else setActivity('');
+    autosize();
+    setKeys();
+  }
+
+  async function newTab() {
+    const res = await api.newTab();
+    if (res.error) setStatus(res.error, 'err');
+    applyState(res);
+    input.focus();
+  }
+
+  async function activateTab(id) {
+    if (!id || id === convId) return;
+    applyState(await api.activateTab(id));
+    input.focus();
+  }
+
+  async function cycleTab(dir) {
+    if (tabList.length < 2) return;
+    applyState(await api.cycleTab(dir));
+    input.focus();
+  }
+
+  // Fermer un onglet qui travaille se fait en deux temps : sa demande sera annulée.
+  async function closeTab(id) {
+    const target = id || convId;
+    const res = await api.closeTab(target, closeArmed === target);
+    if (res.needsConfirm) {
+      closeArmed = target;
+      setStatus('Demande en cours : fermez à nouveau pour l’annuler et fermer l’onglet', 'err');
+      return;
+    }
+    closeArmed = null;
+    if (res.error) setStatus(res.error, 'err');
+    applyState(res);
+    input.focus();
+  }
+
+  window.AskaTabs.init($('tabs'), { onActivate: activateTab, onClose: closeTab, onNew: newTab });
+  api.onTabs(setTabs);
 
   // ---------- envoi ----------
 
@@ -351,7 +492,7 @@
     const a = agent();
     if (running || !prompt || !a) return;
     if (view === 'history') showHistory(false);
-    const res = await api.run({ agentId, mode, prompt, trust });
+    const res = await api.run({ tabId: convId, agentId, mode, prompt, trust });
     if (res.needsTrust) {
       pendingTrust = { prompt };
       confirmBox.dataset.mode = res.mode;
@@ -395,9 +536,11 @@
   }
 
   function onRunEvent(ev) {
-    if (ev.id !== runId || !live) return;
+    if (ev.type === 'end' && ev.tabs) setTabs(ev.tabs);
+    if (ev.tabId !== convId || ev.id !== runId || !live) return;
     switch (ev.type) {
       case 'text':
+        if (!wide && ev.text.trim()) setWide(true); // première réponse : plus de place pour la lire
         live.text += ev.text;
         // Plus la réponse est longue, moins on la redessine souvent.
         if (!renderTimer) renderTimer = setTimeout(renderLive, Math.min(400, 45 + live.text.length / 400));
@@ -425,6 +568,7 @@
     live.text = t.answer || live.text;
     renderLive();
     live.node.classList.remove('live');
+    setWide(true);
     live.node.dataset.status = t.status;
     fillMeta(live.meta, t);
     if (t.notice) live.node.append(el('div', 'notice ' + t.notice.kind, t.notice.text));
@@ -439,12 +583,10 @@
     scrollEnd(true);
   }
 
+  // Nouvelle conversation : dans un nouvel onglet (ou l'onglet actif s'il est vide).
   async function newConversation() {
-    if (running) return;
     if (view === 'history') showHistory(false);
-    showNotice('');
-    applyState(await api.newConversation());
-    input.focus();
+    await newTab();
   }
 
   // ---------- historique des conversations ----------
@@ -549,7 +691,6 @@
   }
 
   async function showHistory(on) {
-    if (on && running) return;
     view = on ? 'history' : 'chat';
     $('hist-btn').setAttribute('aria-pressed', String(on));
     historyBox.hidden = !on;
@@ -571,9 +712,9 @@
 
   async function openConversation(id) {
     const s = await api.openConversation(id);
-    showNotice('');
-    applyState(s);
     showHistory(false);
+    applyState(s);
+    if (s.error) setStatus(s.error, 'err');
   }
 
   // Suppression en deux temps : la première demande arme, la seconde confirme.
@@ -634,19 +775,36 @@
     return true;
   }
 
-  function moveFocus(selector, dir) {
-    const items = [...document.querySelectorAll(selector)];
-    const i = items.indexOf(document.activeElement);
-    const next = items[Math.min(Math.max(i + dir, 0), items.length - 1)];
-    if (next) next.focus();
-  }
 
   document.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
-    if (e.ctrlKey && !e.shiftKey && k === 'm') {
+    // macOS : ⌘ joue le rôle de Ctrl (⌘T, ⌘W, ⌘1…), Ctrl reste accepté.
+    const ctrl = e.ctrlKey || (IS_MAC && e.metaKey);
+    if (ctrl && !e.shiftKey && k === 'm') {
       e.preventDefault();
       setMini(!mini);
       return;
+    }
+    if (ctrl && !e.shiftKey && k === 'p' && !mini) {
+      e.preventDefault();
+      setPinned(!pinned, true);
+      return;
+    }
+    if (!mini && !pendingTrust && !menuOpen && ctrl) {
+      const tabKey =
+        (k === 't' || (k === 'n' && !e.shiftKey)) ? () => newConversation()
+        : k === 'w' && !e.shiftKey ? () => closeTab()
+        : e.key === 'Tab' ? () => cycleTab(e.shiftKey ? -1 : 1)
+        : e.key === 'PageDown' ? () => cycleTab(1)
+        : e.key === 'PageUp' ? () => cycleTab(-1)
+        : /^[1-9]$/.test(e.key) && !e.shiftKey && tabList.length > 1
+          ? () => activateTab((e.key === '9' ? tabList[tabList.length - 1] : tabList[Number(e.key) - 1] || {}).id)
+          : null;
+      if (tabKey) {
+        e.preventDefault();
+        tabKey();
+        return;
+      }
     }
     if (mini) {
       if (e.key === 'Escape') { e.preventDefault(); api.hide(); }
@@ -660,7 +818,7 @@
       return;
     }
     if (menuOpen) {
-      if (e.key === 'Escape' || (e.ctrlKey && e.shiftKey && k === 'm')) { e.preventDefault(); closeModelMenu(); }
+      if (e.key === 'Escape' || (ctrl && e.shiftKey && k === 'm')) { e.preventDefault(); closeModelMenu(); }
       else if (e.key === 'ArrowDown') { e.preventDefault(); highlightModel(modelSel + 1, true); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); highlightModel(modelSel - 1, true); }
       else if (e.key === 'PageDown') { e.preventDefault(); highlightModel(modelSel + 6, true); }
@@ -678,7 +836,7 @@
         if (histConfirm) armDelete(null);
         else if (histSearch.value) { histSearch.value = ''; renderHistory(); }
         else showHistory(false);
-      } else if (e.ctrlKey && k === 'h') { e.preventDefault(); showHistory(false); }
+      } else if (ctrl && k === 'h') { e.preventDefault(); showHistory(false); }
       else if (e.key === 'ArrowDown') { e.preventDefault(); highlightHist(histSel + 1, true); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); highlightHist(histSel - 1, true); }
       else if (e.key === 'PageDown') { e.preventDefault(); highlightHist(histSel + 5, true); }
@@ -691,13 +849,12 @@
         // « Suppr » vise la conversation quand il n'y a plus rien à effacer dans la recherche.
         e.preventDefault();
         deleteConversation(sel.id);
-      } else if (e.ctrlKey && k === 'n') { e.preventDefault(); newConversation(); }
-      else if (e.key === 'Tab') e.preventDefault();
+      } else if (e.key === 'Tab') e.preventDefault();
       return;
     }
     if (e.key === 'Escape') {
       e.preventDefault();
-      if (running) api.cancel();
+      if (running) api.cancel(convId);
       else api.hide();
     } else if (e.key === 'Tab') {
       e.preventDefault();
@@ -706,19 +863,19 @@
     } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       submit();
-    } else if (e.ctrlKey && e.shiftKey && k === 'm') {
+    } else if (ctrl && e.shiftKey && k === 'm') {
       e.preventDefault();
       openModelMenu();
-    } else if (e.ctrlKey && e.shiftKey && k === 'c') {
+    } else if (ctrl && e.shiftKey && k === 'c') {
       e.preventDefault();
       if (lastAnswer) api.copy(lastAnswer).then(() => setStatus('Réponse copiée', 'ok'));
-    } else if (e.ctrlKey && !e.shiftKey && k === 'o') {
+    } else if (ctrl && !e.shiftKey && k === 'o') {
       e.preventDefault();
       if (!running) api.pickDir().then(applyState);
-    } else if (e.ctrlKey && !e.shiftKey && (k === 'n' || k === 'l')) {
+    } else if (ctrl && !e.shiftKey && k === 'l') {
       e.preventDefault();
       newConversation();
-    } else if (e.ctrlKey && !e.shiftKey && k === 'h') {
+    } else if (ctrl && !e.shiftKey && k === 'h') {
       e.preventDefault();
       if (!$('hist-btn').hidden) showHistory(true);
     } else if (e.key === 'ArrowUp' && e.target === input && !input.value.slice(0, input.selectionStart).includes('\n')) {
@@ -760,6 +917,8 @@
 
   api.onRunEvent(onRunEvent);
   api.onNewConversation(() => newConversation()); // menu de l'icône de la barre système
+  api.onUnread(setUnread);
+  $('pin-btn').addEventListener('click', () => { setPinned(!pinned, true); input.focus(); });
   api.onWillHide(() => {
     panel.classList.remove('in');
     panel.classList.add('out');

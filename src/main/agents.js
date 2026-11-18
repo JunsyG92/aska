@@ -18,6 +18,13 @@ const MODES = {
 };
 const MODE_ORDER = ['read', 'edit', 'auto'];
 
+// Commandes shell en lecture seule autorisées à Copilot. Aucune ne peut écrire ni
+// exécuter autre chose : sont exclus find (-delete, -exec), sed (-i), sort (-o),
+// tree (-o), rg (--pre) et, en lecture seule, git log/diff/show (--output=fichier).
+const COPILOT_READ_SHELL = ['ls', 'cat', 'head', 'tail', 'grep', 'wc', 'pwd', 'file', 'stat', 'git status'];
+const COPILOT_EDIT_SHELL = [...COPILOT_READ_SHELL, 'git log', 'git diff', 'git show'];
+const allowShell = (cmds) => cmds.flatMap((c) => ['--allow-tool', `shell(${c})`]);
+
 const BUILTIN = {
   claude: {
     label: 'Claude',
@@ -27,7 +34,10 @@ const BUILTIN = {
     output: 'stream-json',
     base: ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'],
     modes: {
-      read: ['--permission-mode', 'plan'],
+      // Sans interface (-p), Claude Code ne demande pas la confiance du dossier et
+      // exécuterait les hooks de son .claude/settings.json : en lecture seule, seuls
+      // les réglages de l'utilisateur sont chargés.
+      read: ['--permission-mode', 'plan', '--setting-sources', 'user'],
       edit: ['--permission-mode', 'acceptEdits'],
       auto: ['--permission-mode', 'auto'],
     },
@@ -67,8 +77,12 @@ const BUILTIN = {
     output: 'text',
     base: ['-s'],
     modes: {
-      read: ['--deny-tool', 'shell', '--deny-tool', 'write'],
-      edit: ['--allow-tool', 'write', '--deny-tool', 'shell'],
+      // Copilot lit les fichiers surtout par le shell : lui interdire tout le shell
+      // (« --deny-tool shell », qui l'emporte sur toute autorisation) le rendait
+      // aveugle. On autorise une liste fermée de commandes de lecture ; toute autre
+      // commande reste refusée, y compris dans une commande composée.
+      read: [...allowShell(COPILOT_READ_SHELL), '--deny-tool', 'write'],
+      edit: ['--allow-tool', 'write', ...allowShell(COPILOT_EDIT_SHELL)],
       // Copilot n'a pas de bac à sable : tout est permis sauf la liste noire.
       auto: [
         '--allow-all-tools',
@@ -101,7 +115,25 @@ const BUILTIN = {
     env: ['CURSOR_*'],
     install: 'curl https://cursor.com/install -fsS | bash',
   },
+  ollama: {
+    label: 'Ollama',
+    color: '#8e8a83',
+    bin: ['ollama'],
+    // Modèles locaux : Ollama ne fait que répondre, sans aucun outil ni accès aux
+    // fichiers. Seul le mode lecture seule a donc un sens.
+    prompt: 'stdin',
+    output: 'ollama',
+    base: ['run'],
+    modes: { read: [] },
+    modelPositional: true, // « ollama run <modèle> »
+    requiresModel: true,
+    env: ['OLLAMA_*'],
+    install: 'https://ollama.com/download',
+  },
 };
+
+/** L'agent permet-il de choisir son modèle ? */
+const canPickModel = (agent) => !!(agent.modelFlag || agent.modelPositional);
 
 // Flags refusés dans `extraArgs` : ils désactivent les garde-fous du CLI.
 const DANGEROUS_ARG = [
@@ -116,6 +148,7 @@ const DANGEROUS_ARG = [
   /bypassPermissions/i,
   /danger-full-access/i,
   /^--permission-mode/i,
+  /^--setting-sources/i,
   /^--sandbox/i,
   /^-s$/,
   /^--ask-for-approval/i,
@@ -126,7 +159,7 @@ function isDangerousArg(arg) {
   return DANGEROUS_ARG.some((re) => re.test(arg));
 }
 
-const MODEL_RE = /^[A-Za-z0-9][\w.:\/\[\]-]{0,79}$/;
+const MODEL_RE = /^[A-Za-z0-9][\w.:/[\]-]{0,79}$/;
 const SESSION_RE = /^[A-Za-z0-9][\w-]{7,79}$/;
 const isModel = (m) => typeof m === 'string' && MODEL_RE.test(m);
 
@@ -211,9 +244,11 @@ function buildInvocation(agent, mode, prompt, { model, resume, trusted } = {}) {
   if (model != null && !isModel(model)) throw new Error('Nom de modèle invalide');
   if (resume != null && !SESSION_RE.test(resume)) throw new Error('Identifiant de session invalide');
 
-  const argv = [...(agent.base || []), ...modeArgs];
-  if (trusted && agent.trustFlag) argv.push(agent.trustFlag);
   const chosen = model === undefined ? agent.model : model; // null = modèle par défaut du CLI
+  if (!chosen && agent.requiresModel) throw new Error(`Choisissez d'abord un modèle ${agent.label} (Ctrl+Maj+M)`);
+  // Modèle en position (« ollama run <modèle> ») : juste après la commande de base.
+  const argv = [...(agent.base || []), ...(chosen && agent.modelPositional ? [chosen] : []), ...modeArgs];
+  if (trusted && agent.trustFlag) argv.push(agent.trustFlag);
   if (chosen && agent.modelFlag) argv.push(agent.modelFlag, chosen);
   if (resume && agent.resumeFlag) argv.push(agent.resumeFlag, resume);
   argv.push(...(agent.extraArgs || []));
@@ -238,4 +273,4 @@ function buildInvocation(agent, mode, prompt, { model, resume, trusted } = {}) {
   return { argv, stdin, logArgv };
 }
 
-module.exports = { MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, isDangerousArg, isModel };
+module.exports = { MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, isDangerousArg, isModel, canPickModel };

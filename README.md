@@ -1,143 +1,242 @@
+<div align="center">
+
+<img src="assets/aska.svg" alt="" width="84">
+
 # Aska
 
-Un raccourci clavier, un champ de saisie, et votre demande part vers l'agent IA
-de votre choix **via son CLI officiel** : Claude Code, Codex, GitHub Copilot ou
-Cursor. La réponse s'affiche en direct, et la discussion se poursuit comme dans
-un chat : chaque message s'ajoute au fil, avec le contexte des précédents.
+**Un raccourci, un champ, et vos agents IA répondent.**
 
-Le panneau est une petite fenêtre fixe : elle reste au premier plan à l'endroit
-où vous la posez, et se réduit en pastille d'un clic.
+Claude Code, Codex, GitHub Copilot, Cursor et vos modèles Ollama dans une seule<br>
+petite fenêtre, pilotés par leurs CLI officiels. Linux, Windows et macOS.
 
-| Sombre | Clair |
-| --- | --- |
-| ![Fil de conversation, thème sombre](docs/sombre.png) | ![Choix du modèle, thème clair](docs/clair.png) |
-| ![Historique des conversations](docs/historique.png) | ![Aska réduit en pastille](docs/reduit.png) |
+[![CI](https://github.com/JunsyG92/aska/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JunsyG92/aska/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JunsyG92/aska?include_prereleases&label=version&color=d97757)](https://github.com/JunsyG92/aska/releases)
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
+![Linux](https://img.shields.io/badge/Linux-%E2%9C%93-2ea44f?logo=linux&logoColor=white)
+![Windows](https://img.shields.io/badge/Windows-%E2%9C%93-2ea44f)
+![macOS](https://img.shields.io/badge/macOS-%E2%9C%93-2ea44f?logo=apple&logoColor=white)
+![Node](https://img.shields.io/badge/Node-%E2%89%A5%2020-5fa04e?logo=nodedotjs&logoColor=white)
 
-Aska n'appelle aucune API et ne stocke aucune clé : il pilote les CLI déjà
-installés et connectés sur votre machine.
+<img src="docs/demo.gif" alt="Démonstration : une question à Claude, la réponse qui s'affiche en direct, puis une question de suivi" width="760">
+
+</div>
+
+## En bref
+
+- ⌨️ **`Ctrl+Alt+Espace`** ouvre la fenêtre, où que vous soyez. `Tab` change d'agent, `Entrée` envoie.
+- 💬 **Un vrai fil de discussion** : chaque message garde le contexte des précédents, même si vous changez d'agent en route.
+- 🗂️ **Des onglets qui travaillent en parallèle** : une conversation par sujet, et Claude peut réfléchir dans l'un pendant que vous questionnez Codex dans un autre.
+- 🔌 **Vos CLI, vos comptes** : Aska n'appelle aucune API et ne stocke aucune clé. Il lance les CLI déjà installés et connectés chez vous, avec leurs MCP et leurs skills.
+- 🛡️ **Lecture seule par défaut** : l'agent ne modifie rien tant que vous ne changez pas de mode, et jamais sans votre accord pour le dossier.
+- 📌 **Discret ou toujours là** : un clic à l'extérieur masque le chat ; épinglé, il reste au premier plan où vous le posez. Réduit en pastille, il vous montre où en est l'agent.
+- 🔔 **Prévenu dès que l'IA répond** : une notification système (agent et début de la réponse) quand le chat est masqué ou réduit ; un clic vous ramène à la conversation.
+- 🌗 **Clair ou sombre**, selon le thème de votre système.
+
+## Aperçu
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Réponses en Markdown**<br>
+Tableaux, listes, citations, liens, et blocs de code avec un bouton « Copier ».
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/chat-dark.png"><img src="docs/chat-light.png" alt="Fil de conversation avec un tableau" width="420"></picture>
+
+</td>
+<td width="50%" valign="top">
+
+**Historique**<br>
+Conversations regroupées par date, avec aperçu, agents impliqués et recherche.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/historique-dark.png"><img src="docs/historique-light.png" alt="Liste des conversations enregistrées" width="420"></picture>
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**Choix du modèle**<br>
+La liste vient du CLI lui-même et se filtre au clavier.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/modeles-dark.png"><img src="docs/modeles-light.png" alt="Liste des modèles de Claude" width="420"></picture>
+
+</td>
+<td valign="top">
+
+**Accord avant écriture**<br>
+Modifier un dossier demande votre feu vert, une fois ou pour toujours.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/accord-dark.png"><img src="docs/accord-light.png" alt="Demande d'autorisation avant de modifier un dossier" width="420"></picture>
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**Du code prêt à copier**
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/code-dark.png"><img src="docs/code-light.png" alt="Réponse contenant un bloc de code" width="420"></picture>
+
+</td>
+<td valign="top">
+
+**Réduit en pastille**<br>
+L'agent continue, la pastille montre où il en est.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/pastille-dark.png"><img src="docs/pastille-light.png" alt="Aska réduit en pastille pendant qu'un agent travaille" width="300"></picture>
+
+</td>
+</tr>
+</table>
 
 ## Installation
 
-Prérequis : Linux, Node.js ≥ 20, un accès à github.com (téléchargement d'Electron), et au moins un CLI d'agent connecté
-(`claude`, `codex`, `copilot`, `cursor-agent`).
+Il vous faut **Node.js ≥ 20** et au moins un CLI d'agent installé et connecté :
+
+| Agent | Installation |
+| --- | --- |
+| Claude Code | `npm i -g @anthropic-ai/claude-code` |
+| Codex | `npm i -g @openai/codex` |
+| GitHub Copilot | `npm i -g @github/copilot` |
+| Cursor | voir [cursor.com/cli](https://cursor.com/cli) |
+| Ollama (modèles locaux) | voir [ollama.com/download](https://ollama.com/download), puis `ollama pull <modèle>` |
+
+### Linux
 
 ```sh
-git clone <ce dépôt> && cd aska
+git clone https://github.com/JunsyG92/aska.git && cd aska
 ./scripts/install.sh                    # X11 : raccourci global Ctrl+Alt+Espace
-                                        # (Ubuntu 24.04+ : propose de régler le bac à sable, sudo)
-./scripts/install.sh --gnome-shortcut   # GNOME/Wayland : raccourci enregistré dans GNOME
+./scripts/install.sh --gnome-shortcut   # GNOME / Wayland : raccourci enregistré dans GNOME
 aska --hidden &                         # ou reconnectez-vous (démarrage automatique)
 ```
 
-### Windows 10 / 11
+- **Ubuntu 24.04+** : le script propose de régler le bac à sable d'Electron (mot de passe `sudo` demandé). Sans cela, Aska ne démarre pas ; `--sandbox-fix` le fait sans poser la question.
+- **Wayland** : une application ne peut pas toujours capter un raccourci global. Si `Ctrl+Alt+Espace` ne répond pas, associez la commande `aska --toggle` à un raccourci dans les paramètres clavier de votre bureau (KDE, Sway, Hyprland…) et mettez `"shortcut": false` dans la configuration.
 
-Prérequis : Node.js ≥ 20 et au moins un CLI d'agent connecté. Aucun droit
-administrateur n'est nécessaire.
+### macOS
 
-```powershell
-git clone <ce dépôt>; cd aska
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1   # -NoAutostart pour ne pas le lancer à l'ouverture de session
+```sh
+git clone https://github.com/JunsyG92/aska.git && cd aska
+./scripts/install.sh                    # --no-autostart pour ne pas le lancer à l'ouverture de session
 ```
 
-Le script crée un raccourci « Aska » dans le menu Démarrer, lance Aska en
-arrière-plan à l'ouverture de session, et pose une commande `aska` dans
-`%LOCALAPPDATA%\aska\bin` (à ajouter au `PATH` pour `aska --quit`, `aska --reload`).
-La configuration est dans `%APPDATA%\aska\config.json`.
+Le script pose la commande `aska` dans `~/.local/bin` et un LaunchAgent
+(`~/Library/LaunchAgents/com.aska.launcher.plist`) qui lance Aska en arrière-plan
+à l'ouverture de session. Aska n'a pas d'icône dans le Dock : c'est un lanceur,
+qu'on appelle avec `Ctrl+⌥+Espace`. Dans la fenêtre, `⌘` remplace `Ctrl`
+(`⌘T`, `⌘W`, `⌘1`…). Les CLI installés avec Homebrew (`/opt/homebrew/bin`) ou nvm
+sont trouvés même si Aska est lancé hors du terminal. macOS demande l'autorisation
+d'afficher des notifications à la première réponse reçue fenêtre masquée.
 
-Différences avec Linux :
-- Les CLI installés par npm sont des lanceurs `.cmd`. Aska lit le lanceur et
-  exécute directement `node.exe` sur le script visé, sans passer par `cmd.exe`, qui
-  interpréterait `%`, `&`, `^`… dans le texte de vos demandes. Un `.cmd` d'un autre
-  format n'est accepté que pour des arguments sans risque ; pour un agent qui
-  reçoit la demande en argument (Copilot, Cursor), indiquez alors son `.exe` avec
-  `"bin"` dans la configuration.
-- Les vérifications de propriétaire et de droits (`600`) des fichiers n'existent
-  pas sous Windows : Aska s'appuie sur la protection par défaut du profil
-  utilisateur (`AppData`).
+### Windows 10 / 11
 
-Sous Wayland, une application ne peut pas toujours capter un raccourci global.
-Si `Ctrl+Alt+Espace` ne répond pas, associez la commande `aska --toggle` à un
-raccourci dans les paramètres clavier de votre bureau (KDE, Sway, Hyprland…) et
-mettez `"shortcut": false` dans la configuration.
+```powershell
+git clone https://github.com/JunsyG92/aska.git; cd aska
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+Aucun droit administrateur n'est nécessaire. Le script crée un raccourci « Aska » dans le menu Démarrer, lance Aska à l'ouverture de session (`-NoAutostart` pour l'éviter) et pose une commande `aska` dans `%LOCALAPPDATA%\aska\bin`.
+
+### Vérifier l'installation
+
+```sh
+aska --help
+```
+
+L'aide liste les options, les raccourcis, et surtout **l'état de chaque agent** : le CLI trouvé et son chemin, ou la raison de son absence.
 
 | Commande | Effet |
 | --- | --- |
-| `aska` / `aska --toggle` | affiche ou masque le lanceur (démarre l'app si besoin) |
+| `aska` / `aska --toggle` | affiche ou masque la fenêtre (démarre l'app si besoin) |
 | `aska --hidden` | démarre en arrière-plan |
 | `aska --reload` | relit la configuration |
+| `aska --restart` | redémarre Aska (après une mise à jour) |
 | `aska --quit` | quitte |
+| `aska --help` / `--version` | aide et diagnostic / version |
 
-## Utilisation
+## Raccourcis
 
 | Touche | Action |
 | --- | --- |
-| `Entrée` | envoyer (le champ se vide, le message rejoint le fil) · `Maj+Entrée` : nouvelle ligne |
+| `Ctrl+Alt+Espace` | afficher / masquer la fenêtre (raccourci global, modifiable) |
+| `Entrée` | envoyer · `Maj+Entrée` : nouvelle ligne |
 | `Tab` | agent suivant |
 | `Maj+Tab` | mode de permission suivant |
-| `Ctrl+Maj+M` | choisir le modèle de l'agent |
-| `Ctrl+N` | nouvelle conversation |
-| `Ctrl+H` | conversations enregistrées : taper pour rechercher, `Entrée` ouvrir, `Suppr` deux fois pour supprimer |
-| `Ctrl+O` | choisir le dossier de travail (clic droit sur le dossier : retour à l'espace temporaire) |
+| `Ctrl+Maj+M` | choisir le modèle |
+| `Ctrl+T` (ou `Ctrl+N`) | nouvel onglet |
+| `Ctrl+W` | fermer l'onglet (deux fois s'il travaille : sa demande est annulée) |
+| `Ctrl+Tab` / `Ctrl+Maj+Tab` | onglet suivant / précédent (aussi `Ctrl+PgSuiv` / `Ctrl+PgPréc`) |
+| `Ctrl+1` … `Ctrl+9` | aller à l'onglet n°1 à 8, `Ctrl+9` : le dernier |
+| `Ctrl+H` | historique : taper pour rechercher, `Entrée` ouvrir, `Suppr` deux fois pour supprimer |
+| `Ctrl+O` | dossier de travail (clic droit sur le dossier : retour à l'espace temporaire) |
 | `↑` / `↓` | rappeler un message déjà envoyé |
 | `Ctrl+Maj+C` | copier la dernière réponse |
-| `Ctrl+M` | réduire en pastille / agrandir (ou le bouton `–`) |
-| `Échap` | annuler l'exécution en cours, sinon masquer la fenêtre |
+| `Ctrl+M` | réduire en pastille / agrandir |
+| `Ctrl+P` | épingler : le chat reste affiché quand vous cliquez ailleurs |
+| `Échap` | annuler la demande en cours, sinon masquer |
 
-La fenêtre reste affichée quand vous travaillez ailleurs. Déplacez-la par la
-poignée à gauche ou par la barre du bas : sa position est mémorisée. Réduite,
-la pastille indique l'agent et l'état de la demande ; l'exécution continue. Le
-raccourci global la rétablit, ou la masque si elle est déjà active.
+Dès que l'IA commence à répondre, le panneau s'agrandit (jusqu'à 1040 px de large, plus haut) pour une lecture confortable ; une nouvelle conversation le ramène à sa taille normale. Un clic en dehors du chat le masque ; l'agent continue de travailler. Pour le garder affiché, épinglez-le (📌 ou `Ctrl+P`) : le choix est mémorisé. Réduit en pastille, il reste toujours visible. La fenêtre se déplace par la poignée à gauche ou par la barre du bas, et sa position est mémorisée.
 
 Tant qu'Aska tourne, son icône est visible dans la barre système (en haut à
-droite sous GNOME). Une pastille verte s'y ajoute pendant qu'un agent travaille,
-et l'info-bulle indique lequel. Son menu permet d'afficher ou masquer le panneau,
-d'ouvrir une nouvelle conversation, d'annuler l'exécution en cours et de quitter
-Aska. Sous GNOME, un clic ouvre ce menu et un double-clic affiche ou masque
-directement le panneau ; ailleurs, le clic gauche affiche ou masque le panneau
-et le clic droit ouvre le menu. `"tray": false` dans la configuration la retire.
+droite sous GNOME). Une pastille verte s'y ajoute tant qu'une demande est en
+cours, et l'info-bulle indique quels agents travaillent. Son menu permet
+d'afficher ou masquer le chat, d'ouvrir un nouvel onglet, d'annuler les demandes
+en cours et de quitter Aska. Sous GNOME, un clic ouvre ce menu et un double-clic
+affiche ou masque directement le chat ; ailleurs, le clic gauche affiche ou
+masque le chat et le clic droit ouvre le menu. `"tray": false` dans la
+configuration la retire.
 
-Le thème suit celui du système (clair/sombre), et les animations sont
-désactivées si le système demande de réduire les mouvements. Si le panneau est
-masqué pendant une exécution, une notification signale la fin.
+## Notifications
+
+Quand une réponse arrive alors que le chat est masqué ou réduit en pastille, Aska envoie une notification système : l'agent, et le début de la réponse en texte brut (ou la cause d'un échec). Un clic sur la notification rouvre le chat sur la bonne conversation. La pastille affiche aussi « Nouvelle réponse » avec un point vert, jusqu'à ce que vous rouvriez le chat. Une demande que vous annulez ne notifie jamais.
+
+| Option (`config.json`) | Effet |
+| --- | --- |
+| `"notify": "hidden"` | par défaut : quand le chat est masqué ou réduit |
+| `"notify": "unfocused"` | aussi quand le chat est visible mais que vous travaillez dans une autre fenêtre |
+| `"notify": "never"` | jamais |
+| `"notifyPreview": false` | n'affiche pas le contenu de la réponse (écran verrouillé, partage d'écran), seulement le titre de la conversation |
+| `"notifySound": false` | notification silencieuse |
+
+Sous Windows, les notifications exigent un raccourci du menu Démarrer portant l'identité de l'application : `scripts\install.ps1` le crée.
 
 ## Conversations
 
-Les réponses sont rendues en Markdown : titres, listes imbriquées et cases à
-cocher, tableaux, citations, liens, gras, italique, barré, et blocs de code avec
-un bouton « Copier ».
+### Onglets
 
-- **Suite de discussion** : avec Claude, Aska reprend la session du CLI
-  (`--resume`), qui garde tout le contexte, outils compris. Avec les autres
-  agents, ou si vous changez d'agent en cours de fil, les échanges précédents
-  sont réinjectés dans la demande (les plus récents d'abord, dans la limite
-  d'environ 24 000 caractères).
-- **Changer d'agent en cours de route** est donc possible : Codex peut
-  poursuivre une discussion commencée avec Claude.
-- **Historique** : chaque conversation est enregistrée dans
-  `~/.local/state/aska/conversations/` (fichiers privés, 200 au plus) et se
-  rouvre avec `Ctrl+H`, dans son dossier de travail d'origine. La liste est
-  regroupée par date, avec un aperçu de la dernière réponse, les agents
-  impliqués et une recherche (titres, aperçus, agents, dossiers).
-  `"savePrompts": false` désactive tout enregistrement.
+Chaque onglet est une conversation à part, avec son propre dossier de travail,
+son agent, son mode et son brouillon. **Les onglets travaillent en même temps** :
+lancez une analyse avec Claude dans un onglet, et posez une autre question à
+Codex dans un autre pendant qu'il travaille (4 demandes simultanées au plus,
+8 onglets).
+
+- La barre d'onglets n'apparaît qu'à partir de deux onglets : avec un seul, Aska
+  reste un simple chat.
+- Un onglet qui travaille affiche un anneau qui tourne ; une réponse arrivée dans
+  un onglet que vous ne regardiez pas le met en gras, avec un point vert.
+- Revenir sur un onglet pendant qu'il répond reprend l'affichage en direct.
+- Ouvrir une conversation depuis l'historique l'ouvre dans un onglet (ou active
+  celui où elle est déjà ouverte).
+- Les onglets ouverts sont rouverts au prochain démarrage.
+
+
+- **Suite de discussion** : avec Claude, Aska reprend la session du CLI (`--resume`), qui garde tout le contexte, outils compris. Avec les autres agents, ou si vous changez d'agent en cours de fil, les échanges précédents sont réinjectés dans la demande (les plus récents d'abord, dans la limite d'environ 24 000 caractères).
+- **Changer d'agent en route** : Codex peut donc poursuivre une discussion commencée avec Claude.
+- **Historique** : chaque conversation est enregistrée en fichier privé (200 au plus) et se rouvre dans son dossier de travail d'origine. `"savePrompts": false` désactive tout enregistrement.
 
 ## Modèles
 
-Le modèle se choisit par agent (`Ctrl+Maj+M` ou la pastille du bas) dans une
-liste filtrable au clavier ; le choix est mémorisé. « Par défaut du CLI » laisse
-l'agent décider.
-
-La liste vient du CLI lui-même, donc elle reflète votre compte et votre version :
+Le modèle se choisit par agent et le choix est mémorisé. « Par défaut du CLI » laisse l'agent décider. La liste vient du CLI lui-même, donc elle reflète votre compte et votre version :
 
 | Agent | Source de la liste |
 | --- | --- |
+| Claude | les alias `opus`, `sonnet`, `haiku`, plus ceux cités par `claude --help` |
 | Cursor | `cursor-agent --list-models` |
 | Copilot | les choix de `--model` dans `copilot help` |
 | Codex | le catalogue que Codex met en cache dans `~/.codex/` |
-| Claude | les alias `opus`, `sonnet`, `haiku`, plus ceux cités par `claude --help` |
 
-Le bouton ↻ réinterroge le CLI. Si un CLI ne renvoie rien, tapez le nom du
-modèle dans le champ de recherche (« Utiliser … ») ou déclarez vos modèles dans
-la configuration avec `"models"`.
+Le bouton ↻ réinterroge le CLI. Si un CLI ne renvoie rien, tapez le nom du modèle dans le champ de recherche (« Utiliser … ») ou déclarez vos modèles dans la configuration avec `"models"`.
 
 ## Modes de permission
 
@@ -146,9 +245,21 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
 
 | Mode | Claude | Codex | Copilot | Cursor |
 | --- | --- | --- | --- | --- |
-| **Lecture seule** | `--permission-mode plan` | `--sandbox read-only` | `--deny-tool shell --deny-tool write` | `--mode ask` |
-| **Édition** | `--permission-mode acceptEdits` | `--sandbox workspace-write` | `--allow-tool write --deny-tool shell` | — |
+| **Lecture seule** | `--permission-mode plan --setting-sources user` | `--sandbox read-only` | commandes de lecture seulement (`ls`, `cat`, `grep`, `git status`…), écriture refusée | `--mode ask` |
+| **Édition** | `--permission-mode acceptEdits` | `--sandbox workspace-write` | écriture + commandes de lecture et `git log/diff/show` | — |
 | **Autonome** (désactivé par défaut) | `--permission-mode auto` | `workspace-write` + réseau | `--allow-all-tools` + liste noire | `--force` |
+
+- **Copilot** lit les fichiers surtout par le shell. Hors mode Autonome, il n'a
+  droit qu'à une liste fermée de commandes de lecture : `ls`, `cat`, `head`,
+  `tail`, `grep`, `wc`, `pwd`, `file`, `stat`, `git status`, plus `git log`,
+  `git diff` et `git show` en Édition. Toute autre commande est refusée, y compris
+  dans une commande composée. Pour qu'il lance des tests ou installe des
+  dépendances, il faut le mode Autonome.
+- **Ollama** n'a ni outils ni accès aux fichiers : il répond seulement, à partir de
+  votre demande et de l'historique de la conversation. Il n'a donc que le mode
+  Lecture seule. Le premier modèle de `ollama list` est utilisé par défaut ;
+  `Ctrl+Maj+M` en choisit un autre. Le serveur Ollama doit tourner (`ollama serve`,
+  ou l'application Ollama).
 
 - Les réglages de permission propres à chaque CLI (par ex. `~/.claude/settings.json`)
   continuent de s'appliquer : Aska n'ajoute que des restrictions.
@@ -159,9 +270,19 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
 - Cursor exige, sans interface, qu'on lui confirme la confiance dans le dossier
   (`--trust`). Aska le fait d'office dans son dossier vide ; ailleurs, il vous demande
   d'abord votre accord, même en lecture seule.
+- En lecture seule, Claude ne charge que vos réglages (`--setting-sources user`) :
+  les hooks et permissions du `.claude/settings.json` d'un projet non vérifié ne
+  s'exécutent pas.
 - Quand Claude signale des actions refusées, Aska l'affiche et propose de changer de mode.
 
 ## Sécurité
+
+En résumé : **aucun shell** ne voit jamais le texte de vos demandes, l'agent ne reçoit que **les variables d'environnement qui le concernent**, il ne peut **écrire que dans un dossier que vous avez autorisé**, et l'interface est **isolée** du système.
+
+<details>
+<summary><b>Le détail des protections, et leurs limites</b></summary>
+
+<br>
 
 **Exécution des CLI**
 - Aucun shell : le binaire est lancé avec un tableau d'arguments ; le prompt part
@@ -201,30 +322,21 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
 - Les options des CLI Copilot et Cursor évoluent vite ; si l'une change, corrigez-la
   dans la configuration sans attendre une mise à jour.
 
-## Dépannage
+**Sous Windows**
+- Les CLI installés par npm sont des lanceurs `.cmd`. Aska lit le lanceur et exécute directement `node.exe` sur le script visé, sans passer par `cmd.exe`, qui interpréterait `%`, `&`, `^`… dans le texte de vos demandes. Un `.cmd` d'un autre format n'est accepté que pour des arguments sans risque ; pour un agent qui reçoit la demande en argument (Copilot, Cursor), indiquez alors son `.exe` avec `"bin"` dans la configuration.
+- Les vérifications de propriétaire et de droits (`600`) des fichiers n'existent pas sous Windows : Aska s'appuie sur la protection par défaut du profil utilisateur (`AppData`).
+- L'écriture est refusée à la racine d'un lecteur, dans le profil entier, `AppData`, `Windows`, `Program Files` et `ProgramData`.
 
-- **Ubuntu 24.04+ : « The SUID sandbox helper binary was found, but is not
-  configured correctly » (arrêt par SIGTRAP)** : Ubuntu bloque le bac à sable
-  d'Electron. Lancez `./scripts/install.sh --sandbox-fix` : il installe un profil
-  AppArmor (`/etc/apparmor.d/aska`, mot de passe sudo demandé) qui autorise ce bac
-  à sable pour le seul binaire d'Electron d'Aska. Si vous déplacez le dossier
-  d'Aska, relancez la commande. Ne lancez pas Aska avec `--no-sandbox`.
-
-- **« GitHub Copilot CLI was not found »** : la commande `copilot` trouvée est le
-  lanceur installé par VS Code, pas le CLI. Installez le vrai CLI
-  (`npm i -g @github/copilot`, puis `copilot` une fois dans un terminal pour vous
-  connecter). S'il est installé ailleurs que dans le `PATH` de votre session
-  (nvm, par exemple), indiquez son chemin : `"agents": { "copilot": { "bin": "/chemin/absolu/copilot" } }`.
-- **L'icône n'apparaît pas dans la barre du haut (GNOME)** : GNOME n'affiche ces
-  icônes qu'avec l'extension *AppIndicator and KStatusNotifierItem Support*.
-  Ubuntu l'active par défaut ; ailleurs (Fedora, Debian…), installez-la
-  (`gnome-shell-extension-appindicator`), puis reconnectez-vous.
-- **Un agent n'apparaît pas** : même cause, son binaire n'est pas dans le `PATH`
-  de la session graphique. Donnez son chemin avec `"bin"`, puis `aska --reload`.
+</details>
 
 ## Configuration
 
-`~/.config/aska/config.json` (droits `600`), puis `aska --reload` :
+<details>
+<summary><b>Toutes les options de <code>config.json</code></b></summary>
+
+<br>
+
+Linux : `~/.config/aska/config.json` (droits `600`). Windows : `%APPDATA%\aska\config.json`. Puis `aska --reload`.
 
 ```json
 {
@@ -235,9 +347,12 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
   "timeoutSec": 600,
   "maxOutputKb": 2048,
   "savePrompts": true,
-  "hideOnBlur": false,
+  "hideOnBlur": true,
   "alwaysOnTop": true,
   "tray": true,
+  "notify": "hidden",
+  "notifyPreview": true,
+  "notifySound": true,
   "envPassthrough": [],
   "agents": {
     "claude": { "model": "sonnet", "extraArgs": ["--max-turns", "20"] },
@@ -255,20 +370,77 @@ visible en bas du panneau. Aska démarre toujours en **Lecture seule**.
 }
 ```
 
-`hideOnBlur: true` redonne un comportement de lanceur éphémère (la fenêtre se
-masque dès qu'elle perd le focus) ; `alwaysOnTop: false` la laisse passer
-derrière les autres fenêtres. `tray: false` retire l'icône de la barre système.
+`hideOnBlur` règle le comportement par défaut au clic extérieur (`true` : le chat se masque ; `false` : il reste, comme s'il était épinglé) ; l'épingle de l'interface le change ensuite. `alwaysOnTop: false` laisse la fenêtre passer derrière les autres. `tray: false` retire l'icône de la barre système.
 
 Un agent personnalisé (comme `gemini` ci-dessus) déclare son binaire en chemin
 absolu et les arguments de chaque mode (`read`, `edit`, `auto`) ; `prompt` vaut
 `"stdin"` ou `"arg"`.
+
+</details>
+
+## Dépannage
+
+Commencez par `aska --help` : la section « Agents » dit quel CLI est utilisé, ou pourquoi il manque ; la section « État » indique si le chat se masque au clic extérieur et si une ancienne version tourne encore.
+
+<details>
+<summary><b>Problèmes connus</b></summary>
+
+<br>
+
+- **Le chat ne se masque pas quand je clique à l'extérieur, ou une nouveauté est absente.**
+  1. *Après un `git pull`*, Aska doit être relancé : tant que l'ancien processus tourne, `aska` ne fait que le rouvrir. Depuis cette version, Aska détecte et remplace tout seul une ancienne instance ; avec une version plus ancienne encore, lancez une fois `aska --quit` puis `aska`. `aska --restart` force un redémarrage.
+  2. Le chat est peut-être **épinglé** (📌 en surbrillance, `Ctrl+P` pour basculer) : un chat épinglé reste affiché. `Échap` le masque dans tous les cas.
+  3. Une ancienne configuration contient `"hideOnBlur": false` : retirez cette ligne, ou désépinglez avec `Ctrl+P` (le choix de l'interface prime).
+  4. Sous Wayland, certains bureaux n'envoient pas la perte de focus aux applications XWayland : dans ce cas, utilisez `Échap` ou le bouton ✕, et signalez le bureau concerné dans une issue.
+
+- **Ubuntu 24.04+ : « The SUID sandbox helper binary was found, but is not
+  configured correctly » (arrêt par SIGTRAP)** : Ubuntu bloque le bac à sable
+  d'Electron. Lancez `./scripts/install.sh --sandbox-fix` : il installe un profil
+  AppArmor (`/etc/apparmor.d/aska`, mot de passe sudo demandé) qui autorise ce bac
+  à sable pour le seul binaire d'Electron d'Aska. Si vous déplacez le dossier
+  d'Aska, relancez la commande. Ne lancez pas Aska avec `--no-sandbox`.
+
+- **« GitHub Copilot CLI was not found »** : la commande `copilot` trouvée est le
+  lanceur installé par VS Code, pas le CLI. Installez le vrai CLI
+  (`npm i -g @github/copilot`, puis `copilot` une fois dans un terminal pour vous
+  connecter). S'il est installé ailleurs que dans le `PATH` de votre session
+  (nvm, par exemple), indiquez son chemin : `"agents": { "copilot": { "bin": "/chemin/absolu/copilot" } }`.
+- **Un agent n'apparaît pas** : même cause, son binaire n'est pas dans le `PATH`
+  de la session graphique. Donnez son chemin avec `"bin"`, puis `aska --reload`.
+- **L'icône n'apparaît pas dans la barre du haut (GNOME)** : GNOME n'affiche ces
+  icônes qu'avec l'extension *AppIndicator and KStatusNotifierItem Support*.
+  Ubuntu l'active par défaut ; ailleurs (Fedora, Debian…), installez-la
+  (`gnome-shell-extension-appindicator`), puis reconnectez-vous.
+
+</details>
+
+## Contribuer
+
+Les contributions sont bienvenues ! Le dépôt suit **GitHub Flow** : `main` est
+protégée, chaque changement arrive par une PR relue, testée sous Linux et
+Windows, puis fusionnée en squash. Les versions et le [CHANGELOG](CHANGELOG.md)
+sont produits automatiquement à partir des titres de PR ([Conventional Commits](https://www.conventionalcommits.org/fr/)).
+
+```sh
+git switch -c feat/ma-fonctionnalite
+npm install && npm run check        # lint + tests unitaires
+git push -u origin feat/ma-fonctionnalite
+# puis une PR vers main, titrée par exemple « feat(ui): raccourci pour épingler »
+```
+
+Tout est détaillé dans [CONTRIBUTING.md](CONTRIBUTING.md). Une faille de sécurité ?
+Voir [SECURITY.md](SECURITY.md), jamais d'issue publique. Le projet est sous
+[licence MIT](LICENSE) et suit un [code de conduite](CODE_OF_CONDUCT.md).
 
 ## Développement
 
 ```sh
 npm install
 npm start                               # lance l'app
-npm test                                # tests unitaires (sécurité, exécution, analyse du flux)
-xvfb-run -a npm run test:e2e            # test de bout en bout avec de faux CLI
+npm run lint                            # ESLint
+npm test                                # tests unitaires
+xvfb-run -a npm run test:e2e            # test de bout en bout, avec de faux CLI (Windows : npm run test:e2e)
 ./scripts/tray-icons.sh                 # régénère les icônes de la barre système (rsvg-convert)
 ```
+
+Chaque PR lance ces contrôles sous Linux, Windows et macOS, ainsi qu'une analyse CodeQL. Les images de cette page sont produites à partir de la vraie application par `scripts/readme-media.js`.
