@@ -596,7 +596,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     console.log('E2E OK — captures dans', OUT);
   } finally {
     await app.close().catch(() => {});
-    fs.rmSync(home, { recursive: true, force: true });
+    // Electron peut encore écrire son profil en se fermant : on réessaie (ENOTEMPTY).
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 })().catch((e) => {
   console.error(e);

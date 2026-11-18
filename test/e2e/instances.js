@@ -80,7 +80,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await waitFor(() => !fs.existsSync(P.run), 'suppression de run.json');
 
   await old.close().catch(() => {});
-  fs.rmSync(home, { recursive: true, force: true });
+  // Une instance qui se ferme (ou ses processus auxiliaires) peut encore écrire son
+  // profil dans ce dossier : on réessaie plutôt que d'échouer sur ENOTEMPTY.
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   console.log('Instances OK');
 })().catch((e) => {
   console.error(e);
