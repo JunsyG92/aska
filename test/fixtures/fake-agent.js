@@ -78,7 +78,7 @@ process.stdin.on('end', async () => {
     if (resumed) {
       await sleep(Number(process.env.FAKE_DELAY || 15) * 20);
       j({ type: 'assistant', message: { content: [{ type: 'text', text: 'Session continued: `preload.js` exposes a minimal API.' }] } });
-      j({ type: 'result', subtype: 'success', is_error: false, result: 'fin', session_id: 'sess-0001-abcd' });
+      j({ type: 'result', subtype: 'success', is_error: false, result: 'fin', session_id: 'sess-0001-abcd', permission_denials: prompt.includes('deny') ? [{ tool_name: 'Bash' }] : [] });
       return;
     }
     const words = '## Summary\n\nHere are **three** points about `main.js`:\n\n- the window is created at startup\n- the shortcut toggles its visibility\n- every IPC call is validated\n\n```js\nconst ok = true;\n```\n'.split(/(?<= )/);
