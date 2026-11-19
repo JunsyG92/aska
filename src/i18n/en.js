@@ -109,6 +109,14 @@ module.exports = {
   config: {
     ignored: 'Config ignored: {error}',
     autoRejected: 'defaultMode "auto" rejected: replaced with "edit"',
+    commands: {
+      invalidSection: '"commands" ignored: expected an object such as { "trad": "Translate into English: {input}" }',
+      invalidName: 'Command "{name}" ignored: lowercase letters, digits and "-", starting with a letter',
+      reserved: 'Command "/{name}" ignored: the name is taken by Aska or by an agent',
+      noPrompt: 'Command "/{name}" ignored: expected a prompt, or an object with "prompt"',
+      badPrompt: 'Command "/{name}" ignored: prompt longer than {max} characters or invalid',
+      badField: 'Command "/{name}": "{field}" ignored (unknown or invalid value)',
+    },
   },
 
   agents: {
@@ -181,6 +189,8 @@ module.exports = {
     pin: 'Pin / unpin (a pinned chat does not hide on an outside click)',
     copyLast: 'Copy the last answer',
     settings: 'Settings',
+    slash: 'Commands (/help lists them; //text sends "/text" as is)',
+    userCommands: 'Your commands ("commands" in the config)',
     escape: 'Cancel the running request, otherwise hide',
     status: 'Status',
     outsideClick: 'Outside click',
@@ -350,7 +360,7 @@ module.exports = {
     commands: {
       label: 'Commands',
       note: 'Type // to send a message that starts with /',
-      args: { agent: '<agent>', mode: '<mode>', model: '[model]', path: '[folder]', message: '[message]' },
+      args: { agent: '<agent>', mode: '<mode>', model: '[model]', path: '[folder]', message: '[message]', text: '[text]' },
       desc: {
         help: 'List the commands',
         new: 'New conversation, in a new tab',

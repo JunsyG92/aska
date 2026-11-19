@@ -45,6 +45,7 @@
   const tabUi = new Map(); // per tab: { draft, agentId, mode }, kept when switching tabs
   let closeArmed = null; // working tab waiting for the close confirmation
   let lastPrompt = ''; // last request of the active conversation, for /retry
+  let customCommands = []; // "/" commands of the config: [{ name, prompt, description?, agent?, mode?, model? }]
 
   // ---------- translations (strings sent by the main process) ----------
 
@@ -410,6 +411,7 @@
     agents = s.agents.filter((a) => a.available);
     history = s.history || [];
     warnings = s.warnings || [];
+    customCommands = s.commands || [];
     $('cwd-name').textContent = s.cwd;
     $('cwd').title = t('cwdTitle', { path: s.cwdIsScratch ? t('cwdScratch') : s.cwd });
     $('hist-btn').hidden = !s.historyEnabled;
@@ -539,7 +541,8 @@
   async function submit(trust, direct) {
     let prompt;
     let typed; // as typed, for the recall with ↑
-    if (pendingTrust) ({ prompt, typed } = pendingTrust);
+    let model; // model for this request only (command of the config), undefined: the chosen one
+    if (pendingTrust) ({ prompt, typed, model } = pendingTrust);
     else if (direct) prompt = typed = direct;
     else {
       typed = input.value.trim();
@@ -547,7 +550,24 @@
       const cmd = window.AskaCommands.parse(typed, cmdCtx());
       if (cmd.kind === 'command') return runCommand(cmd.name, cmd.arg);
       if (cmd.kind === 'unknown') return setStatus(t('commands.unknown', { name: cmd.name }), 'err');
-      if (cmd.kind === 'agent') {
+      if (cmd.kind === 'custom') {
+        const c = cmd.command;
+        if (running) return setStatus(t('commands.busy'), 'err');
+        if (c.agent) {
+          if (!agents.some((x) => x.id === c.agent)) return setStatus(t('commands.unknownAgent', { name: c.agent }), 'err');
+          if (c.agent !== agentId) setAgent(c.agent, true);
+        }
+        if (c.mode && c.mode !== mode) {
+          const offered = agent().modes;
+          if (!offered.includes(c.mode)) {
+            const list = offered.map((id) => `${id} (${modes[id] ? modes[id].label : id})`).join(', ');
+            return setStatus(t('commands.unknownMode', { name: c.mode, agent: agent().label, list }), 'err');
+          }
+          setMode(c.mode, true);
+        }
+        if (c.model !== undefined && agent().canPickModel) model = c.model;
+        prompt = window.AskaCommands.expand(c.prompt, cmd.arg);
+      } else if (cmd.kind === 'agent') {
         if (running) return setStatus(t('commands.busy'), 'err');
         setAgent(cmd.agentId, true);
         if (!cmd.rest) return setInput('');
@@ -557,9 +577,11 @@
     const a = agent();
     if (running || !prompt || !a) return;
     if (view === 'history') showHistory(false);
-    const res = await api.run({ tabId: convId, agentId, mode, prompt, trust });
+    const req = { tabId: convId, agentId, mode, prompt, trust };
+    if (model !== undefined) req.model = model;
+    const res = await api.run(req);
     if (res.needsTrust) {
-      pendingTrust = { prompt, typed };
+      pendingTrust = { prompt, typed, model };
       confirmBox.dataset.mode = res.mode;
       const what = t(res.mode === 'auto' ? 'trust.editAndRun' : 'trust.editFiles');
       $('confirm-text').textContent = t(res.reason === 'content' ? 'trust.content' : 'trust.allow', { agent: res.agent, cwd: res.cwd, what });
@@ -586,7 +608,7 @@
     input.value = '';
     refreshPalette();
     showNotice('');
-    live = addTurn({ label: a.label, color: a.color, model: a.model, mode, prompt, answer: '', status: 'running' }, false);
+    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode, prompt, answer: '', status: 'running' }, false);
     live.node.classList.add('live');
     turnCount += 1;
     panel.dataset.state = 'running';
@@ -669,6 +691,7 @@
       agents: agents.map((x) => ({ id: x.id, label: x.label })),
       modes: (a ? a.modes : []).map((id) => ({ id, label: modes[id] ? modes[id].label : id })),
       models: a && a.canPickModel ? a.models : [],
+      custom: customCommands,
     };
   }
 
@@ -705,10 +728,10 @@
         ...cmdItems.map((it, i) => {
           const row = el('div', 'cmd-opt');
           row.setAttribute('role', 'option');
-          if (it.desc) {
+          if (it.desc || it.custom) {
             row.append(el('span', 'cmd-name', '/' + it.name));
             if (it.arg) row.append(el('span', 'cmd-arg', t('commands.args.' + it.arg)));
-            row.append(el('span', 'cmd-desc', t('commands.desc.' + it.desc, it.descParams || {})));
+            row.append(el('span', 'cmd-desc', it.custom ? it.text : t('commands.desc.' + it.desc, it.descParams || {})));
           } else {
             row.append(el('span', 'cmd-name', it.name), el('span', 'cmd-desc', it.label || ''));
           }

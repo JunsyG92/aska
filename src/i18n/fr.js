@@ -107,6 +107,14 @@ module.exports = {
   config: {
     ignored: 'Configuration ignorée : {error}',
     autoRejected: 'defaultMode "auto" refusé : remplacé par "edit"',
+    commands: {
+      invalidSection: '"commands" ignoré : objet attendu, par exemple { "trad": "Traduis en anglais : {input}" }',
+      invalidName: 'Commande « {name} » ignorée : lettres minuscules, chiffres et « - », en commençant par une lettre',
+      reserved: 'Commande « /{name} » ignorée : ce nom est pris par Aska ou par un agent',
+      noPrompt: 'Commande « /{name} » ignorée : un prompt est attendu, ou un objet avec "prompt"',
+      badPrompt: 'Commande « /{name} » ignorée : prompt de plus de {max} caractères ou invalide',
+      badField: 'Commande « /{name} » : "{field}" ignoré (valeur inconnue ou invalide)',
+    },
   },
 
   agents: {
@@ -179,6 +187,8 @@ module.exports = {
     pin: 'Épingler / désépingler (un chat épinglé ne se masque pas au clic extérieur)',
     copyLast: 'Copier la dernière réponse',
     settings: 'Réglages',
+    slash: 'Commandes (/help les liste ; //texte envoie « /texte » tel quel)',
+    userCommands: 'Vos commandes ("commands" dans la config)',
     escape: 'Annuler la demande en cours, sinon masquer',
     status: 'État',
     outsideClick: 'Clic extérieur',
@@ -348,7 +358,7 @@ module.exports = {
     commands: {
       label: 'Commandes',
       note: 'Tapez // pour envoyer un message qui commence par /',
-      args: { agent: '<agent>', mode: '<mode>', model: '[modèle]', path: '[dossier]', message: '[message]' },
+      args: { agent: '<agent>', mode: '<mode>', model: '[modèle]', path: '[dossier]', message: '[message]', text: '[texte]' },
       desc: {
         help: 'Lister les commandes',
         new: 'Nouvelle conversation, dans un nouvel onglet',

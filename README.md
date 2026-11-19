@@ -30,6 +30,7 @@ driven by their official CLIs. Linux, macOS and Windows.
 - 🛡️ **Read-only by default**: the agent changes nothing until you switch modes, and never without your approval for the folder.
 - 📌 **Out of the way or always there**: a click outside hides the chat; pinned, it stays on top where you put it. Minimized to a pill, it shows you how the agent is doing.
 - 🔔 **Notified as soon as the AI answers**: a system notification (agent and start of the answer) when the chat is hidden or minimized; one click brings you back to the conversation.
+- ⌨️ **`/` commands**: `/model`, `/mode`, `/cd`, `/codex …` from the field, and your own prompts as commands (`/trad bonjour`).
 - 🌗 **Light or dark**, following your system theme.
 - 🌐 **English or French**: the interface follows your system language (`"language"` in the config to force one).
 
@@ -176,6 +177,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Ctrl+M` | minimize to a pill / expand |
 | `Ctrl+P` | pin: the chat stays visible when you click elsewhere |
 | `Ctrl+,` | settings |
+| `/` | [commands](#commands): `/model sonnet`, `/cd ~/project`, `/codex …`, and your own |
 | `Esc` | cancel the current request, otherwise hide |
 
 The shortcuts that use `Ctrl` can be changed in the [settings](#settings) or with `"keybindings"` in the [configuration](#configuration); the tooltips and `aska --help` show the ones you chose.
@@ -204,6 +206,8 @@ Type `/` in the field: a list of commands opens above it (`↑` `↓` to choose,
 | `/cd ~/project` | change the working folder (`~` and relative paths accepted; `/cd` alone opens the picker) |
 | `/retry` | send the last request of the conversation again |
 | `/copy`, `/history`, `/settings`, `/pin`, `/mini` | same as their shortcuts |
+
+Your own commands go in `"commands"` in the [configuration](#configuration): a name and the prompt it sends, with `{input}` replaced by what you type after the name (`/trad bonjour` sends `Translate into English: bonjour`; without `{input}`, that text is added after a blank line). They show in the list with their `description`, or the first line of the prompt. An object can also pick the `agent` and the permission `mode` (switched in the window, as if you did it) and a `model` for that request only (`null`: the CLI's default). Names are lowercase letters, digits and `-`; a name taken by Aska's commands or by an agent is refused, and the window and `aska --help` say why.
 
 Only `/word` followed by a space or the end is a command: `/etc/hosts, what is it?` is a message. To send a message that starts with a command name (an agent's own `/review`, say), double the slash: `//review` sends `/review`.
 
@@ -374,6 +378,10 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
   "envPassthrough": [],
   "language": "auto",
   "keybindings": { "history": "Ctrl+J", "togglePin": false },
+  "commands": {
+    "trad": "Translate into English: {input}",
+    "review": { "prompt": "Review the uncommitted changes of this folder.", "description": "Review the diff", "agent": "claude", "mode": "read", "model": "opus" }
+  },
   "agents": {
     "claude": { "model": "sonnet", "extraArgs": ["--max-turns", "20"] },
     "codex": { "bin": "/home/me/.npm-global/bin/codex", "models": ["model-name-a", "model-name-b"] },
