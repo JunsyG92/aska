@@ -90,6 +90,11 @@
         <div id="model-note" class="model-note"></div>
       </section>
 
+      <section id="cmd-menu" class="cmd-menu" hidden aria-label="Commands" data-i18n-aria-label="commands.label">
+        <div id="cmd-list" class="cmd-list" role="listbox" aria-label="Commands" data-i18n-aria-label="commands.label"></div>
+        <div class="cmd-note" data-i18n="commands.note"></div>
+      </section>
+
       <footer class="foot">
         <button id="cwd" type="button" class="chip" title="Working folder (Ctrl+O)" data-i18n-title="workingFolderTitle">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4.5a1 1 0 0 1 1-1h3.2l1.3 1.5h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
@@ -110,6 +115,7 @@
   <script src="markdown.js"></script>
   <script src="tabs.js"></script>
   <script src="settings.js"></script>
+  <script src="commands.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

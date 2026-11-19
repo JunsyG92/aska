@@ -1166,3 +1166,71 @@ test('ACL: a real file with an ACL naming its owner is read, another user refuse
   execFileSync('/usr/bin/setfacl', ['-m', 'g::rw', f]);
   assert.match(sec.readOwnedJson(f).error, /writable by other users/);
 });
+
+// ---------- "/" commands typed in the field (renderer, pure logic) ----------
+
+const commands = require('../src/renderer/commands');
+
+test('commands: what is a command, what is a message', () => {
+  const ctx = { agents: [{ id: 'claude', label: 'Claude' }, { id: 'codex', label: 'Codex' }] };
+  assert.deepEqual(commands.parse('/new', ctx), { kind: 'command', name: 'new', arg: '' });
+  assert.deepEqual(commands.parse('  /MODE  edit ', ctx), { kind: 'command', name: 'mode', arg: 'edit' });
+  assert.deepEqual(commands.parse('/clear', ctx), { kind: 'command', name: 'new', arg: '' }, 'alias');
+  assert.deepEqual(commands.parse('/cd ~/my project', ctx), { kind: 'command', name: 'cd', arg: '~/my project' });
+  // An agent id: switch, and send the rest (several lines kept).
+  assert.deepEqual(commands.parse('/codex explain\nthis', ctx), { kind: 'agent', agentId: 'codex', rest: 'explain\nthis' });
+  assert.deepEqual(commands.parse('/cursor hi', ctx), { kind: 'unknown', name: 'cursor' }, 'unavailable agent');
+  assert.deepEqual(commands.parse('/review', ctx), { kind: 'unknown', name: 'review' });
+  // Messages: a path, a slash elsewhere, "//" escapes.
+  assert.deepEqual(commands.parse('/etc/hosts: what is it?', ctx), { kind: 'send', text: '/etc/hosts: what is it?' });
+  assert.deepEqual(commands.parse('a/b /new', ctx), { kind: 'send', text: 'a/b /new' });
+  assert.deepEqual(commands.parse('//review the diff', ctx), { kind: 'send', text: '/review the diff' });
+  assert.deepEqual(commands.parse('/', ctx), { kind: 'send', text: '/' });
+  assert.deepEqual(commands.parse('/1abc', ctx), { kind: 'send', text: '/1abc' });
+  // No context: no agent, never "__proto__" or the like.
+  assert.deepEqual(commands.parse('/__proto__'), { kind: 'send', text: '/__proto__' });
+  assert.deepEqual(commands.parse('/constructor'), { kind: 'unknown', name: 'constructor' });
+});
+
+test('commands: suggestions while typing', () => {
+  const ctx = {
+    agents: [{ id: 'claude', label: 'Claude' }, { id: 'codex', label: 'Codex' }],
+    modes: [{ id: 'read', label: 'Read-only' }, { id: 'edit', label: 'Edit' }],
+    models: ['opus', 'sonnet'],
+  };
+  const names = (text) => commands.suggest(text, ctx).map((i) => i.name);
+  // Not a command being typed.
+  for (const s of ['hello', '//x', '/new\n', '', ' /new']) assert.equal(commands.suggest(s, ctx), null, s);
+  // "/" alone: every command, then the agents.
+  assert.equal(names('/').length, 12, 'capped');
+  assert.deepEqual(names('/c'), ['clear', 'close', 'cd', 'copy', 'claude', 'codex']);
+  assert.deepEqual(names('/MO'), ['mode', 'model']);
+  // A required argument: the line waits for it.
+  const mode = commands.suggest('/mode', ctx)[0];
+  assert.deepEqual([mode.line, mode.done, mode.arg], ['/mode ', false, 'mode']);
+  const nw = commands.suggest('/new', ctx)[0];
+  assert.deepEqual([nw.line, nw.done], ['/new', true]);
+  const cl = commands.suggest('/cla', ctx)[0];
+  assert.deepEqual([cl.line, cl.desc, cl.descParams], ['/claude', 'switchTo', { agent: 'Claude' }]);
+  // Values of the argument.
+  assert.deepEqual(commands.suggest('/mode ', ctx).map((i) => i.line), ['/mode read', '/mode edit']);
+  assert.deepEqual(names('/mode e'), ['edit']);
+  assert.deepEqual(names('/model '), ['default', 'opus', 'sonnet']);
+  assert.deepEqual(names('/agent co'), ['codex']);
+  assert.deepEqual(names('/cd ~/'), [], 'free argument');
+  assert.deepEqual(names('/mode edit now'), [], 'one argument at most');
+  assert.deepEqual(names('/zzz '), []);
+  assert.deepEqual(names('/zzz'), []);
+});
+
+test('commands: every description and argument is translated', () => {
+  for (const lang of i18n.LANGUAGES) {
+    const ui = i18n.DICTS[lang].ui.commands;
+    for (const c of commands.COMMANDS) {
+      assert.equal(typeof ui.desc[c.name], 'string', `${lang}: ${c.name}`);
+      if (c.arg) assert.equal(typeof ui.args[c.arg], 'string', `${lang}: ${c.arg}`);
+    }
+    assert.equal(typeof ui.desc.switchTo, 'string');
+    assert.equal(typeof ui.args.message, 'string');
+  }
+});

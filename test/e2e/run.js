@@ -538,6 +538,75 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(st.activeTab, st.tabs[0]);
     assert.deepEqual(await tabTitles(), ['Summarize main.js (deny)']);
 
+    // ---------- "/" commands, run by the window ----------
+    const cmdNames = () => page.locator('#cmd-list .cmd-name').allTextContents();
+    const modelBefore = await page.textContent('#model-name');
+    await page.fill('#input', '/mo');
+    await page.waitForSelector('#cmd-menu:not([hidden])');
+    assert.deepEqual(await cmdNames(), ['/mode', '/model']);
+    assert.match(await page.textContent('#keys'), /complete/);
+    await page.waitForTimeout(250);
+    await shot('12-commands-light');
+    // Enter on a command that needs an argument: the line waits for it, with its values.
+    await page.keyboard.press('Enter');
+    assert.equal(await page.inputValue('#input'), '/mode ');
+    assert.equal((await cmdNames())[0], 'read');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.textContent('#mode-name'), 'Edit');
+    assert.equal(await page.inputValue('#input'), '');
+    assert.equal(await page.isHidden('#cmd-menu'), true);
+    await send('/mode read');
+    assert.equal(await page.textContent('#mode-name'), 'Read-only');
+    // Agents: by name, or with /agent (Tab completes).
+    await send('/codex');
+    assert.equal(await page.textContent('#agent-name'), 'Codex');
+    await page.fill('#input', '/agent cl');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.inputValue('#input'), '/agent claude');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.textContent('#agent-name'), 'Claude');
+    // Model and folder, applied at once.
+    await send('/model sonnet');
+    await page.waitForFunction(() => document.querySelector('#model-name').textContent === 'sonnet');
+    await send('/cd ~');
+    await page.waitForFunction(() => document.querySelector('#cwd-name').textContent === '~');
+    await send('/cd ./does-not-exist');
+    await page.waitForFunction(() => document.querySelector('#status').classList.contains('err'));
+    assert.equal(await page.inputValue('#input'), '/cd ./does-not-exist', 'kept to be fixed');
+    await page.evaluate(() => window.aska.resetDir());
+    // Unknown command: nothing is sent, the hint says how to send it anyway.
+    const turnsBefore = await turns();
+    await send('/nope');
+    assert.match(await page.textContent('#status'), /Unknown command "\/nope".*\/\/nope/);
+    assert.equal(await turns(), turnsBefore);
+    // Esc closes the palette, not the window.
+    await page.fill('#input', '/');
+    await page.waitForSelector('#cmd-menu:not([hidden])');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.isHidden('#cmd-menu'), true);
+    assert.equal(await visible(), true);
+    // "//" sends a message that starts with "/"; /retry sends the last request again.
+    await send('//new is not a command');
+    await settled('running');
+    await settled('done');
+    assert.equal(await turns(), turnsBefore + 1);
+    assert.equal(await page.locator('.turn .q').last().textContent(), '/new is not a command');
+    assert.equal(calls().pop().stdin, '/new is not a command');
+    await send('/retry');
+    await settled('running');
+    await settled('done');
+    assert.equal(await turns(), turnsBefore + 2);
+    assert.equal(await page.locator('.turn .q').last().textContent(), '/new is not a command');
+    // /new and /close: tabs.
+    await send('/new');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
+    await send('/close');
+    await page.waitForFunction((n) => document.querySelectorAll('.turn').length === n, turnsBefore + 2);
+    await send(modelBefore === 'Default model' ? '/model default' : `/model ${modelBefore}`);
+    await page.waitForFunction((m) => document.querySelector('#model-name').textContent === m, modelBefore);
+    assert.equal(await page.textContent('#cwd-name'), 'Scratch space');
+
     // French UI: "language" in the config, picked up by "aska --reload" and the next show.
     // Same for the shortcuts: history moved to Ctrl+J, model menu to Alt+Shift+M.
     fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }), { mode: 0o600 });
