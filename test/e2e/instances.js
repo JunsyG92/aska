@@ -80,8 +80,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await waitFor(() => !fs.existsSync(P.run), 'suppression de run.json');
 
   await old.close().catch(() => {});
-  // An instance still shutting down may write to this folder: retry.
-  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  // The helper processes of an instance that quit can still write to this folder
+  // for a few seconds: retry for up to 15 s. A leftover temporary folder is
+  // reported, but does not fail the test: every check above has passed.
+  for (const end = Date.now() + 15000; ;) {
+    try {
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      break;
+    } catch (e) {
+      if (Date.now() > end) {
+        console.warn(`Temporary folder left behind (${e.code}): ${home}`);
+        break;
+      }
+      await sleep(500);
+    }
+  }
   console.log('Instances OK');
 })().catch((e) => {
   console.error(e);
