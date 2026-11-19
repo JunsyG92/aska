@@ -632,6 +632,7 @@ function startRun(req) {
     } else if (ok && denied) {
       turn.notice = {
         kind: 'warn',
+        denied: true, // the window offers to run the request again in a wider mode
         text: t('notices.denied', { count: denied.count, mode: MODES[mode].label, tools: denied.tools.join(', ') }),
       };
     }

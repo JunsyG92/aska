@@ -174,6 +174,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Ctrl+O` | working folder (right-click the folder: back to the scratch space) |
 | `↑` / `↓` | recall a message already sent |
 | `Ctrl+Shift+C` | copy the last answer |
+| `Ctrl+R` | after denied actions: run the request again in the next mode (the button of the last answer) |
 | `Ctrl+M` | minimize to a pill / expand |
 | `Ctrl+P` | pin: the chat stays visible when you click elsewhere |
 | `Ctrl+,` | settings |
@@ -292,7 +293,12 @@ shown at the bottom of the panel. Aska always starts in **Read-only**.
 - In read-only, Claude only loads your settings (`--setting-sources user`):
   the hooks and permissions in the `.claude/settings.json` of an unverified project
   do not run.
-- When Claude reports denied actions, Aska shows it and offers to switch modes.
+- When the agent reports denied actions (Claude does), the answer
+  says so with a **Run again in "Edit" mode** button (the next wider mode the agent
+  offers; Autonomous only if it is allowed). It switches the mode, then sends the
+  same request again, as you would with `Shift+Tab` and `Enter`: the folder approval
+  still applies, and your draft stays in the field. Only the last answer has it;
+  `Ctrl+R` (the `rerun` shortcut) does the same from the keyboard.
 
 ## Security
 
@@ -411,6 +417,7 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 | `pickDir` | `Ctrl+O` |
 | `modelMenu` | `Ctrl+Shift+M` |
 | `copyAnswer` | `Ctrl+Shift+C` |
+| `rerun` | `Ctrl+R` |
 | `toggleMini` | `Ctrl+M` |
 | `togglePin` | `Ctrl+P` |
 | `settings` | `Ctrl+,` |

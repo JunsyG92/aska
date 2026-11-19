@@ -449,6 +449,20 @@ kbd {
 }
 .notice.error { background: color-mix(in oklab, var(--err) 11%, var(--surface)); color: var(--err); }
 .notice.warn { background: color-mix(in oklab, var(--auto) 12%, var(--surface)); color: var(--auto); }
+.notice .rerun {
+  display: block;
+  margin-top: 8px;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in oklab, currentColor 16%, transparent);
+  color: inherit;
+  font: 500 12.5px/1.3 var(--font);
+  cursor: pointer;
+}
+.notice .rerun kbd { margin-left: 8px; }
+.notice .rerun:hover { background: color-mix(in oklab, currentColor 24%, transparent); }
+.notice .rerun:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
 
 /* ---------- footer ---------- */
 

@@ -13,6 +13,7 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
 const WIN = process.platform === 'win32';
 const POSIX = !WIN;
 const { paths } = require(path.join(ROOT, 'src', 'main', 'config'));
+const { BUILTIN } = require(path.join(ROOT, 'src', 'main', 'agents'));
 const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
 
 (async () => {
@@ -69,7 +70,20 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     setVar('PATH', [bin, path.dirname(process.execPath), sys32].join(';'));
   } else {
     setVar('HOME', home);
-    setVar('PATH', `${bin}:/usr/bin:/bin`);
+    // The system tools stay reachable, but not an agent CLI installed on this machine
+    // (VS Code puts a "copilot" in /usr/bin): the test only sees its fake agents.
+    const sysbin = path.join(home, 'sysbin');
+    fs.mkdirSync(sysbin);
+    const agentBins = new Set(Object.values(BUILTIN).flatMap((a) => a.bin));
+    const linked = new Set();
+    for (const dir of ['/usr/bin', '/bin']) {
+      for (const f of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
+        if (agentBins.has(f) || linked.has(f)) continue;
+        linked.add(f);
+        fs.symlinkSync(path.join(dir, f), path.join(sysbin, f));
+      }
+    }
+    setVar('PATH', `${bin}:${sysbin}`);
   }
   const P = paths(env, home);
   fs.mkdirSync(P.configDir, { recursive: true });
@@ -169,6 +183,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.match(await page.textContent('.turn .output'), /three points about main\.js/);
     assert.equal(await page.locator('.turn .output pre code').textContent(), 'const ok = true;');
     assert.match(await page.textContent('.turn .notice'), /2 actions?(\(s\))? denied.*Bash, Edit/);
+    assert.equal(await page.textContent('.turn .notice .rerun'), 'Run again in "Edit" modeCtrl+R');
     assert.match(await page.textContent('.turn .meta'), /Claude · fake-model-1 · Read-only · /);
     await page.waitForTimeout(400);
     const grown = await bounds();
@@ -631,6 +646,62 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await send(modelBefore === 'Default model' ? '/model default' : `/model ${modelBefore}`);
     await page.waitForFunction((m) => document.querySelector('#model-name').textContent === m, modelBefore);
     assert.equal(await page.textContent('#cwd-name'), 'Scratch space');
+
+    // Actions denied by the mode: Ctrl+R (or the button) runs the same request again in the next wider mode.
+    const turnsHere = await turns();
+    await page.keyboard.press('Control+t');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
+    assert.equal(await page.textContent('#agent-name'), 'Claude');
+    assert.equal(await page.textContent('#mode-name'), 'Read-only');
+    await send('Clean up the notes (deny)');
+    await settled('running');
+    await settled('done');
+    assert.equal(await page.getAttribute('.turn .notice .rerun', 'title'), 'Switch to "Edit" mode and send this request again (Ctrl+R)');
+    await page.fill('#input', 'draft kept');
+    await page.waitForTimeout(300);
+    await shot('12-rerun-light');
+    let callsBefore = calls().length;
+    await page.keyboard.press('Control+r');
+    await page.waitForSelector('#confirm:not([hidden])'); // writing still needs the folder approval
+    await page.keyboard.press('Enter'); // once
+    await settled('running');
+    await settled('done');
+    assert.equal(await turns(), 2);
+    assert.equal(await page.locator('.turn .q').last().textContent(), 'Clean up the notes (deny)');
+    assert.equal(await page.textContent('#mode-name'), 'Edit');
+    assert.equal(await page.inputValue('#input'), 'draft kept', 'the draft is kept');
+    let again = calls()[callsBefore];
+    assert.ok(again.args.includes('acceptEdits'), again.args.join(' '));
+    assert.equal(again.stdin, 'Clean up the notes (deny)', 'same session, same request');
+    // Denied again in Edit mode: nothing wider to offer (autonomous mode is off), and
+    // the first answer lost its button: Ctrl+R does nothing.
+    assert.match(await page.locator('.turn .notice').last().textContent(), /1 action denied by the "Edit" mode \(Bash\)/);
+    assert.equal(await page.locator('.turn .rerun').count(), 0);
+    await page.keyboard.press('Control+r');
+    await page.waitForTimeout(400);
+    assert.equal(await page.isHidden('#confirm'), true);
+    assert.equal(await turns(), 2);
+    // The button, with the mouse.
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.textContent('#mode-name'), 'Read-only');
+    await send('One more try (deny)');
+    await settled('running');
+    await settled('done');
+    callsBefore = calls().length;
+    await page.click('.turn .notice .rerun');
+    await page.waitForSelector('#confirm:not([hidden])');
+    await page.keyboard.press('Enter');
+    await settled('running');
+    await settled('done');
+    assert.equal(await turns(), 4);
+    again = calls()[callsBefore];
+    assert.ok(again.args.includes('acceptEdits'));
+    assert.equal(again.stdin, 'One more try (deny)');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.textContent('#mode-name'), 'Read-only');
+    await page.fill('#input', '');
+    await page.keyboard.press('Control+w');
+    await page.waitForFunction((n) => document.querySelectorAll('.turn').length === n, turnsHere);
 
     // French UI: "language" in the config, picked up by "aska --reload" and the next show.
     // Same for the shortcuts: history moved to Ctrl+J, model menu to Alt+Shift+M.
