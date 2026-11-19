@@ -113,6 +113,7 @@ aska --hidden &                         # or log in again (autostart)
 
 - **Ubuntu 24.04+**: the script offers to configure the Electron sandbox (asks for your `sudo` password). Without it, Aska does not start; `--sandbox-fix` does it without asking.
 - **Wayland**: an application cannot always grab a global shortcut. If `Ctrl+Alt+Space` does nothing, bind the command `aska --toggle` to a shortcut in your desktop's keyboard settings (KDE, Sway, Hyprland...) and set `"shortcut": false` in the configuration.
+- **Wayland**: the `aska` command runs Aska through XWayland (`--ozone-platform=x11`). As a native Wayland client, the window gets no keyboard focus when a shortcut shows it on GNOME, and hides as soon as you drag it. `aska --ozone-platform=wayland` still forces native Wayland. If you installed Aska before this change, run `./scripts/install.sh` again to update the command, then `aska --restart`.
 
 ### macOS
 
@@ -397,6 +398,8 @@ Start with `aska --help`: the "Agents" section says which CLI is used, or why it
 <summary><b>Known issues</b></summary>
 
 <br>
+
+- **Wayland: no shortcut works in the window, or it disappears when I move it.** Aska is running as a native Wayland client. Run `./scripts/install.sh` again (the `aska` command then uses XWayland), then `aska --restart`.
 
 - **The chat does not hide when I click outside, or a new feature is missing.**
   1. *After a `git pull`*, Aska must be relaunched: as long as the old process runs, `aska` only reopens it. Since this version, Aska detects and replaces an old instance by itself; with an even older version, run `aska --quit` once, then `aska`. `aska --restart` forces a restart.
