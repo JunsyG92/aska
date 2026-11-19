@@ -180,10 +180,20 @@ function saveState() {
   } catch { /* state is a convenience, not a necessity */ }
 }
 
+// Folders are resolved (realpath): the home folder may be reached through a link
+// (macOS /var -> /private/var, Fedora Silverblue /home -> /var/home), so both forms count.
 const tilde = (p) => {
-  const home = os.homedir();
   if (p === P.workspace || p === fsRealWorkspace()) return t('app.scratch');
-  return p === home ? '~' : p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p;
+  const home = os.homedir();
+  let real = home;
+  try {
+    real = require('fs').realpathSync(home);
+  } catch { /* missing home: as is */ }
+  for (const h of new Set([home, real])) {
+    if (p === h) return '~';
+    if (p.startsWith(h + path.sep)) return '~' + p.slice(h.length);
+  }
+  return p;
 };
 
 // Model used for an agent: choice in the UI, else config, else the CLI's default.
