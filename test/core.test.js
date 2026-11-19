@@ -1000,9 +1000,15 @@ test('config: keybindings fill {key:…} in strings and in aska --help', () => {
   for (const k of Object.keys(env)) if (/^XDG_/.test(k)) delete env[k];
   const P = require('../src/main/config').paths(env, home);
   fs.mkdirSync(P.configDir, { recursive: true });
-  fs.writeFileSync(P.config, JSON.stringify({ language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }), { mode: 0o600 });
+  const commands = { trad: 'Traduis en anglais : {input}', review: { prompt: 'Relis', description: 'Relecture', mode: 'read', model: 'opus' }, new: 'x' };
+  fs.writeFileSync(P.config, JSON.stringify({ language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' }, commands }), { mode: 0o600 });
   const out = execFileSync(process.execPath, [path.join(__dirname, '..', 'src', 'cli.js'), '--help'], { env, encoding: 'utf8' });
   assert.match(out, /Ctrl\+J\s+Historique des conversations/);
+  // "/" commands: the line in the window, the user's commands, and the refused one.
+  assert.match(out, /\n {2}\/\s+Commandes \(\/help/);
+  assert.match(out, /\/trad\s+Traduis en anglais : \{input\}/);
+  assert.match(out, /\/review\s+Relecture {2}Lecture seule · opus/);
+  assert.match(out, /Commande « \/new » ignorée/);
   assert.match(out, /Alt\+Maj\+M\s+Choisir le modèle/);
   assert.ok(!/Ctrl\+H\s/.test(out), 'Ctrl+H no longer listed');
 });
@@ -1202,7 +1208,8 @@ test('commands: suggestions while typing', () => {
   // Not a command being typed.
   for (const s of ['hello', '//x', '/new\n', '', ' /new']) assert.equal(commands.suggest(s, ctx), null, s);
   // "/" alone: every command, then the agents.
-  assert.equal(names('/').length, 12, 'capped');
+  assert.equal(names('/').length, 16, 'every command and agent');
+  assert.equal(commands.suggest('/', { agents: Array.from({ length: 50 }, (_, i) => ({ id: 'a' + i, label: 'A' })) }).length, 40, 'capped');
   assert.deepEqual(names('/c'), ['clear', 'close', 'cd', 'copy', 'claude', 'codex']);
   assert.deepEqual(names('/MO'), ['mode', 'model']);
   // A required argument: the line waits for it.
@@ -1233,4 +1240,66 @@ test('commands: every description and argument is translated', () => {
     assert.equal(typeof ui.desc.switchTo, 'string');
     assert.equal(typeof ui.args.message, 'string');
   }
+});
+
+test('commands of the config: validated, reserved names refused', () => {
+  const { resolveCommands, loadConfig } = require('../src/main/config');
+  const r = resolveCommands({
+    trad: 'Translate into English: {input}',
+    review: { prompt: 'Review the diff', description: '  Review  ', agent: 'claude', mode: 'read', model: 'opus' },
+    'fix-typo': { prompt: 'Fix', model: null },
+    new: 'taken by Aska',
+    clear: 'alias of /new',
+    codex: 'taken by an agent',
+    mine: 'taken by a custom agent',
+    Bad: 'uppercase',
+    '1x': 'digit first',
+    empty: '   ',
+    noprompt: { description: 'x' },
+    list: ['x'],
+    nul: 'a\0b',
+    long: 'x'.repeat(20001),
+    odd: { prompt: 'p', agent: 'nope', mode: 'bypass', model: '--dangerously-skip-permissions' },
+  }, ['claude', 'codex', 'mine']);
+  assert.deepEqual(Object.keys(r.commands), ['trad', 'review', 'fix-typo', 'odd']);
+  assert.deepEqual(r.commands.review, { name: 'review', prompt: 'Review the diff', description: 'Review', agent: 'claude', mode: 'read', model: 'opus' });
+  assert.deepEqual(r.commands['fix-typo'], { name: 'fix-typo', prompt: 'Fix', model: null });
+  assert.deepEqual(r.commands.odd, { name: 'odd', prompt: 'p' }, 'invalid fields dropped, the command kept');
+  assert.equal(r.warnings.length, 14);
+  assert.equal(r.warnings.filter((w) => /taken by Aska or by an agent/.test(w)).length, 4);
+  assert.match(resolveCommands([]).warnings[0], /"commands" ignored/);
+  assert.deepEqual(resolveCommands(undefined), { commands: {}, warnings: [] });
+  // Through loadConfig: the agents of the config are reserved too.
+  const d = tmp();
+  const file = path.join(d, 'config.json');
+  fs.writeFileSync(file, JSON.stringify({ agents: { mine: { bin: 'x', modes: { read: [] } } }, commands: { mine: 'x', ok: 'y' } }), { mode: 0o600 });
+  const c = loadConfig(file);
+  assert.deepEqual(Object.keys(c.config.commands), ['ok']);
+  assert.ok(c.warnings.some((w) => /\/mine/.test(w)));
+});
+
+test('commands of the config: parsed, suggested and filled in', () => {
+  const custom = [
+    { name: 'trad', prompt: 'Translate into English: {input}' },
+    { name: 'review', prompt: 'Review the diff\nwith care', description: 'Review by Claude' },
+  ];
+  const ctx = { agents: [{ id: 'claude', label: 'Claude' }], custom };
+  assert.deepEqual(commands.parse('/trad bonjour à tous', ctx), { kind: 'custom', command: custom[0], arg: 'bonjour à tous' });
+  assert.deepEqual(commands.parse('/review', ctx).kind, 'custom');
+  // Aska's commands keep their meaning (the config refuses those names anyway).
+  assert.equal(commands.parse('/new', { custom: [{ name: 'new', prompt: 'x' }] }).kind, 'command');
+  const items = commands.suggest('/', ctx);
+  const own = items.filter((i) => i.custom);
+  assert.deepEqual(own.map((i) => [i.line, i.text, i.arg, i.done]), [
+    ['/trad', 'Translate into English: {input}', 'text', true],
+    ['/review', 'Review by Claude', 'text', true],
+  ]);
+  assert.ok(items.findIndex((i) => i.custom) < items.findIndex((i) => i.name === 'claude'), 'before the agents');
+  assert.deepEqual(commands.suggest('/tr', ctx).map((i) => i.name), ['trad']);
+  // "{input}" replaced (every occurrence), or the text added after a blank line.
+  assert.equal(commands.expand('Translate: {input}', ' hello '), 'Translate: hello');
+  assert.equal(commands.expand('{input} / {input}', 'a'), 'a / a');
+  assert.equal(commands.expand('Translate: {input}', ''), 'Translate:');
+  assert.equal(commands.expand('Review the diff  ', 'focus on tests'), 'Review the diff\n\nfocus on tests');
+  assert.equal(commands.expand('Review the diff', ''), 'Review the diff');
 });

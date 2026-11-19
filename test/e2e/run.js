@@ -73,7 +73,12 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   }
   const P = paths(env, home);
   fs.mkdirSync(P.configDir, { recursive: true });
-  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'en' }), { mode: 0o600 });
+  // Two "/" commands of the user, checked with the others.
+  const userCommands = {
+    trad: 'Translate into English: {input}',
+    sum: { prompt: 'Summarize these notes', description: 'Summary with Haiku', model: 'haiku' },
+  };
+  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'en', commands: userCommands }), { mode: 0o600 });
   const args = [ROOT];
   if (process.env.ASKA_E2E_NO_SANDBOX === '1') args.unshift('--no-sandbox');
   const app = await electron.launch({ executablePath: require(path.join(ROOT, 'node_modules', 'electron')), args, env, cwd: ROOT });
@@ -598,11 +603,31 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await settled('done');
     assert.equal(await turns(), turnsBefore + 2);
     assert.equal(await page.locator('.turn .q').last().textContent(), '/new is not a command');
+    // Commands of the config: listed with a description, prompt filled in, model for this request only.
+    await page.fill('#input', '/su');
+    await page.waitForSelector('#cmd-menu:not([hidden])');
+    assert.deepEqual(await cmdNames(), ['/sum']);
+    assert.equal(await page.textContent('#cmd-list .cmd-desc'), 'Summary with Haiku');
+    await page.fill('#input', '');
+    await send('/trad bonjour');
+    await settled('running');
+    await settled('done');
+    assert.equal(await page.locator('.turn .q').last().textContent(), 'Translate into English: bonjour');
+    assert.ok(calls().pop().stdin.endsWith('Translate into English: bonjour'));
+    const chosenModel = await page.textContent('#model-name');
+    await send('/sum first point, second point');
+    await settled('running');
+    await settled('done');
+    const sumCall = calls().pop();
+    assert.ok(sumCall.stdin.endsWith('Summarize these notes\n\nfirst point, second point'));
+    assert.deepEqual(sumCall.args.slice(sumCall.args.indexOf('--model'), sumCall.args.indexOf('--model') + 2), ['--model', 'haiku']);
+    assert.match(await page.locator('.turn .meta').last().textContent(), /Claude · haiku/);
+    assert.equal(await page.textContent('#model-name'), chosenModel, 'the chosen model does not change');
     // /new and /close: tabs.
     await send('/new');
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
     await send('/close');
-    await page.waitForFunction((n) => document.querySelectorAll('.turn').length === n, turnsBefore + 2);
+    await page.waitForFunction((n) => document.querySelectorAll('.turn').length === n, turnsBefore + 4);
     await send(modelBefore === 'Default model' ? '/model default' : `/model ${modelBefore}`);
     await page.waitForFunction((m) => document.querySelector('#model-name').textContent === m, modelBefore);
     assert.equal(await page.textContent('#cwd-name'), 'Scratch space');

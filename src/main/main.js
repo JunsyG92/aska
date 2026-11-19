@@ -244,6 +244,7 @@ function publicState() {
     defaultAgent: cfg.defaultAgent,
     defaultMode: cfg.defaultMode,
     allowAutoMode: cfg.allowAutoMode,
+    commands: Object.values(cfg.commands || {}),
     cwd: tilde(cwd),
     cwdIsScratch: cwd === P.workspace,
     shortcut: shortcutOk ? cfg.shortcut : null,
@@ -565,7 +566,12 @@ function startRun(req) {
   const sess = conv.sessions[agent.id];
   const resume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length ? sess.id : null;
   const fullPrompt = resume ? prompt : buildContextPrompt(conv.turns, prompt);
-  const model = modelFor(agent);
+  // A "/" command of the config may name a model for this request only (null: the CLI's default).
+  let model = modelFor(agent);
+  if (req.model !== undefined && agent.modelFlag) {
+    if (req.model !== null && !isModel(req.model)) return { error: t('errors.invalidModel') };
+    model = req.model;
+  }
 
   let inv;
   try {

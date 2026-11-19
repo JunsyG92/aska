@@ -24,15 +24,17 @@
     { name: 'mini' },
   ];
   const DEFAULT_MODEL = 'default'; // "/model default": back to the CLI's default model
-  const MAX_ITEMS = 12;
+  const MAX_ITEMS = 40; // the list scrolls
 
   const LINE_RE = /^\/([A-Za-z][\w-]*)(?:\s+([\s\S]*))?$/;
   const byName = (name) => COMMANDS.find((c) => c.name === name || (c.aliases || []).includes(name)) || null;
 
   /**
    * What to do with the text of the field.
-   * ctx: { agents: [{ id, label }] } (available agents, for "/codex …").
-   * Returns { kind: 'send', text } | { kind: 'command', name, arg }
+   * ctx: { agents: [{ id, label }] (available agents, for "/codex …"),
+   *        custom: [{ name, prompt, description?, agent?, mode?, model? }] (commands of the config) }.
+   * Aska's commands come first, then the user's, then the agents.
+   * Returns { kind: 'send', text } | { kind: 'command', name, arg } | { kind: 'custom', command, arg }
    *       | { kind: 'agent', agentId, rest } | { kind: 'unknown', name }.
    */
   function parse(text, ctx = {}) {
@@ -44,6 +46,8 @@
     const arg = (m[2] || '').trim();
     const cmd = byName(name);
     if (cmd) return { kind: 'command', name: cmd.name, arg };
+    const own = (ctx.custom || []).find((c) => c.name === name);
+    if (own) return { kind: 'custom', command: own, arg };
     const a = (ctx.agents || []).find((x) => x.id === name);
     if (a) return { kind: 'agent', agentId: a.id, rest: arg };
     return { kind: 'unknown', name };
@@ -75,6 +79,11 @@
           items.push({ line: '/' + name + (c.required ? ' ' : ''), name, desc: c.name, arg: c.arg, done: !c.required });
         }
       }
+      for (const c of ctx.custom || []) {
+        if (!starts(c.name, typed)) continue;
+        const text = c.description || c.prompt.trim().split('\n')[0].slice(0, 80);
+        items.push({ line: '/' + c.name, name: c.name, text, arg: 'text', done: true, custom: true });
+      }
       for (const a of agents) {
         if (starts(a.id, typed)) items.push({ line: '/' + a.id, name: a.id, desc: 'switchTo', descParams: { agent: a.label }, arg: 'message', done: true });
       }
@@ -97,7 +106,17 @@
       .map((v) => ({ line: `/${cmd.name} ${v.value}`, name: v.value, label: v.label, done: true }));
   }
 
-  const api = { COMMANDS, DEFAULT_MODEL, parse, suggest };
+  /**
+   * Prompt of a command of the config: "{input}" is replaced by what follows the
+   * name; without "{input}", that text is added after a blank line.
+   */
+  function expand(prompt, input) {
+    const s = String(input || '').trim();
+    if (prompt.includes('{input}')) return prompt.split('{input}').join(s).trim();
+    return s ? prompt.trimEnd() + '\n\n' + s : prompt.trim();
+  }
+
+  const api = { COMMANDS, DEFAULT_MODEL, parse, suggest, expand };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.AskaCommands = api;
 })(typeof window === 'object' ? window : globalThis);
