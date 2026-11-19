@@ -97,6 +97,17 @@ jobs:
       - name: End-to-end test (macOS)
         if: runner.os == 'macOS'
         run: npm run test:e2e
+      - name: Installation (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          ./scripts/install.sh --no-autostart --no-sandbox-fix
+          L="$HOME/.local/bin/aska"
+          test -x "$L" || { echo 'aska command missing'; exit 1; }
+          sh -n "$L"
+          test -f "$HOME/.config/aska/config.json" || { echo 'config missing'; exit 1; }
+          "$L" --help | tee /dev/stderr | grep -q 'Usage: aska'
+          # Wayland session: the command runs Aska through XWayland, unless a backend is given.
+          grep -q -- '--ozone-platform=x11' "$L" || { echo 'XWayland switch missing'; exit 1; }
       - name: Installation (macOS)
         if: runner.os == 'macOS'
         run: |

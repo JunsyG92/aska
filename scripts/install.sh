@@ -68,7 +68,14 @@ if [ "\$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)
   command -v notify-send >/dev/null && notify-send "Aska cannot start" "\$MSG"
   exit 1
 fi
-exec "$ELECTRON" "$ROOT" "\$@"
+# Wayland session: run through XWayland. As a native Wayland client, the window
+# gets no keyboard focus when shown from a shortcut on GNOME, and hides when
+# dragged. "aska --ozone-platform=wayland" still forces native Wayland.
+OZONE=
+if [ -n "\${WAYLAND_DISPLAY:-}" ] && [ -n "\${DISPLAY:-}" ]; then
+  case " \$* " in *" --ozone-platform"*) ;; *) OZONE=--ozone-platform=x11 ;; esac
+fi
+exec "$ELECTRON" "$ROOT" \$OZONE "\$@"
 LAUNCHER
 chmod 755 "$BIN/aska"
 
