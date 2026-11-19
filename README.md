@@ -297,7 +297,7 @@ In short: **no shell** ever sees the text of your requests, the agent only recei
   remote images. Only `http(s)` links are clickable: they open in your
   browser, and their real destination is shown on hover.
 - Every call from the UI is revalidated by the main process.
-- `config.json` is ignored if it is writable by another user.
+- `config.json` is ignored if it is writable by another user. On Linux, an ACL that only names the owner (common on domain-joined machines, where the mode then shows `670`) is not counted as such: the real ACL is read with `getfacl`.
 - Private audit log (`~/.local/state/aska/history.jsonl`, 0600): date, agent,
   mode, folder, command, result. `"savePrompts": false` to keep requests out of it
   and not save conversations.

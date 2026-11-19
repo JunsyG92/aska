@@ -1006,3 +1006,35 @@ test('config: keybindings fill {key:…} in strings and in aska --help', () => {
   assert.match(out, /Alt\+Maj\+M\s+Choisir le modèle/);
   assert.ok(!/Ctrl\+H\s/.test(out), 'Ctrl+H no longer listed');
 });
+
+// ---------- POSIX ACLs ----------
+
+test('ACL: only a real write access for someone else refuses a private file', () => {
+  const w = (text) => sec.aclWritableByOthers(text, 1000);
+  // ACL naming the owner (domain-joined machine): mode 670, nobody else can write.
+  assert.equal(w('user::rw-\nuser:1000:rwx\ngroup::---\nmask::rwx\nother::---\n'), false);
+  assert.equal(w('user::rw-\ngroup::r--\nother::r--\n'), false);
+  assert.equal(w('user::rw-\nuser:1001:rw-\ngroup::---\nmask::rwx\nother::---\n'), true, 'another user');
+  assert.equal(w('user::rw-\nuser:1001:rw-\ngroup::---\nmask::r--\nother::---\n'), false, 'masked out');
+  assert.equal(w('user::rw-\ngroup::rw-\nother::---\n'), true, 'owning group');
+  assert.equal(w('user::rw-\ngroup::---\ngroup:50:rwx\nmask::rwx\nother::---\n'), true, 'named group');
+  assert.equal(w('user::rw-\ngroup::---\nother::rw-\n'), true, 'other');
+  assert.equal(w('user::rw-\nuser:1000:rwx\t#effective:r--\ngroup::---\nmask::r--\nother::---\n'), false, 'comments ignored');
+  assert.equal(w('garbage'), null);
+});
+
+test('ACL: a real file with an ACL naming its owner is read, another user refuses it', (t) => {
+  const { execFileSync } = require('child_process');
+  if (process.platform !== 'linux' || !fs.existsSync('/usr/bin/setfacl')) return t.skip('setfacl not available');
+  const f = path.join(tmp(), 'config.json');
+  fs.writeFileSync(f, '{"ok":true}', { mode: 0o600 });
+  try {
+    execFileSync('/usr/bin/setfacl', ['-m', `u:${process.getuid()}:rwx`, f]);
+  } catch {
+    return t.skip('ACLs not supported on this file system');
+  }
+  assert.equal(fs.statSync(f).mode & 0o070, 0o070, 'the mask shows up as the group bits');
+  assert.deepEqual(sec.readOwnedJson(f), { data: { ok: true } });
+  execFileSync('/usr/bin/setfacl', ['-m', 'g::rw', f]);
+  assert.match(sec.readOwnedJson(f).error, /writable by other users/);
+});
