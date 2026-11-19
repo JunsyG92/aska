@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('aska', {
   closeTab: (id, force) => ipcRenderer.invoke('aska:tab-close', { id, force: force === true }),
   pickDir: () => ipcRenderer.invoke('aska:pick-dir'),
   resetDir: () => ipcRenderer.invoke('aska:reset-dir'),
+  setDir: (dir) => ipcRenderer.invoke('aska:set-dir', dir),
   copy: (text) => ipcRenderer.invoke('aska:copy', text),
   hide: () => ipcRenderer.invoke('aska:hide'),
   setPinned: (v) => ipcRenderer.invoke('aska:set-pinned', v === true),

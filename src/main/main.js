@@ -821,6 +821,21 @@ function registerIpc() {
     saveState();
     return publicState();
   });
+  // "/cd <folder>" typed in the field: "~" is the home folder, a relative path
+  // starts from the tab's folder (from home in the scratch space). Same checks as the picker.
+  handle('aska:set-dir', (raw) => {
+    if (typeof raw !== 'string' || !raw.trim() || raw.length > 4096 || raw.includes('\0')) return { ...publicState(), error: t('errors.invalidFolder') };
+    if (tabs.active().run) return { ...publicState(), error: t('errors.tabBusy') };
+    let p = raw.trim();
+    if (p === '~' || p.startsWith('~/') || p.startsWith('~' + path.sep)) p = path.join(os.homedir(), p.slice(1));
+    if (!path.isAbsolute(p)) p = path.resolve(cwd === P.workspace ? os.homedir() : cwd, p);
+    const d = sec.checkWorkdir(p, 'read');
+    if (d.error) return { ...publicState(), error: d.error };
+    cwd = d.path;
+    tabs.active().conv.cwd = cwd;
+    saveState();
+    return publicState();
+  });
   handle('aska:pick-dir', async () => {
     dialogOpen = true;
     try {

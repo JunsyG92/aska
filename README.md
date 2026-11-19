@@ -190,6 +190,23 @@ double-click shows or hides the chat directly; elsewhere, a left click shows or
 hides the chat and a right click opens the menu. `"tray": false` in the config
 removes it.
 
+### Commands
+
+Type `/` in the field: a list of commands opens above it (`↑` `↓` to choose, `Tab` to complete, `Enter` to run, `Esc` to close). They are run by Aska and never sent to the agent, so they work the same with every agent.
+
+| Command | Action |
+| --- | --- |
+| `/help` | list the commands |
+| `/new` (or `/clear`), `/close` | new tab, close the tab |
+| `/agent codex`, or just `/codex` | switch agent; `/codex explain this` also sends the rest to it |
+| `/mode read` · `edit` · `auto` | change the permission mode |
+| `/model sonnet` | pick the model (`/model default`: the CLI's own; `/model` alone opens the picker) |
+| `/cd ~/project` | change the working folder (`~` and relative paths accepted; `/cd` alone opens the picker) |
+| `/retry` | send the last request of the conversation again |
+| `/copy`, `/history`, `/settings`, `/pin`, `/mini` | same as their shortcuts |
+
+Only `/word` followed by a space or the end is a command: `/etc/hosts, what is it?` is a message. To send a message that starts with a command name (an agent's own `/review`, say), double the slash: `//review` sends `/review`.
+
 ## Settings
 
 `Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in two tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcut, the shortcuts inside the window (press the keys to record one), and the fixed keys. **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
