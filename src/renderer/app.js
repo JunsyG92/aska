@@ -361,7 +361,38 @@
     metaEl.replaceChildren(el('i'), el('b', null, turn.label), parts.length ? ' · ' + parts.join(' · ') : '');
   }
 
-  function addTurn(t, isStatic) {
+  // Next mode, wider than `m`, offered by this agent (autonomous only if allowed): null if none.
+  function widerMode(a, m) {
+    const order = ['read', 'edit', 'auto'];
+    return (a && a.modes.find((x) => order.indexOf(x) > order.indexOf(m))) || null;
+  }
+
+  // Notice of a turn. Actions denied by the mode, on the last turn: a button runs
+  // the same request again in the next wider mode (the folder approval still applies).
+  function noticeEl(turn, isLast) {
+    const n = el('div', 'notice ' + turn.notice.kind, turn.notice.text);
+    const a = agents.find((x) => x.id === turn.agentId);
+    const next = turn.notice.denied && isLast ? widerMode(a, turn.mode) : null;
+    if (next) {
+      const label = modes[next] ? modes[next].label : next;
+      const b = el('button', 'rerun', t('rerun', { mode: label }));
+      b.type = 'button';
+      b.title = t('rerunTitle', { mode: label });
+      if ((keymap.rerun || []).length) b.append(el('kbd', null, keyLabels.rerun));
+      b.addEventListener('click', () => rerun(turn, next));
+      n.append(b);
+    }
+    return n;
+  }
+
+  function rerun(turn, next) {
+    if (running || pendingTrust) return;
+    if (turn.agentId !== agentId) setAgent(turn.agentId, true);
+    setMode(next, true);
+    submit(undefined, turn.prompt);
+  }
+
+  function addTurn(t, isStatic, isLast) {
     const node = el('article', 'turn' + (isStatic ? ' static' : ''));
     node.style.setProperty('--agent', t.color);
     node.dataset.status = t.status;
@@ -370,7 +401,7 @@
     const answerEl = el('div', 'output');
     if (t.answer) answerEl.append(window.renderMarkdown(t.answer));
     node.append(el('div', 'q', t.prompt), meta, answerEl);
-    if (t.notice) node.append(el('div', 'notice ' + t.notice.kind, t.notice.text));
+    if (t.notice) node.append(noticeEl(t, isLast));
     thread.append(node);
     return { node, meta, answerEl, text: t.answer || '' };
   }
@@ -379,7 +410,7 @@
     convId = conversation.id;
     turnCount = conversation.turns.length;
     thread.replaceChildren();
-    for (const t of conversation.turns) addTurn(t, true);
+    conversation.turns.forEach((t, i) => addTurn(t, true, i === conversation.turns.length - 1));
     const last = conversation.turns[turnCount - 1];
     lastAnswer = last ? last.answer : '';
     panel.dataset.state = 'idle';
@@ -522,14 +553,16 @@
     input.focus();
   }
 
-  async function submit(trust) {
-    const prompt = pendingTrust ? pendingTrust.prompt : input.value.trim();
+  // `direct`: a request sent again (button after denied actions); the field keeps its draft.
+  async function submit(trust, direct) {
+    if (pendingTrust) direct = pendingTrust.direct;
+    const prompt = pendingTrust ? pendingTrust.prompt : direct || input.value.trim();
     const a = agent();
     if (running || !prompt || !a) return;
     if (view === 'history') showHistory(false);
     const res = await api.run({ tabId: convId, agentId, mode, prompt, trust });
     if (res.needsTrust) {
-      pendingTrust = { prompt };
+      pendingTrust = { prompt, direct };
       confirmBox.dataset.mode = res.mode;
       const what = t(res.mode === 'auto' ? 'trust.editAndRun' : 'trust.editFiles');
       $('confirm-text').textContent = t(res.reason === 'content' ? 'trust.content' : 'trust.allow', { agent: res.agent, cwd: res.cwd, what });
@@ -551,9 +584,12 @@
     running = true;
     if (history[history.length - 1] !== prompt) history.push(prompt);
     histIdx = -1;
-    draft = '';
-    input.value = '';
+    if (!direct) {
+      draft = '';
+      input.value = '';
+    }
     showNotice('');
+    thread.querySelectorAll('.notice .rerun').forEach((b) => b.remove()); // only on the last turn
     live = addTurn({ label: a.label, color: a.color, model: a.model, mode, prompt, answer: '', status: 'running' }, false);
     live.node.classList.add('live');
     turnCount += 1;
@@ -601,7 +637,7 @@
     live.node.classList.remove('live');
     live.node.dataset.status = turn.status;
     fillMeta(live.meta, turn);
-    if (turn.notice) live.node.append(el('div', 'notice ' + turn.notice.kind, turn.notice.text));
+    if (turn.notice) live.node.append(noticeEl(turn, true));
     lastAnswer = live.text;
     live = null;
     setActivity('');
@@ -891,6 +927,11 @@
     } else if (is('modelMenu')) {
       e.preventDefault();
       openModelMenu();
+    } else if (is('rerun')) {
+      // Same as the button of the last answer, if it has one.
+      e.preventDefault();
+      const b = thread.querySelector('.turn:last-child .notice .rerun');
+      if (b && !running) b.click();
     } else if (is('copyAnswer')) {
       e.preventDefault();
       if (lastAnswer) api.copy(lastAnswer).then(() => setStatus(t('status.copied'), 'ok'));

@@ -20,6 +20,7 @@ const DEFAULT_KEYBINDINGS = {
   pickDir: ['Ctrl+O'],
   modelMenu: ['Ctrl+Shift+M'],
   copyAnswer: ['Ctrl+Shift+C'],
+  rerun: ['Ctrl+R'], // run again in a wider mode, after denied actions
   toggleMini: ['Ctrl+M'],
   togglePin: ['Ctrl+P'],
 };
