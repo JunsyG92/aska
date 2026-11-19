@@ -43,6 +43,7 @@ const DEFAULTS = {
   savePrompts: true,
   hideOnBlur: true, // clicking outside hides the chat (unless it is pinned)
   alwaysOnTop: true,
+  tray: true,
   notify: 'hidden', // hidden | unfocused | never
   notifyPreview: true, // start of the answer in the notification
   notifySound: true,
@@ -89,6 +90,7 @@ function loadConfig(file, { systemLangs = null } = {}) {
   if (typeof u.savePrompts === 'boolean') cfg.savePrompts = u.savePrompts;
   if (typeof u.hideOnBlur === 'boolean') cfg.hideOnBlur = u.hideOnBlur;
   if (typeof u.alwaysOnTop === 'boolean') cfg.alwaysOnTop = u.alwaysOnTop;
+  if (typeof u.tray === 'boolean') cfg.tray = u.tray;
   if (['hidden', 'unfocused', 'never'].includes(u.notify)) cfg.notify = u.notify;
   else if (u.notify === false) cfg.notify = 'never';
   if (typeof u.notifyPreview === 'boolean') cfg.notifyPreview = u.notifyPreview;

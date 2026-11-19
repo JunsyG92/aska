@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell, Tray, Menu, nativeImage } = require('electron');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -14,6 +14,7 @@ const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
 const { buildId, runningInstance } = require('./build');
+const { createTray } = require('./tray');
 const { wantsCliOutput, printCli } = require('../cli');
 const { t, getLanguage, uiStrings } = require('../i18n');
 
@@ -34,6 +35,7 @@ let warnings = [];
 let trust = null;
 let cwd = null; // folder of the active tab (and of new tabs)
 const MAX_RUNS = 4; // simultaneous requests at most, across all tabs
+let tray = null; // system tray icon
 let runSeq = 0;
 let dialogOpen = false;
 let shortcutOk = false;
@@ -156,6 +158,7 @@ function publicTabs() {
 
 function pushTabs() {
   if (win && !win.isDestroyed()) win.webContents.send('aska:tabs', publicTabs());
+  refreshTray();
 }
 
 function fsRealWorkspace() {
@@ -301,6 +304,8 @@ function createWindow() {
   win.on('blur', () => {
     if (!pinned && !mini && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
   });
+  win.on('show', refreshTray);
+  win.on('hide', refreshTray);
   win.on('close', (e) => {
     if (!quitting) {
       e.preventDefault();
@@ -365,6 +370,48 @@ function openConversationById(cid) {
 function toggleWindow() {
   if (win && win.isVisible() && win.isFocused() && !mini) hideWindow();
   else showWindow();
+}
+
+// ---------- system tray icon ----------
+
+function refreshTray() {
+  if (!tray) return;
+  const runs = tabs ? tabs.running() : [];
+  tray.update({ running: runs.length, agentLabels: runs.map((tab) => tab.run.label), visible: !!win && win.isVisible() });
+}
+
+function setupTray() {
+  if (!cfg.tray) {
+    if (tray) tray.destroy();
+    tray = null;
+    return;
+  }
+  if (tray) return refreshTray();
+  try {
+    tray = createTray({ Tray, Menu, nativeImage }, {
+      // The menu takes focus away from the window: rely on its visibility only.
+      toggle: () => (win && win.isVisible() ? hideWindow() : showWindow()),
+      new: () => {
+        if (!win) return;
+        showWindow();
+        // Same path as Ctrl+N in the UI: a new tab.
+        win.webContents.send('aska:new-conversation');
+      },
+      // Cancels every running request, across all tabs.
+      cancel: () => {
+        for (const tab of tabs ? tabs.running() : []) tab.run.handle.cancel();
+      },
+      quit: () => {
+        quitting = true;
+        app.quit();
+      },
+    });
+  } catch (e) {
+    tray = null;
+    warnings.push(t('tray.unavailable', { error: e.message }));
+    return;
+  }
+  refreshTray();
 }
 
 function registerShortcut() {
@@ -473,7 +520,7 @@ function startRun(req) {
       if (ev.type !== 'session') send({ id, tabId: tab.id, ...ev });
     }
   );
-  tab.run = { id, handle: handleRun };
+  tab.run = { id, handle: handleRun, label: agent.label };
   pushTabs();
 
   handleRun.done.then((res) => {
@@ -796,6 +843,7 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     } else if (secondArgv.includes('--reload')) {
       loadEverything();
       registerShortcut();
+      setupTray();
     } else {
       toggleWindow();
     }
@@ -820,6 +868,7 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     registerIpc();
     registerShortcut();
     createWindow();
+    setupTray();
     win.webContents.once('did-finish-load', () => {
       if (!wants('--hidden')) showWindow();
     });
@@ -836,6 +885,7 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
   });
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
+    if (tray) tray.destroy();
     // Only remove the file if it is still ours (a new instance may have rewritten it).
     try {
       const r = sec.readOwnedJson(P.run);

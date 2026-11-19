@@ -178,6 +178,14 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 
 A click outside the chat hides it; the agent keeps working. To keep it visible, pin it (📌 or `Ctrl+P`): the choice is remembered. Minimized to a pill, it always stays visible. The window is moved with the handle on the left or the bottom bar, and its position is remembered.
 
+While Aska is running, its icon stays in the system tray (top right on GNOME).
+A green dot is added while a request is running, and the tooltip says which
+agents are working. Its menu shows or hides the chat, opens a new tab, cancels
+the running requests and quits Aska. On GNOME, a click opens this menu and a
+double-click shows or hides the chat directly; elsewhere, a left click shows or
+hides the chat and a right click opens the menu. `"tray": false` in the config
+removes it.
+
 ## Notifications
 
 When an answer arrives while the chat is hidden or minimized to a pill, Aska sends a system notification: the agent, and the start of the answer as plain text (or the reason for a failure). Clicking the notification reopens the chat on the right conversation. The pill also shows "New answer" with a green dot, until you reopen the chat. A request you cancel never notifies.
@@ -330,6 +338,7 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
   "savePrompts": true,
   "hideOnBlur": true,
   "alwaysOnTop": true,
+  "tray": true,
   "notify": "hidden",
   "notifyPreview": true,
   "notifySound": true,
@@ -351,7 +360,7 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 }
 ```
 
-`hideOnBlur` sets the default behavior on an outside click (`true`: the chat hides; `false`: it stays, as if pinned); the pin in the UI changes it afterwards. `alwaysOnTop: false` lets the window go behind others.
+`hideOnBlur` sets the default behavior on an outside click (`true`: the chat hides; `false`: it stays, as if pinned); the pin in the UI changes it afterwards. `alwaysOnTop: false` lets the window go behind others. `tray: false` removes the system tray icon.
 
 `language` picks the interface language (window, notifications, `aska --help`): `"auto"` (default) follows the system language (French for any `fr*` locale, English otherwise), `"en"` or `"fr"` forces one. Requests sent to the agents are not translated.
 
@@ -390,6 +399,10 @@ Start with `aska --help`: the "Agents" section says which CLI is used, or why it
   (nvm, for example), give its path: `"agents": { "copilot": { "bin": "/absolute/path/copilot" } }`.
 - **An agent does not show up**: same cause, its binary is not in the `PATH`
   of the graphical session. Give its path with `"bin"`, then `aska --reload`.
+- **The icon does not show up in the top bar (GNOME)**: GNOME only shows these
+  icons with the *AppIndicator and KStatusNotifierItem Support* extension.
+  Ubuntu enables it by default; elsewhere (Fedora, Debian…), install it
+  (`gnome-shell-extension-appindicator`), then log in again.
 
 </details>
 
@@ -419,6 +432,7 @@ npm start                               # runs the app
 npm run lint                            # ESLint
 npm test                                # unit tests
 xvfb-run -a npm run test:e2e            # end-to-end test, with fake CLIs (macOS, Windows: npm run test:e2e)
+./scripts/tray-icons.sh                 # regenerates the system tray icons (rsvg-convert)
 ```
 
 Every PR runs these checks on Linux, macOS and Windows, plus a CodeQL analysis. The images on this page are generated from the real application by `scripts/readme-media.js`.

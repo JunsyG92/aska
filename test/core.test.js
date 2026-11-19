@@ -10,6 +10,7 @@ const sec = require('../src/main/security');
 const { loadConfig } = require('../src/main/config');
 const { runAgent, createStreamJsonParser, clean } = require('../src/main/runner');
 const { ConversationStore, buildContextPrompt } = require('../src/main/conversations');
+const { trayModel, createTray, ICONS, ICON_DIR } = require('../src/main/tray');
 
 const i18n = require('../src/i18n');
 
@@ -460,6 +461,103 @@ test('Windows: another .cmd goes through cmd.exe only with safe arguments', () =
   }
   // On Linux, none of this: the binary is run as is.
   assert.deepEqual(resolveLaunch('/usr/bin/tool', { platform: 'linux' }), { command: '/usr/bin/tool', prefix: [], viaCmd: false });
+});
+
+test('system tray icon: state, tooltip and menu', () => {
+  const item = (m, id) => m.items.find((it) => it.id === id);
+  const idle = trayModel({ running: 0, visible: false });
+  assert.equal(idle.icon, 'idle');
+  assert.equal(idle.tooltip, 'Aska');
+  assert.equal(item(idle, 'toggle').label, 'Show Aska');
+  assert.equal(item(idle, 'new').enabled, true);
+  assert.equal(item(idle, 'cancel').enabled, false);
+  assert.equal(item(idle, 'quit').enabled, true);
+
+  const busy = trayModel({ running: 1, agentLabels: ['Claude'], visible: true });
+  assert.equal(busy.icon, 'running');
+  assert.equal(busy.tooltip, 'Aska: Claude running…');
+  assert.equal(item(busy, 'toggle').label, 'Hide Aska');
+  // A new conversation opens in a tab: allowed while a request is running.
+  assert.equal(item(busy, 'new').enabled, true);
+  assert.equal(item(busy, 'cancel').enabled, true);
+  assert.equal(item(busy, 'cancel').label, 'Cancel the run');
+
+  // Several tabs at work: count, and agents without duplicates.
+  const many = trayModel({ running: 3, agentLabels: ['Claude', 'Codex', 'Claude'], visible: false });
+  assert.equal(many.tooltip, 'Aska: 3 requests running (Claude, Codex)');
+  assert.equal(item(many, 'cancel').label, 'Cancel the 3 runs');
+
+  // Follows the UI language.
+  try {
+    i18n.setLanguage('fr');
+    const fr = trayModel({ running: 2, agentLabels: ['Codex'], visible: false });
+    assert.equal(fr.tooltip, 'Aska : 2 demandes en cours (Codex)');
+    assert.equal(item(fr, 'toggle').label, 'Afficher Aska');
+    assert.equal(item(fr, 'cancel').label, 'Annuler les 2 exécutions');
+    assert.equal(item(trayModel({ running: 1, agentLabels: ['Claude'] }), 'cancel').label, 'Annuler l’exécution');
+  } finally {
+    i18n.setLanguage('en');
+  }
+
+  // The declared icons exist, in normal and high-density sizes.
+  for (const f of Object.values(ICONS)) {
+    assert.ok(fs.existsSync(path.join(ICON_DIR, f)), f);
+    assert.ok(fs.existsSync(path.join(ICON_DIR, f.replace('.png', '@2x.png'))), f);
+  }
+});
+
+test('system tray icon: menu wired to actions, rebuilt only when needed', () => {
+  const log = [];
+  class FakeTray {
+    constructor(img) { this.img = img; this.handlers = {}; this.destroyed = false; log.push(['new', img]); }
+    on(ev, fn) { this.handlers[ev] = fn; }
+    setImage(img) { this.img = img; }
+    setToolTip(tip) { this.tip = tip; }
+    setContextMenu(m) { this.menu = m; log.push(['menu']); }
+    isDestroyed() { return this.destroyed; }
+    destroy() { this.destroyed = true; }
+  }
+  let tray;
+  const electron = {
+    Tray: class extends FakeTray { constructor(i) { super(i); tray = this; } },
+    Menu: { buildFromTemplate: (tpl) => tpl },
+    nativeImage: { createFromPath: (p) => path.basename(p) },
+  };
+  const called = [];
+  const actions = Object.fromEntries(['toggle', 'new', 'cancel', 'quit'].map((k) => [k, () => called.push(k)]));
+  const handle = createTray(electron, actions);
+
+  handle.update({ running: 0, visible: false });
+  assert.equal(tray.img, 'tray.png');
+  assert.equal(tray.tip, 'Aska');
+  const menus = () => log.filter((l) => l[0] === 'menu').length;
+  assert.equal(menus(), 1);
+  handle.update({ running: 0, visible: false });
+  assert.equal(menus(), 1, 'same state: menu not rebuilt');
+
+  handle.update({ running: 1, agentLabels: ['Codex'], visible: false });
+  assert.equal(tray.img, 'tray-running.png');
+  assert.equal(tray.tip, 'Aska: Codex running…');
+  assert.equal(menus(), 2);
+
+  // Each entry calls its action; clicking the icon shows or hides.
+  for (const it of tray.menu) if (it.click) it.click();
+  tray.handlers.click();
+  assert.deepEqual(called, ['toggle', 'new', 'cancel', 'quit', 'toggle']);
+
+  handle.destroy();
+  handle.destroy();
+  assert.equal(tray.destroyed, true);
+});
+
+test('config: system tray icon on by default, can be turned off', () => {
+  const d = tmp();
+  const f = path.join(d, 'config.json');
+  assert.equal(loadConfig(path.join(d, 'absent.json')).config.tray, true);
+  fs.writeFileSync(f, JSON.stringify({ tray: false }), { mode: 0o600 });
+  assert.equal(loadConfig(f).config.tray, false);
+  fs.writeFileSync(f, JSON.stringify({ tray: 'no' }), { mode: 0o600 });
+  assert.equal(loadConfig(f).config.tray, true);
 });
 
 test('aska --help: options, shortcuts, detected agents and files; --version', () => {

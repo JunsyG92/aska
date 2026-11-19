@@ -48,6 +48,24 @@ module.exports = {
     shortcutDescription: 'Ask an AI agent to do something (Claude, Codex, Copilot, Cursor)',
   },
 
+  tray: {
+    unavailable: 'System tray icon unavailable: {error}',
+    idle: 'Aska',
+    running: {
+      one: 'Aska: {agents} running…',
+      other: 'Aska: {count} requests running ({agents})',
+    },
+    agent: 'agent',
+    show: 'Show Aska',
+    hide: 'Hide Aska',
+    newConversation: 'New conversation',
+    cancel: {
+      one: 'Cancel the run',
+      other: 'Cancel the {count} runs',
+    },
+    quit: 'Quit Aska',
+  },
+
   notify: {
     subject: '"{title}"',
     emptyAnswer: 'Empty answer',

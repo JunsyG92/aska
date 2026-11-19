@@ -926,6 +926,7 @@
   // ---------- display lifecycle ----------
 
   api.onRunEvent(onRunEvent);
+  api.onNewConversation(() => newConversation()); // system tray icon menu
   api.onUnread(setUnread);
   $('pin-btn').addEventListener('click', () => { setPinned(!pinned, true); input.focus(); });
   api.onWillHide(() => {
