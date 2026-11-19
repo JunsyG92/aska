@@ -217,6 +217,7 @@ module.exports = {
     settings: {
       title: 'Settings ({key:settings})',
       label: 'Settings',
+      tabs: { general: 'General', keys: 'Shortcuts' },
       sections: {
         general: 'General',
         window: 'Window',

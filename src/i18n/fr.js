@@ -215,6 +215,7 @@ module.exports = {
     settings: {
       title: 'Réglages ({key:settings})',
       label: 'Réglages',
+      tabs: { general: 'Général', keys: 'Raccourcis' },
       sections: {
         general: 'Général',
         window: 'Fenêtre',

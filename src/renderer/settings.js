@@ -23,6 +23,8 @@
   let capture = null; // { kind: 'global' } | { kind: 'key', action }
   let armedClose = false;
   let message = { text: '', kind: '' };
+  let page = 'general'; // 'general' | 'keys'
+  const PAGE_OF_ERROR = (k) => (k === 'shortcut' || k.startsWith('keybindings') ? 'keys' : 'general');
 
   const t = (k, p) => opts.t(k, p);
 
@@ -243,8 +245,7 @@
     const agentOptions = data.agents
       .filter((a) => a.available || a.id === draft.defaultAgent)
       .map((a) => ({ value: a.id, label: a.label }));
-    const body = el('div', 'set-body');
-    body.append(
+    const general = [
       section(
         t('settings.sections.general'),
         field(t('settings.language'), select(data.languages.map((l) => ({ value: l, label: l === 'auto' ? t('settings.languageAuto') : LANGUAGE_NAMES[l] || l })), draft.language, (v) => { draft.language = v; }), { error: errors.language }),
@@ -272,7 +273,6 @@
         field(t('settings.alwaysOnTop'), toggle(draft.alwaysOnTop, (v) => { draft.alwaysOnTop = v; }), { error: errors.alwaysOnTop }),
         field(t('settings.tray'), toggle(draft.tray, (v) => { draft.tray = v; }), { error: errors.tray })
       ),
-      section(t('settings.sections.globalShortcut'), globalShortcutRow()),
       section(
         t('settings.sections.notifications'),
         field(t('settings.notify'), select(['hidden', 'unfocused', 'never'].map((v) => ({ value: v, label: t(`settings.notifyOptions.${v}`) })), draft.notify, (v) => { draft.notify = v; }), { error: errors.notify }),
@@ -280,6 +280,10 @@
         field(t('settings.notifySound'), toggle(draft.notifySound, (v) => { draft.notifySound = v; }))
       ),
       section(t('settings.sections.history'), field(t('settings.savePrompts'), toggle(draft.savePrompts, (v) => { draft.savePrompts = v; }))),
+      el('p', 'set-note', t('settings.fileOnly')),
+    ];
+    const shortcuts = [
+      section(t('settings.sections.globalShortcut'), globalShortcutRow()),
       section(t('settings.sections.keys'), ...data.actions.map(keyRow)),
       section(
         t('settings.fixed.title'),
@@ -299,8 +303,29 @@
           return field(t(`settings.fixed.${what}`), box);
         })
       ),
-      el('p', 'set-note', t('settings.fileOnly'))
-    );
+    ];
+
+    // Two pages, General and Shortcuts, chosen with the tabs at the top.
+    const tabs = el('div', 'set-tabs');
+    tabs.setAttribute('role', 'tablist');
+    for (const p of ['general', 'keys']) {
+      const b = el('button', 'set-tab', t(`settings.tabs.${p}`));
+      b.type = 'button';
+      b.dataset.page = p;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(page === p));
+      if (Object.keys(errors).some((k) => k !== '_' && PAGE_OF_ERROR(k) === p)) b.classList.add('has-error');
+      b.addEventListener('click', () => {
+        if (page === p) return;
+        page = p;
+        capture = null;
+        render();
+      });
+      tabs.append(b);
+    }
+    const body = el('div', 'set-body');
+    body.setAttribute('role', 'tabpanel');
+    body.append(...(page === 'keys' ? shortcuts : general));
 
     const bar = el('div', 'set-actions');
     const resetAll = el('button', 'set-btn outline', t('settings.resetAll'));
@@ -324,7 +349,7 @@
     save.addEventListener('click', saveNow);
     bar.append(resetAll, msg, cancel, save);
 
-    root.replaceChildren(body, bar);
+    root.replaceChildren(tabs, body, bar);
     if (data.configError) setMessage(data.configError, 'err');
     if (focusKey) {
       const f = root.querySelector(`[data-focus-key="${focusKey}"]`);
@@ -344,6 +369,9 @@
     const res = await opts.api.saveSettings(patch);
     if (!res || res.errors) {
       errors = (res && res.errors) || {};
+      // Show the page holding the first error, if it is not the current one.
+      const pages = Object.keys(errors).filter((k) => k !== '_').map(PAGE_OF_ERROR);
+      if (pages.length && !pages.includes(page)) page = pages[0];
       render();
       setMessage(errors._ || t('settings.hasErrors'), 'err');
       const first = root.querySelector('.set-error');
@@ -383,8 +411,9 @@
     capture = null;
     armedClose = false;
     message = { text: '', kind: '' };
+    page = 'general';
     render();
-    const first = root.querySelector('select, input, button');
+    const first = root.querySelector('.set-body select, .set-body input, .set-body button');
     if (first) first.focus();
   }
 

@@ -192,7 +192,7 @@ removes it.
 
 ## Settings
 
-`Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window: language, default agent and mode, time limit, always on top, tray icon, global shortcut, notifications, saved conversations, and the shortcuts inside the window (press the keys to record one). **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
+`Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in two tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcut, the shortcuts inside the window (press the keys to record one), and the fixed keys. **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
 
 - On GNOME, the global shortcut is the "Aska" entry of the GNOME custom keyboard shortcuts (`aska --toggle`): the settings change it there, since an application cannot grab a global shortcut under Wayland.
 - Agents, their programs and arguments, `envPassthrough` and the autonomous mode stay in `config.json`, edited by hand: they decide which programs run, so the window cannot change them.

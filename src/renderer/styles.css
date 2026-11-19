@@ -706,6 +706,46 @@ kbd {
 .panel.in-settings #input, .panel.in-settings #agent { opacity: 0.4; pointer-events: none; }
 .panel.in-settings .keys { margin-left: 4px; }
 
+.set-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.set-tab {
+  position: relative;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font: 500 13px/1 var(--font);
+  cursor: pointer;
+}
+.set-tab:hover { color: var(--text); }
+.set-tab[aria-selected='true'] { color: var(--text); }
+.set-tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--agent);
+}
+.set-tab.has-error::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--err);
+  vertical-align: middle;
+}
+.set-tab:focus-visible { outline: 2px solid var(--agent); outline-offset: -2px; }
 .set-body {
   max-height: 380px;
   overflow-y: auto;

@@ -597,12 +597,17 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.keyboard.press('Control+,');
     await page.waitForSelector('#settings:not([hidden]) .set-section');
     assert.equal(await page.isHidden('#thread'), true);
-    assert.deepEqual(await row('history').locator('kbd').allTextContents(), ['Ctrl+J']);
     await page.waitForTimeout(500); // end of the opening animation
     await shot('10-settings-light');
+    // Second tab: the global shortcut and the shortcuts inside the window.
+    await page.click('.set-tab[data-page="keys"]');
+    await page.waitForSelector('.set-row[data-action="history"]');
+    assert.equal(await page.getAttribute('.set-tab[data-page="keys"]', 'aria-selected'), 'true');
+    assert.deepEqual(await row('history').locator('kbd').allTextContents(), ['Ctrl+J']);
+    await shot('11-settings-keys-light');
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.waitForTimeout(150);
-    await shot('10-settings-dark');
+    await shot('11-settings-keys-dark');
     await page.emulateMedia({ colorScheme: 'light' });
     // History: Ctrl+J replaced by Ctrl+K, captured from the keyboard.
     await row('history').locator('.set-chip-x').click();
