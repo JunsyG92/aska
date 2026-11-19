@@ -89,7 +89,7 @@ async function writeShortcut(run, accel, command) {
 
 /** Command for a new entry: the "aska" launcher if installed, else Electron directly. */
 function toggleCommand({ env = process.env, home = require('os').homedir(), exists = require('fs').existsSync, execPath = process.execPath, appPath = '' } = {}) {
-  const path = require('path');
+  const path = require('path').posix; // GNOME: Linux paths, whatever runs the tests
   const q = (p) => (/[\s"'\\]/.test(p) ? `"${p.replace(/(["\\$`])/g, '\\$1')}"` : p);
   const launcher = path.join(env.XDG_BIN_HOME && path.isAbsolute(env.XDG_BIN_HOME) ? env.XDG_BIN_HOME : path.join(home, '.local', 'bin'), 'aska');
   if (exists(launcher)) return `${q(launcher)} --toggle`;
