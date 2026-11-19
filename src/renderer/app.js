@@ -47,13 +47,26 @@
 
   let lang = 'en';
   let strings = {};
+  let keyLabels = {}; // configured shortcut of each action, for {key:action} in the strings
   const lookup = (key) => key.split('.').reduce((o, k) => (o && typeof o === 'object' && Object.hasOwn(o, k) ? o[k] : undefined), strings);
   function t(key, params = {}) {
     let v = lookup(key);
     if (v && typeof v === 'object' && typeof params.count === 'number') v = v[new Intl.PluralRules(lang).select(params.count)] ?? v.other;
     if (typeof v !== 'string') return key;
-    return v.replace(/\{(\w+)\}/g, (m, k) => (Object.hasOwn(params, k) ? String(params[k]) : m));
+    return v.replace(/\{(key:)?(\w+)\}/g, (m, isKey, k) => {
+      if (isKey) return Object.hasOwn(keyLabels, k) ? keyLabels[k] : m;
+      return Object.hasOwn(params, k) ? String(params[k]) : m;
+    });
   }
+
+  // ---------- configurable shortcuts (parsed and checked by the main process, see keys.js) ----------
+
+  let keymap = {}; // action -> [{ ctrl, shift, alt, meta, key }]
+  const eventKey = (e) => (e.key.length === 1 ? e.key.toLowerCase() : e.key);
+  /** Does this key event trigger the action? Modifiers must match exactly. */
+  const isKey = (e, action) =>
+    (keymap[action] || []).some((c) =>
+      c.key === eventKey(e) && c.ctrl === e.ctrlKey && c.shift === e.shiftKey && c.alt === e.altKey && c.meta === e.metaKey);
   let locale = 'en-US';
   let timeFmt, dayFmt, yearFmt;
 
@@ -61,6 +74,8 @@
   function setLanguage(s) {
     lang = s.lang || 'en';
     strings = s.strings || {};
+    keymap = s.keys || {};
+    keyLabels = s.keyLabels || {};
     locale = t('locale');
     document.documentElement.lang = lang;
     timeFmt = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' });
@@ -789,27 +804,27 @@
 
 
   document.addEventListener('keydown', (e) => {
-    const k = e.key.toLowerCase();
-    if (e.ctrlKey && !e.shiftKey && k === 'm') {
+    const is = (action) => isKey(e, action);
+    if (is('toggleMini')) {
       e.preventDefault();
       setMini(!mini);
       return;
     }
-    if (e.ctrlKey && !e.shiftKey && k === 'p' && !mini) {
+    if (is('togglePin') && !mini) {
       e.preventDefault();
       setPinned(!pinned, true);
       return;
     }
-    if (!mini && !pendingTrust && !menuOpen && e.ctrlKey) {
+    if (!mini && !pendingTrust && !menuOpen) {
+      // Ctrl+1 to Ctrl+9 stay fixed: tab n°1 to 8, Ctrl+9 the last one.
+      const tabNumber = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key) && tabList.length > 1;
       const tabKey =
-        (k === 't' || (k === 'n' && !e.shiftKey)) ? () => newConversation()
-        : k === 'w' && !e.shiftKey ? () => closeTab()
-        : e.key === 'Tab' ? () => cycleTab(e.shiftKey ? -1 : 1)
-        : e.key === 'PageDown' ? () => cycleTab(1)
-        : e.key === 'PageUp' ? () => cycleTab(-1)
-        : /^[1-9]$/.test(e.key) && !e.shiftKey && tabList.length > 1
-          ? () => activateTab((e.key === '9' ? tabList[tabList.length - 1] : tabList[Number(e.key) - 1] || {}).id)
-          : null;
+        is('newTab') ? () => newConversation()
+        : is('closeTab') ? () => closeTab()
+        : is('nextTab') ? () => cycleTab(1)
+        : is('prevTab') ? () => cycleTab(-1)
+        : tabNumber ? () => activateTab((e.key === '9' ? tabList[tabList.length - 1] : tabList[Number(e.key) - 1] || {}).id)
+        : null;
       if (tabKey) {
         e.preventDefault();
         tabKey();
@@ -828,7 +843,7 @@
       return;
     }
     if (menuOpen) {
-      if (e.key === 'Escape' || (e.ctrlKey && e.shiftKey && k === 'm')) { e.preventDefault(); closeModelMenu(); }
+      if (e.key === 'Escape' || is('modelMenu')) { e.preventDefault(); closeModelMenu(); }
       else if (e.key === 'ArrowDown') { e.preventDefault(); highlightModel(modelSel + 1, true); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); highlightModel(modelSel - 1, true); }
       else if (e.key === 'PageDown') { e.preventDefault(); highlightModel(modelSel + 6, true); }
@@ -846,7 +861,7 @@
         if (histConfirm) armDelete(null);
         else if (histSearch.value) { histSearch.value = ''; renderHistory(); }
         else showHistory(false);
-      } else if (e.ctrlKey && k === 'h') { e.preventDefault(); showHistory(false); }
+      } else if (is('history')) { e.preventDefault(); showHistory(false); }
       else if (e.key === 'ArrowDown') { e.preventDefault(); highlightHist(histSel + 1, true); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); highlightHist(histSel - 1, true); }
       else if (e.key === 'PageDown') { e.preventDefault(); highlightHist(histSel + 5, true); }
@@ -866,26 +881,23 @@
       e.preventDefault();
       if (running) api.cancel(convId);
       else api.hide();
-    } else if (e.key === 'Tab') {
+    } else if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
       e.preventDefault();
       if (e.shiftKey) cycleMode();
       else cycleAgent(1);
     } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       submit();
-    } else if (e.ctrlKey && e.shiftKey && k === 'm') {
+    } else if (is('modelMenu')) {
       e.preventDefault();
       openModelMenu();
-    } else if (e.ctrlKey && e.shiftKey && k === 'c') {
+    } else if (is('copyAnswer')) {
       e.preventDefault();
       if (lastAnswer) api.copy(lastAnswer).then(() => setStatus(t('status.copied'), 'ok'));
-    } else if (e.ctrlKey && !e.shiftKey && k === 'o') {
+    } else if (is('pickDir')) {
       e.preventDefault();
       if (!running) api.pickDir().then(applyState);
-    } else if (e.ctrlKey && !e.shiftKey && k === 'l') {
-      e.preventDefault();
-      newConversation();
-    } else if (e.ctrlKey && !e.shiftKey && k === 'h') {
+    } else if (is('history')) {
       e.preventDefault();
       if (!$('hist-btn').hidden) showHistory(true);
     } else if (e.key === 'ArrowUp' && e.target === input && !input.value.slice(0, input.selectionStart).includes('\n')) {

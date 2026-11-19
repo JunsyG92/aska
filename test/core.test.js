@@ -786,7 +786,7 @@ test('i18n: every language has the same keys and placeholders, and no em dash', 
     }
     return out;
   };
-  const placeholders = (s) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+  const placeholders = (s) => [...s.matchAll(/\{((?:key:)?\w+)\}/g)].map((m) => m[1]).sort();
   const en = flat(i18n.DICTS.en);
   for (const lang of i18n.LANGUAGES) {
     const other = flat(i18n.DICTS[lang]);
@@ -903,4 +903,106 @@ test('tabs: saved then reopened, unread answers cleared on activation', () => {
   again.restore([a, b, 42, a], b, '/p');
   assert.deepEqual(again.list.map((t) => t.id), [a]);
   assert.equal(again.activeId, a);
+});
+
+// ---------- shortcuts inside the window ----------
+
+const keys = require('../src/main/keys');
+
+test('shortcuts: parsing, canonical form and display', () => {
+  const { parseCombo, comboId, formatCombo } = keys;
+  assert.deepEqual(parseCombo('Ctrl+Shift+M'), { ctrl: true, shift: true, alt: false, meta: false, key: 'm' });
+  assert.deepEqual(parseCombo('control + pagedown'), { ctrl: true, shift: false, alt: false, meta: false, key: 'PageDown' });
+  assert.deepEqual(parseCombo('Cmd+,'), { ctrl: false, shift: false, alt: false, meta: true, key: ',' });
+  assert.equal(parseCombo('Option+F5').key, 'F5');
+  for (const bad of ['', 'Ctrl+', 'Ctrl++', 'Ctrl+Ctrl+M', 'Ctrl+Enter', 'Ctrl+ArrowUp', 'Ctrl+Space', 'Shift+Ctrl', 'M+Ctrl', 42, null, 'x'.repeat(41)]) {
+    assert.equal(parseCombo(bad), null, String(bad));
+  }
+  assert.equal(comboId(parseCombo('Shift+Ctrl+M')), comboId(parseCombo('Ctrl+Shift+m')));
+  assert.equal(formatCombo(parseCombo('ctrl+shift+m')), 'Ctrl+Shift+M');
+  try {
+    i18n.setLanguage('fr');
+    assert.equal(formatCombo(parseCombo('Ctrl+Shift+PageDown')), 'Ctrl+Maj+PgSuiv');
+  } finally {
+    i18n.setLanguage('en');
+  }
+});
+
+test('shortcuts: combos kept for typing, editing and tab numbers', () => {
+  const r = (s) => keys.reservedReason(keys.parseCombo(s));
+  assert.equal(r('H'), 'needsModifier');
+  assert.equal(r('Shift+H'), 'needsModifier');
+  for (const s of ['Ctrl+C', 'Ctrl+V', 'Ctrl+Shift+V', 'Ctrl+Z', 'Ctrl+Shift+Z', 'Ctrl+Y', 'Ctrl+A', 'Meta+X']) assert.equal(r(s), 'editing', s);
+  assert.equal(r('Ctrl+3'), 'tabNumbers');
+  for (const s of ['Ctrl+Shift+C', 'Ctrl+Alt+C', 'Alt+H', 'Ctrl+Shift+3', 'Ctrl+H']) assert.equal(r(s), null, s);
+});
+
+test('shortcuts: defaults, replaced, removed, conflicts and warnings', () => {
+  const { resolveKeybindings, ACTIONS, keyLabels } = keys;
+  const ids = (b, a) => b[a].map(keys.comboId);
+  const d = resolveKeybindings(undefined);
+  assert.deepEqual(Object.keys(d.bindings), ACTIONS);
+  assert.deepEqual(d.warnings, []);
+  assert.deepEqual(ids(d.bindings, 'newTab'), ['ctrl+t', 'ctrl+n', 'ctrl+l']);
+  assert.deepEqual(keyLabels(d.bindings).modelMenu, 'Ctrl+Shift+M');
+
+  // An action given replaces its defaults; false removes them; a combo taken
+  // from another action's defaults is removed there, silently.
+  const r = resolveKeybindings({ history: 'Ctrl+J', closeTab: false, pickDir: ['Ctrl+N', 'Alt+O'] });
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(ids(r.bindings, 'history'), ['ctrl+j']);
+  assert.deepEqual(r.bindings.closeTab, []);
+  assert.deepEqual(ids(r.bindings, 'pickDir'), ['ctrl+n', 'alt+o']);
+  assert.deepEqual(ids(r.bindings, 'newTab'), ['ctrl+t', 'ctrl+l']);
+  assert.equal(keyLabels(r.bindings).closeTab, 'no shortcut');
+
+  // Between two configured actions, the first keeps the combo.
+  const c = resolveKeybindings({ history: 'Ctrl+J', copyAnswer: ['Ctrl+J', 'Ctrl+Shift+J'] });
+  assert.deepEqual(ids(c.bindings, 'copyAnswer'), ['ctrl+shift+j']);
+  assert.match(c.warnings.join('\n'), /keybindings\.copyAnswer: Ctrl\+J is already used by "history"/);
+
+  // Invalid entries are reported; an action left without any valid combo keeps its defaults.
+  const bad = resolveKeybindings({ history: 'Ctrl+C', toggleMini: 'Ctrl+Enter', nope: 'Ctrl+K', togglePin: 3 });
+  assert.equal(bad.warnings.length, 4);
+  assert.match(bad.warnings[0], /kept for text editing/);
+  assert.match(bad.warnings[1], /not a valid shortcut/);
+  assert.match(bad.warnings[2], /unknown action "nope"/);
+  assert.match(bad.warnings[3], /keybindings\.togglePin: expected/);
+  assert.deepEqual(ids(bad.bindings, 'history'), ['ctrl+h']);
+  assert.deepEqual(ids(bad.bindings, 'toggleMini'), ['ctrl+m']);
+  assert.match(resolveKeybindings(['Ctrl+H']).warnings[0], /"keybindings" ignored/);
+});
+
+test('config: keybindings fill {key:…} in strings and in aska --help', () => {
+  const { execFileSync } = require('child_process');
+  const d = tmp();
+  const f = path.join(d, 'config.json');
+  try {
+    fs.writeFileSync(f, JSON.stringify({ keybindings: { history: 'Ctrl+J', togglePin: [] } }), { mode: 0o600 });
+    const c = loadConfig(f);
+    assert.deepEqual(c.warnings, []);
+    assert.deepEqual(c.config.keybindings.history.map(keys.comboId), ['ctrl+j']);
+    assert.equal(i18n.t('ui.history.title'), 'Conversations (Ctrl+J)');
+    assert.equal(i18n.t('cli.outsideClickHides'), 'Hides the chat (no shortcut to pin it)');
+    assert.equal(i18n.t('security.homeRefused').endsWith('(Ctrl+O)'), true);
+    // Back to the defaults when the config has no keybindings.
+    loadConfig(path.join(d, 'absent.json'));
+    assert.equal(i18n.t('ui.history.title'), 'Conversations (Ctrl+H)');
+  } finally {
+    loadConfig(path.join(d, 'absent.json'));
+  }
+
+  // The help lists the shortcuts as configured, in the config's language.
+  const home = tmp();
+  const env = WIN
+    ? { ...baseEnv(), USERPROFILE: home, APPDATA: path.join(home, 'R'), LOCALAPPDATA: path.join(home, 'L'), NO_COLOR: '1' }
+    : { ...baseEnv(), HOME: home, NO_COLOR: '1' };
+  for (const k of Object.keys(env)) if (/^XDG_/.test(k)) delete env[k];
+  const P = require('../src/main/config').paths(env, home);
+  fs.mkdirSync(P.configDir, { recursive: true });
+  fs.writeFileSync(P.config, JSON.stringify({ language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }), { mode: 0o600 });
+  const out = execFileSync(process.execPath, [path.join(__dirname, '..', 'src', 'cli.js'), '--help'], { env, encoding: 'utf8' });
+  assert.match(out, /Ctrl\+J\s+Historique des conversations/);
+  assert.match(out, /Alt\+Maj\+M\s+Choisir le modèle/);
+  assert.ok(!/Ctrl\+H\s/.test(out), 'Ctrl+H no longer listed');
 });

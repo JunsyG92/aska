@@ -12,6 +12,7 @@ const { resolveAgents, MODES } = require('./main/agents');
 const { resolveBinary, readOwnedJson } = require('./main/security');
 const { buildId, runningInstance } = require('./main/build');
 const { resolveLaunch, extendedPath } = require('./main/launch');
+const { keyLabels } = require('./main/keys');
 const { t, systemLanguages } = require('./i18n');
 
 const HELP_FLAGS = ['-h', '--help', '-?', '/?'];
@@ -71,6 +72,7 @@ function helpText(stream = process.stdout, env = process.env) {
   const pinned = typeof st.pinned === 'boolean' ? st.pinned : !cfg.hideOnBlur;
   const instance = runningInstance(readOwnedJson, P.run);
   const row = (k, v) => `  ${s.bold(k.padEnd(20))} ${v}`;
+  const key = keyLabels(cfg.keybindings); // shortcuts as configured ("keybindings")
 
   const lines = [
     t('cli.header', { name: s.bold('Aska'), version: pkg.version }),
@@ -94,12 +96,12 @@ function helpText(stream = process.stdout, env = process.env) {
     row(t('cli.keys.enter'), t('cli.send')),
     row(t('cli.keys.tab'), t('cli.nextAgentMode')),
     row(t('cli.keys.model'), t('cli.pickModel')),
-    row('Ctrl+T  /  Ctrl+W', t('cli.tabs')),
-    row('Ctrl+Tab, Ctrl+1…9', t('cli.switchTab')),
-    row('Ctrl+H', t('cli.history')),
-    row('Ctrl+O', t('cli.workingFolder')),
-    row('Ctrl+M', t('cli.collapse')),
-    row('Ctrl+P', t('cli.pin')),
+    row(`${key.newTab}  /  ${key.closeTab}`, t('cli.tabs')),
+    row(`${key.nextTab}, Ctrl+1…9`, t('cli.switchTab')),
+    row(key.history, t('cli.history')),
+    row(key.pickDir, t('cli.workingFolder')),
+    row(key.toggleMini, t('cli.collapse')),
+    row(key.togglePin, t('cli.pin')),
     row(t('cli.keys.copy'), t('cli.copyLast')),
     row(t('cli.keys.esc'), t('cli.escape')),
     '',

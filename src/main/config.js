@@ -3,7 +3,8 @@ const os = require('os');
 const path = require('path');
 const { readOwnedJson } = require('./security');
 const { MODE_ORDER } = require('./agents');
-const { t, setLanguage, resolveLanguage, LANGUAGES } = require('../i18n');
+const { t, setLanguage, resolveLanguage, LANGUAGES, setKeyLabels } = require('../i18n');
+const { resolveKeybindings, keyLabels } = require('./keys');
 
 function paths(env = process.env, home = os.homedir(), platform = process.platform) {
   const abs = (v, fallback) => (v && path.isAbsolute(v) ? v : fallback);
@@ -49,6 +50,7 @@ const DEFAULTS = {
   notifySound: true,
   envPassthrough: [],
   language: 'auto', // auto (system language) | en | fr
+  keybindings: {}, // shortcuts inside the window, by action (see keys.js)
   agents: {},
 };
 
@@ -65,12 +67,20 @@ function loadConfig(file, { systemLangs = null } = {}) {
     if (systemLangs) setLanguage(resolveLanguage(pref, systemLangs));
   };
   useLanguage('auto');
+  // Shortcuts are resolved last, in the final language: their labels fill {key:…} in the strings.
+  const done = (user) => {
+    const k = resolveKeybindings(user);
+    cfg.keybindings = k.bindings;
+    warnings.push(...k.warnings);
+    setKeyLabels(keyLabels(k.bindings));
+    return { config: cfg, warnings };
+  };
   const r = readOwnedJson(file);
   if (r.error) {
     warnings.push(t('config.ignored', { error: r.error }));
-    return { config: cfg, warnings };
+    return done(undefined);
   }
-  if (r.missing || !r.data || typeof r.data !== 'object') return { config: cfg, warnings };
+  if (r.missing || !r.data || typeof r.data !== 'object') return done(undefined);
   const u = r.data;
 
   if (u.language === 'auto' || LANGUAGES.includes(u.language)) cfg.language = u.language;
@@ -99,7 +109,7 @@ function loadConfig(file, { systemLangs = null } = {}) {
     cfg.envPassthrough = u.envPassthrough.filter((s) => typeof s === 'string' && /^[A-Za-z_][A-Za-z0-9_]*\*?$/.test(s));
   }
   if (u.agents && typeof u.agents === 'object' && !Array.isArray(u.agents)) cfg.agents = u.agents;
-  return { config: cfg, warnings };
+  return done(u.keybindings);
 }
 
 module.exports = { paths, loadConfig, DEFAULTS };

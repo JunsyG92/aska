@@ -15,6 +15,7 @@ const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
 const { buildId, runningInstance } = require('./build');
 const { createTray } = require('./tray');
+const { keyLabels } = require('./keys');
 const { wantsCliOutput, printCli } = require('../cli');
 const { t, getLanguage, uiStrings } = require('../i18n');
 
@@ -232,6 +233,9 @@ function publicState() {
   return {
     lang: getLanguage(),
     strings: uiStrings(),
+    // Shortcuts inside the window: parsed combos by action, and their labels for {key:…} in the strings.
+    keys: cfg.keybindings,
+    keyLabels: keyLabels(cfg.keybindings),
     agents: list,
     modes: Object.fromEntries(MODE_ORDER.map((m) => [m, { label: MODES[m].label, hint: MODES[m].hint }])),
     defaultAgent: cfg.defaultAgent,

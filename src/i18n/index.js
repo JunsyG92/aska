@@ -46,7 +46,17 @@ const getLanguage = () => current;
 const lookup = (dict, key) =>
   key.split('.').reduce((o, k) => (o && typeof o === 'object' && Object.hasOwn(o, k) ? o[k] : undefined), dict);
 
-const format = (s, params) => s.replace(/\{(\w+)\}/g, (m, k) => (Object.hasOwn(params, k) ? String(params[k]) : m));
+// Shortcut of each configurable action ({key:newTab} in a string), set from the config (see keys.js).
+let keyLabels = {};
+function setKeyLabels(labels) {
+  keyLabels = { ...labels };
+}
+
+const format = (s, params) =>
+  s.replace(/\{(key:)?(\w+)\}/g, (m, isKey, k) => {
+    if (isKey) return Object.hasOwn(keyLabels, k) ? keyLabels[k] : m;
+    return Object.hasOwn(params, k) ? String(params[k]) : m;
+  });
 
 /** Translated string; plural objects are picked with params.count. Falls back to English, then to the key. */
 function t(key, params = {}) {
@@ -74,4 +84,4 @@ function merge(base, over) {
 /** UI strings for the renderer (plain data, sent over IPC). */
 const uiStrings = () => merge(DICTS[FALLBACK].ui, DICTS[current].ui);
 
-module.exports = { LANGUAGES, DICTS, resolveLanguage, systemLanguages, setLanguage, getLanguage, t, uiStrings };
+module.exports = { LANGUAGES, DICTS, resolveLanguage, systemLanguages, setLanguage, getLanguage, t, uiStrings, setKeyLabels };
