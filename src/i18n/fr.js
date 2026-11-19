@@ -46,6 +46,24 @@ module.exports = {
     shortcutDescription: 'Demander une action à un agent IA (Claude, Codex, Copilot, Cursor)',
   },
 
+  tray: {
+    unavailable: 'Icône de la barre système indisponible : {error}',
+    idle: 'Aska',
+    running: {
+      one: 'Aska : {agents} en cours…',
+      other: 'Aska : {count} demandes en cours ({agents})',
+    },
+    agent: 'agent',
+    show: 'Afficher Aska',
+    hide: 'Masquer Aska',
+    newConversation: 'Nouvelle conversation',
+    cancel: {
+      one: 'Annuler l’exécution',
+      other: 'Annuler les {count} exécutions',
+    },
+    quit: 'Quitter Aska',
+  },
+
   notify: {
     subject: '« {title} »',
     emptyAnswer: 'Réponse vide',

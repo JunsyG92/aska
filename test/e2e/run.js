@@ -561,6 +561,25 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     const cur = calls()[before];
     assert.deepEqual(cur.args.slice(0, 6), ['-p', '--output-format', 'stream-json', '--mode', 'ask', '--trust']);
 
+    // "New conversation" from the system tray menu: the hidden window comes
+    // back on a new empty tab (same path as Ctrl+N).
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length > 0);
+    const tabsBefore = await page.locator('.tab').count();
+    const waitVisible = async (want) => {
+      for (let i = 0; i < 50 && (await visible()) !== want; i++) await page.waitForTimeout(100);
+      assert.equal(await visible(), want);
+    };
+    await page.keyboard.press('Escape');
+    await waitVisible(false);
+    await app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows()[0];
+      w.show();
+      w.webContents.send('aska:new-conversation');
+    });
+    await waitVisible(true);
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
+    assert.equal(await page.locator('.tab').count(), tabsBefore + 1);
+
     // Navigation and window opening are blocked (last: Playwright then waits for
     // a navigation that will never happen).
     await page.evaluate(() => { window.open('https://example.com'); location.href = 'https://example.com'; });
