@@ -15,7 +15,10 @@ const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
 const { buildId, runningInstance } = require('./build');
 const { createTray } = require('./tray');
-const { keyLabels } = require('./keys');
+const { keyLabels, ACTIONS } = require('./keys');
+const { settingsView, validateSettings, mergeConfig } = require('./settings');
+const gnome = require('./gnome');
+const { LANGUAGES } = require('../i18n');
 const { wantsCliOutput, printCli } = require('../cli');
 const { t, getLanguage, uiStrings } = require('../i18n');
 
@@ -405,6 +408,11 @@ function setupTray() {
       cancel: () => {
         for (const tab of tabs ? tabs.running() : []) tab.run.handle.cancel();
       },
+      settings: () => {
+        if (!win) return;
+        showWindow();
+        win.webContents.send('aska:open-settings');
+      },
       quit: () => {
         quitting = true;
         app.quit();
@@ -430,6 +438,77 @@ function registerShortcut() {
   if (!shortcutOk) {
     warnings.push(t('app.shortcutUnavailable', { shortcut: cfg.shortcut }));
   }
+}
+
+// ---------- settings panel (see settings.js) ----------
+
+// GNOME: the global shortcut is a GNOME custom shortcut, set through gsettings
+// (absolute path, no shell): the system one first (see gnome.js). null when not in a GNOME session.
+function gnomeRunner() {
+  if (!gnome.isGnomeSession()) return null;
+  const bin = gnome.systemGsettings() || sec.resolveBinary(['gsettings'], { envPath: searchPath() }).path;
+  if (!bin) return null;
+  const r = { path: bin };
+  const { execFile } = require('child_process');
+  return (args) => new Promise((resolve, reject) => {
+    execFile(r.path, args, { timeout: 5000 }, (err, stdout, stderr) => (err ? reject(new Error((stderr || err.message).trim())) : resolve(stdout)));
+  });
+}
+
+async function settingsGet() {
+  const view = settingsView(cfg);
+  const run = gnomeRunner();
+  let gnomeInfo = { active: false };
+  if (run) {
+    try {
+      const g = await gnome.readShortcut(run);
+      gnomeInfo = { active: true };
+      view.values.shortcut = g.binding;
+    } catch (e) {
+      gnomeInfo = { active: false, error: e.message }; // gsettings unusable: Aska's own shortcut
+    }
+  }
+  const r = sec.readOwnedJson(P.config);
+  const names = Object.fromEntries(['Ctrl', 'Alt', 'Shift', 'Meta', 'Super', 'Space', 'Enter', 'Escape', 'ArrowUp', 'ArrowDown', 'Delete', 'Tab', 'PageUp', 'PageDown', 'Home', 'End', 'Insert'].map((k) => [k, t(`keys.names.${k}`)]));
+  return {
+    ...view,
+    actions: ACTIONS,
+    languages: ['auto', ...LANGUAGES],
+    agents: Object.values(agents).map((a) => ({ id: a.id, label: a.label, available: !!a.binPath })),
+    gnome: gnomeInfo,
+    keyNames: names,
+    configError: r.error || null,
+  };
+}
+
+async function settingsSave(patch) {
+  const v = validateSettings(patch, { agentIds: Object.keys(agents) });
+  if (Object.keys(v.errors).length) return { errors: v.errors };
+  // The file is re-read as is, so that what the panel does not manage (agents…) is kept.
+  const r = sec.readOwnedJson(P.config);
+  if (r.error) return { errors: { _: r.error } };
+  const values = { ...v.values };
+  const run = gnomeRunner();
+  if (run && Object.hasOwn(values, 'shortcut')) {
+    try {
+      await gnome.writeShortcut(run, values.shortcut, gnome.toggleCommand({ appPath: app.getAppPath() }));
+    } catch (e) {
+      return { errors: { shortcut: t('settings.errors.gnome', { error: e.message }) } };
+    }
+    values.shortcut = false; // GNOME handles it: Aska does not register it too
+  }
+  try {
+    const merged = mergeConfig(r.missing ? {} : r.data, values);
+    sec.writePrivate(P.config, JSON.stringify(merged, null, 2) + '\n');
+  } catch (e) {
+    return { errors: { _: t('settings.errors.write', { error: e.message }) } };
+  }
+  // Applied at once, as with "aska --reload".
+  loadEverything();
+  registerShortcut();
+  setupTray();
+  if (win && !win.isDestroyed()) win.setAlwaysOnTop(!!cfg.alwaysOnTop, 'floating');
+  return { ok: true, state: publicState(), settings: await settingsGet() };
 }
 
 // ---------- IPC (each call checks its sender and its arguments) ----------
@@ -698,6 +777,8 @@ function registerIpc() {
     saveState();
     return publicList();
   });
+  handle('aska:settings-get', () => settingsGet());
+  handle('aska:settings-save', (values) => settingsSave(values));
   handle('aska:set-model', (req) => {
     const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
     if (!a || !a.modelFlag) return publicState();

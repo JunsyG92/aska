@@ -30,10 +30,13 @@ contextBridge.exposeInMainWorld('aska', {
   deleteConversation: (id) => ipcRenderer.invoke('aska:conv-delete', id),
   listModels: (agentId, refresh) => ipcRenderer.invoke('aska:models', { agentId, refresh: refresh === true }),
   setModel: (agentId, model) => ipcRenderer.invoke('aska:set-model', { agentId, model }),
+  getSettings: () => ipcRenderer.invoke('aska:settings-get'),
+  saveSettings: (values) => ipcRenderer.invoke('aska:settings-save', values),
   onRunEvent: on('aska:run-event'),
   onShown: on('aska:shown'),
   onWillHide: on('aska:will-hide'),
   onNewConversation: on('aska:new-conversation'),
+  onOpenSettings: on('aska:open-settings'),
   onUnread: on('aska:unread'),
   onTabs: on('aska:tabs'),
 });

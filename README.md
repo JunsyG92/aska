@@ -175,9 +175,10 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Ctrl+Shift+C` | copy the last answer |
 | `Ctrl+M` | minimize to a pill / expand |
 | `Ctrl+P` | pin: the chat stays visible when you click elsewhere |
+| `Ctrl+,` | settings |
 | `Esc` | cancel the current request, otherwise hide |
 
-The shortcuts that use `Ctrl` can be changed with `"keybindings"` in the [configuration](#configuration); the tooltips and `aska --help` show the ones you chose.
+The shortcuts that use `Ctrl` can be changed in the [settings](#settings) or with `"keybindings"` in the [configuration](#configuration); the tooltips and `aska --help` show the ones you chose.
 
 A click outside the chat hides it; the agent keeps working. To keep it visible, pin it (📌 or `Ctrl+P`): the choice is remembered. Minimized to a pill, it always stays visible. The window is moved with the handle on the left or the bottom bar, and its position is remembered.
 
@@ -188,6 +189,14 @@ the running requests and quits Aska. On GNOME, a click opens this menu and a
 double-click shows or hides the chat directly; elsewhere, a left click shows or
 hides the chat and a right click opens the menu. `"tray": false` in the config
 removes it.
+
+## Settings
+
+`Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window: language, default agent and mode, time limit, always on top, tray icon, global shortcut, notifications, saved conversations, and the shortcuts inside the window (press the keys to record one). **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
+
+- On GNOME, the global shortcut is the "Aska" entry of the GNOME custom keyboard shortcuts (`aska --toggle`): the settings change it there, since an application cannot grab a global shortcut under Wayland.
+- Agents, their programs and arguments, `envPassthrough` and the autonomous mode stay in `config.json`, edited by hand: they decide which programs run, so the window cannot change them.
+- A value the main process refuses (shortcut already used, reserved combo…) is shown next to its field, and nothing is saved.
 
 ## Notifications
 
@@ -297,7 +306,7 @@ In short: **no shell** ever sees the text of your requests, the agent only recei
   remote images. Only `http(s)` links are clickable: they open in your
   browser, and their real destination is shown on hover.
 - Every call from the UI is revalidated by the main process.
-- `config.json` is ignored if it is writable by another user.
+- `config.json` is ignored if it is writable by another user. On Linux, an ACL that only names the owner (common on domain-joined machines, where the mode then shows `670`) is not counted as such: the real ACL is read with `getfacl`.
 - Private audit log (`~/.local/state/aska/history.jsonl`, 0600): date, agent,
   mode, folder, command, result. `"savePrompts": false` to keep requests out of it
   and not save conversations.
@@ -379,8 +388,9 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 | `copyAnswer` | `Ctrl+Shift+C` |
 | `toggleMini` | `Ctrl+M` |
 | `togglePin` | `Ctrl+P` |
+| `settings` | `Ctrl+,` |
 
-`Enter`, `Esc`, `Tab`, the arrows and `Del` are fixed. An invalid or conflicting shortcut is ignored and reported in the window and in `aska --help`; an action left with no valid shortcut keeps its defaults.
+`Enter`, `Shift+Enter`, `Tab`, `Shift+Tab`, `Esc`, the arrows, `Del` and `Ctrl+1` to `Ctrl+9` are fixed (the settings list them). An invalid or conflicting shortcut is ignored and reported in the window and in `aska --help`; an action left with no valid shortcut keeps its defaults.
 
 `language` picks the interface language (window, notifications, `aska --help`): `"auto"` (default) follows the system language (French for any `fr*` locale, English otherwise), `"en"` or `"fr"` forces one. Requests sent to the agents are not translated.
 

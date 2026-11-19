@@ -23,6 +23,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     if (v !== undefined) env[k] = v;
   };
   for (const k of ['XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_DATA_HOME']) setVar(k);
+  // Never the desktop of whoever runs the test: on GNOME, the settings panel would write its shortcuts.
+  setVar('XDG_CURRENT_DESKTOP');
   if (WIN) {
     setVar('USERPROFILE', home);
     setVar('APPDATA', path.join(home, 'AppData', 'Roaming'));

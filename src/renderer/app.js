@@ -9,6 +9,7 @@
   const result = $('result');
   const thread = $('thread');
   const historyBox = $('history');
+  const settingsBox = $('settings');
   const activity = $('activity');
   const notice = $('notice');
   const confirmBox = $('confirm');
@@ -35,7 +36,7 @@
   let warnings = [];
   let mini = false;
   let activityText = '';
-  let view = 'chat'; // 'chat' | 'history'
+  let view = 'chat'; // 'chat' | 'history' | 'settings'
   let menuOpen = false;
   let pinned = false;
   let unread = 0;
@@ -110,7 +111,9 @@
   // ---------- footer, status, pill ----------
 
   function setKeys() {
-    const items = running
+    const items = view === 'settings'
+      ? [[t('keys.esc'), t('footer.back')]]
+      : running
       ? [[t('keys.esc'), t('footer.cancel')]]
       : pendingTrust || menuOpen
         ? []
@@ -179,7 +182,7 @@
   }
 
   function syncOpen() {
-    const open = view === 'history' || thread.childElementCount > 0 || !activity.hidden || !notice.hidden;
+    const open = view !== 'chat' || thread.childElementCount > 0 || !activity.hidden || !notice.hidden;
     result.classList.toggle('open', open);
   }
 
@@ -717,6 +720,27 @@
     highlightHist(q ? 0 : Math.max(cur, 0), true);
   }
 
+  // ---------- settings (see settings.js) ----------
+
+  async function showSettings(on) {
+    if (on && view === 'settings') return;
+    if (on && view === 'history') await showHistory(false);
+    view = on ? 'settings' : 'chat';
+    $('settings-btn').setAttribute('aria-pressed', String(on));
+    settingsBox.hidden = !on;
+    thread.hidden = on;
+    panel.classList.toggle('in-settings', on); // no tabs, chips or history while editing
+    if (on) {
+      setStatus('');
+      await window.AskaSettings.open();
+    } else {
+      scrollEnd(true);
+      input.focus();
+    }
+    syncOpen();
+    setKeys();
+  }
+
   async function showHistory(on) {
     view = on ? 'history' : 'chat';
     $('hist-btn').setAttribute('aria-pressed', String(on));
@@ -813,6 +837,19 @@
     if (is('togglePin') && !mini) {
       e.preventDefault();
       setPinned(!pinned, true);
+      return;
+    }
+    // Settings: the form keeps the keyboard; Esc (or the settings shortcut) closes it.
+    if (view === 'settings') {
+      if (e.key === 'Escape' || is('settings')) {
+        e.preventDefault();
+        window.AskaSettings.requestClose();
+      }
+      return;
+    }
+    if (is('settings') && !mini && !pendingTrust && !menuOpen) {
+      e.preventDefault();
+      showSettings(true);
       return;
     }
     if (!mini && !pendingTrust && !menuOpen) {
@@ -928,6 +965,14 @@
   $('close-btn').addEventListener('click', () => api.hide());
   $('new-btn').addEventListener('click', newConversation);
   $('hist-btn').addEventListener('click', () => showHistory(view !== 'history'));
+  $('settings-btn').addEventListener('click', () => (view === 'settings' ? window.AskaSettings.requestClose() : showSettings(true)));
+  window.AskaSettings.init(settingsBox, {
+    api,
+    t,
+    modeLabel: (m) => (modes[m] ? modes[m].label : m),
+    onClose: () => showSettings(false),
+    onSaved: (s) => applyState(s), // language, shortcuts, tooltips… applied at once
+  });
 
   // The window follows the panel size (minimized, expanded, growing thread).
   new ResizeObserver(() => {
@@ -939,6 +984,7 @@
 
   api.onRunEvent(onRunEvent);
   api.onNewConversation(() => newConversation()); // system tray icon menu
+  api.onOpenSettings(() => showSettings(true)); // system tray icon menu
   api.onUnread(setUnread);
   $('pin-btn').addEventListener('click', () => { setPinned(!pinned, true); input.focus(); });
   api.onWillHide(() => {

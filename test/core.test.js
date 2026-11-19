@@ -524,7 +524,7 @@ test('system tray icon: menu wired to actions, rebuilt only when needed', () => 
     nativeImage: { createFromPath: (p) => path.basename(p) },
   };
   const called = [];
-  const actions = Object.fromEntries(['toggle', 'new', 'cancel', 'quit'].map((k) => [k, () => called.push(k)]));
+  const actions = Object.fromEntries(['toggle', 'new', 'cancel', 'settings', 'quit'].map((k) => [k, () => called.push(k)]));
   const handle = createTray(electron, actions);
 
   handle.update({ running: 0, visible: false });
@@ -543,7 +543,7 @@ test('system tray icon: menu wired to actions, rebuilt only when needed', () => 
   // Each entry calls its action; clicking the icon shows or hides.
   for (const it of tray.menu) if (it.click) it.click();
   tray.handlers.click();
-  assert.deepEqual(called, ['toggle', 'new', 'cancel', 'quit', 'toggle']);
+  assert.deepEqual(called, ['toggle', 'new', 'cancel', 'settings', 'quit', 'toggle']);
 
   handle.destroy();
   handle.destroy();
@@ -1005,4 +1005,164 @@ test('config: keybindings fill {key:…} in strings and in aska --help', () => {
   assert.match(out, /Ctrl\+J\s+Historique des conversations/);
   assert.match(out, /Alt\+Maj\+M\s+Choisir le modèle/);
   assert.ok(!/Ctrl\+H\s/.test(out), 'Ctrl+H no longer listed');
+});
+
+// ---------- settings panel ----------
+
+const settings = require('../src/main/settings');
+const gnome = require('../src/main/gnome');
+
+test('shortcuts: canonical text for the config, settings action', () => {
+  assert.equal(keys.comboText(keys.parseCombo('shift+ctrl+pagedown')), 'Ctrl+Shift+PageDown');
+  assert.equal(keys.comboText(keys.parseCombo('cmd+,')), 'Meta+,');
+  assert.deepEqual(keys.resolveKeybindings(undefined).bindings.settings.map(keys.comboId), ['ctrl+,']);
+  const r = keys.resolveKeybindings({ history: 'Ctrl+C', nope: 'Ctrl+K' });
+  assert.deepEqual(r.problems.map((p) => p.action), ['history', null]);
+});
+
+test('settings: validation of the values sent by the window', () => {
+  const { validateSettings } = settings;
+  const ok = validateSettings(
+    { language: 'fr', defaultAgent: 'codex', defaultMode: 'edit', timeoutSec: 120, tray: false, notify: 'never', shortcut: 'ctrl+alt+a', keybindings: { history: ['Ctrl+J'] }, agents: { evil: {} }, allowAutoMode: true },
+    { agentIds: ['claude', 'codex'] }
+  );
+  assert.deepEqual(ok.errors, {});
+  assert.deepEqual(ok.values, { language: 'fr', defaultAgent: 'codex', defaultMode: 'edit', timeoutSec: 120, tray: false, notify: 'never', shortcut: 'Control+Alt+A', keybindings: { history: ['Ctrl+J'] } });
+  assert.ok(!('agents' in ok.values) && !('allowAutoMode' in ok.values), 'keys outside the panel are dropped');
+
+  const bad = validateSettings(
+    { language: 'de', defaultAgent: 'gemini', defaultMode: 'auto', timeoutSec: 2, tray: 'yes', notify: 'always', shortcut: 'A' },
+    { agentIds: ['claude'] }
+  );
+  assert.deepEqual(Object.keys(bad.errors).sort(), ['defaultAgent', 'defaultMode', 'language', 'notify', 'shortcut', 'timeoutSec', 'tray']);
+  assert.match(bad.errors.timeoutSec, /5 and 3600/);
+  for (const s of ['Shift+A', 'Control+Alt+Enter', 'Control+Control+A', 'Hyper+A']) assert.ok(validateSettings({ shortcut: s }).errors.shortcut, s);
+  assert.equal(validateSettings({ shortcut: false }).values.shortcut, false);
+  assert.equal(validateSettings({ shortcut: 'Super+F12' }).values.shortcut, 'Super+F12');
+
+  // Shortcut conflicts and reserved combos: errors on the action, nothing to write.
+  const kb = validateSettings({ keybindings: { history: ['Ctrl+J'], copyAnswer: ['Ctrl+J'], pickDir: ['Ctrl+V'] } });
+  assert.deepEqual(Object.keys(kb.errors).sort(), ['keybindings.copyAnswer', 'keybindings.pickDir']);
+  assert.match(validateSettings(null).errors._, /Invalid/);
+});
+
+test('settings: config.json keeps the rest and only what differs from the defaults', () => {
+  const { mergeConfig } = settings;
+  const raw = { shortcut: 'Control+Alt+A', tray: false, agents: { claude: { extraArgs: ['--max-turns', '20'] } }, keybindings: { togglePin: false } };
+  const out = mergeConfig(raw, {
+    tray: true, // back to the default: removed
+    language: 'fr',
+    shortcut: 'Control+Alt+Space', // default: removed
+    keybindings: { history: ['Ctrl+J'], togglePin: ['Ctrl+P'], closeTab: [] },
+    allowAutoMode: true, // not managed: ignored
+  });
+  assert.deepEqual(out, {
+    agents: { claude: { extraArgs: ['--max-turns', '20'] } },
+    keybindings: { history: ['Ctrl+J'], closeTab: false },
+    language: 'fr',
+  });
+  assert.deepEqual(mergeConfig({ keybindings: { history: ['Ctrl+J'] } }, { keybindings: { history: ['Ctrl+H'] } }), {}, 'no keybindings left: section removed');
+  assert.deepEqual(mergeConfig(null, { shortcut: false }), { shortcut: false });
+  // The view sends the effective values and the defaults, shortcuts as text.
+  const v = settings.settingsView(loadConfig(path.join(tmp(), 'absent.json')).config);
+  assert.equal(v.values.shortcut, 'Control+Alt+Space');
+  assert.deepEqual(v.values.keybindings.prevTab, ['Ctrl+Shift+Tab', 'Ctrl+PageUp']);
+  assert.deepEqual(v.defaults.keybindings.settings, ['Ctrl+,']);
+});
+
+test('GNOME shortcut: conversions and gsettings calls', async () => {
+  assert.equal(gnome.toGnome('Control+Alt+A'), '<Control><Alt>a');
+  assert.equal(gnome.toGnome('Super+Shift+Space'), '<Super><Shift>space');
+  assert.equal(gnome.toGnome('Control+F5'), '<Control>F5');
+  assert.equal(gnome.toGnome(false), '');
+  assert.equal(gnome.fromGnome('<Primary><Alt>space'), 'Control+Alt+Space');
+  assert.equal(gnome.fromGnome('<Alt><Control>a'), 'Control+Alt+A');
+  assert.equal(gnome.fromGnome(''), false);
+  assert.equal(gnome.isGnomeSession({ XDG_CURRENT_DESKTOP: 'ubuntu:GNOME' }, 'linux'), true);
+  assert.equal(gnome.isGnomeSession({ XDG_CURRENT_DESKTOP: 'KDE' }, 'linux'), false);
+  assert.equal(gnome.isGnomeSession({ XDG_CURRENT_DESKTOP: 'GNOME' }, 'darwin'), false);
+  // The system gsettings (root-owned) wins over one from the PATH (Homebrew…), which may write elsewhere.
+  const fakeStat = (files) => (p) => {
+    if (!files[p]) throw new Error('ENOENT');
+    return { isFile: () => true, ...files[p] };
+  };
+  assert.equal(gnome.systemGsettings({ stat: fakeStat({ '/usr/bin/gsettings': { uid: 0, mode: 0o755 } }) }), '/usr/bin/gsettings');
+  assert.equal(gnome.systemGsettings({ stat: fakeStat({ '/usr/bin/gsettings': { uid: 1000, mode: 0o755 } }) }), null, 'not root-owned');
+  assert.equal(gnome.systemGsettings({ stat: fakeStat({ '/usr/bin/gsettings': { uid: 0, mode: 0o777 } }) }), null, 'writable by others');
+  assert.equal(gnome.systemGsettings({ stat: fakeStat({}) }), null);
+
+  // Fake gsettings: an in-memory store, as GVariant text.
+  const fake = (initial) => {
+    const db = { ...initial };
+    const calls = [];
+    const run = async (args) => {
+      calls.push(args);
+      const [op, schema, key, value] = args;
+      if (op === 'get') return (db[`${schema} ${key}`] ?? (key === 'custom-keybindings' ? '@as []' : "''")) + '\n';
+      db[`${schema} ${key}`] = value;
+      return '';
+    };
+    return { db, calls, run };
+  };
+  const LIST = `${gnome.SCHEMA} custom-keybindings`;
+  const E = `${gnome.SCHEMA}.custom-keybinding:${gnome.KEY}`;
+
+  // No entry yet: added after the existing ones, with the given command.
+  const other = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/';
+  const f = fake({ [LIST]: `['${other}']` });
+  assert.deepEqual(await gnome.readShortcut(f.run), { binding: false, command: '' });
+  await gnome.writeShortcut(f.run, 'Control+Alt+A', '/home/me/.local/bin/aska --toggle');
+  assert.deepEqual(gnome.parseList(f.db[LIST]), [other, gnome.KEY]);
+  assert.equal(f.db[`${E} binding`], "'<Control><Alt>a'");
+  assert.equal(f.db[`${E} command`], "'/home/me/.local/bin/aska --toggle'");
+  assert.deepEqual(await gnome.readShortcut(f.run), { binding: 'Control+Alt+A', command: '/home/me/.local/bin/aska --toggle' });
+
+  // Existing entry: list untouched, command kept, binding emptied for "none".
+  f.db[`${E} command`] = "'/opt/aska/bin/aska --toggle'";
+  const before = f.calls.length;
+  await gnome.writeShortcut(f.run, false, '/other --toggle');
+  assert.ok(!f.calls.slice(before).some((c) => c[0] === 'set' && c[2] === 'custom-keybindings'));
+  assert.equal(f.db[`${E} command`], "'/opt/aska/bin/aska --toggle'");
+  assert.equal(f.db[`${E} binding`], "''");
+  // Quotes in a value are escaped for GVariant; only fixed arguments, no shell.
+  const g = fake({});
+  await gnome.writeShortcut(g.run, 'Control+Alt+A', "/home/o'neil/aska --toggle");
+  assert.equal(g.db[`${E} command`], "'/home/o\\'neil/aska --toggle'");
+  assert.ok(g.calls.every((c) => Array.isArray(c) && c.length <= 4));
+
+  // Command for a new entry: the launcher if installed, else Electron, quoted when needed.
+  assert.equal(gnome.toggleCommand({ env: {}, home: '/home/me', exists: () => true }), '/home/me/.local/bin/aska --toggle');
+  assert.equal(gnome.toggleCommand({ env: {}, home: '/h', exists: () => false, execPath: '/opt/my apps/electron', appPath: '/src/aska' }), '"/opt/my apps/electron" /src/aska --toggle');
+});
+
+// ---------- POSIX ACLs ----------
+
+test('ACL: only a real write access for someone else refuses a private file', () => {
+  const w = (text) => sec.aclWritableByOthers(text, 1000);
+  // ACL naming the owner (domain-joined machine): mode 670, nobody else can write.
+  assert.equal(w('user::rw-\nuser:1000:rwx\ngroup::---\nmask::rwx\nother::---\n'), false);
+  assert.equal(w('user::rw-\ngroup::r--\nother::r--\n'), false);
+  assert.equal(w('user::rw-\nuser:1001:rw-\ngroup::---\nmask::rwx\nother::---\n'), true, 'another user');
+  assert.equal(w('user::rw-\nuser:1001:rw-\ngroup::---\nmask::r--\nother::---\n'), false, 'masked out');
+  assert.equal(w('user::rw-\ngroup::rw-\nother::---\n'), true, 'owning group');
+  assert.equal(w('user::rw-\ngroup::---\ngroup:50:rwx\nmask::rwx\nother::---\n'), true, 'named group');
+  assert.equal(w('user::rw-\ngroup::---\nother::rw-\n'), true, 'other');
+  assert.equal(w('user::rw-\nuser:1000:rwx\t#effective:r--\ngroup::---\nmask::r--\nother::---\n'), false, 'comments ignored');
+  assert.equal(w('garbage'), null);
+});
+
+test('ACL: a real file with an ACL naming its owner is read, another user refuses it', (t) => {
+  const { execFileSync } = require('child_process');
+  if (process.platform !== 'linux' || !fs.existsSync('/usr/bin/setfacl')) return t.skip('setfacl not available');
+  const f = path.join(tmp(), 'config.json');
+  fs.writeFileSync(f, '{"ok":true}', { mode: 0o600 });
+  try {
+    execFileSync('/usr/bin/setfacl', ['-m', `u:${process.getuid()}:rwx`, f]);
+  } catch {
+    return t.skip('ACLs not supported on this file system');
+  }
+  assert.equal(fs.statSync(f).mode & 0o070, 0o070, 'the mask shows up as the group bits');
+  assert.deepEqual(sec.readOwnedJson(f), { data: { ok: true } });
+  execFileSync('/usr/bin/setfacl', ['-m', 'g::rw', f]);
+  assert.match(sec.readOwnedJson(f).error, /writable by other users/);
 });

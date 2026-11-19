@@ -103,6 +103,7 @@ function helpText(stream = process.stdout, env = process.env) {
     row(key.toggleMini, t('cli.collapse')),
     row(key.togglePin, t('cli.pin')),
     row(t('cli.keys.copy'), t('cli.copyLast')),
+    row(key.settings, t('cli.settings')),
     row(t('cli.keys.esc'), t('cli.escape')),
     '',
     s.bold(t('cli.status')),

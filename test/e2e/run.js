@@ -59,6 +59,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     if (v !== undefined) env[k] = v;
   };
   for (const k of ['XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_DATA_HOME']) setVar(k);
+  // Never the desktop of whoever runs the test: on GNOME, the settings panel would write its shortcuts.
+  setVar('XDG_CURRENT_DESKTOP');
   if (WIN) {
     const sys32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
     setVar('USERPROFILE', home);
@@ -578,14 +580,77 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     };
     await page.keyboard.press('Escape');
     await waitVisible(false);
-    await app.evaluate(({ BrowserWindow }) => {
-      const w = BrowserWindow.getAllWindows()[0];
-      w.show();
-      w.webContents.send('aska:new-conversation');
+    // Same path as the menu: the window is shown the usual way, then asked for a new tab.
+    await app.evaluate(({ app, BrowserWindow }) => {
+      app.emit('second-instance', {}, ['--toggle']);
+      BrowserWindow.getAllWindows()[0].webContents.send('aska:new-conversation');
     });
     await waitVisible(true);
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
     assert.equal(await page.locator('.tab').count(), tabsBefore + 1);
+
+    // ---------- settings panel ----------
+    // Config at this point: { shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
+    const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));
+    const configBefore = readConfig();
+    const row = (action) => page.locator(`.set-row[data-action="${action}"]`);
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    assert.equal(await page.isHidden('#thread'), true);
+    assert.deepEqual(await row('history').locator('kbd').allTextContents(), ['Ctrl+J']);
+    await page.waitForTimeout(500); // end of the opening animation
+    await shot('10-settings-light');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(150);
+    await shot('10-settings-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    // History: Ctrl+J replaced by Ctrl+K, captured from the keyboard.
+    await row('history').locator('.set-chip-x').click();
+    await row('history').locator('.set-icon', { hasText: '+' }).click();
+    await page.keyboard.press('Control+k');
+    assert.deepEqual(await row('history').locator('kbd').allTextContents(), ['Ctrl+K']);
+    // The same combo on another action: refused on save, nothing written.
+    await row('copyAnswer').locator('.set-icon', { hasText: '+' }).click();
+    await page.keyboard.press('Control+k');
+    await page.click('.set-btn.primary');
+    await page.waitForSelector('.set-row[data-action="copyAnswer"] .set-error');
+    assert.match(await page.textContent('.set-message'), /rien n’a été enregistré/);
+    assert.deepEqual(readConfig(), configBefore);
+    await row('copyAnswer').locator('.set-chip', { hasText: 'Ctrl+K' }).locator('.set-chip-x').click();
+    await page.click('.set-btn.primary');
+    await page.waitForFunction(() => document.querySelector('.set-message').dataset.kind === 'ok');
+    let saved = readConfig();
+    assert.deepEqual(saved.keybindings, { history: ['Ctrl+K'], modelMenu: ['Alt+Shift+M'] });
+    assert.equal(saved.language, 'fr');
+    assert.equal(saved.shortcut, false, 'unchanged values are not rewritten');
+    if (!WIN) assert.equal(fs.statSync(P.config).mode & 0o777, 0o600);
+    // Applied at once: the tooltip and the shortcut follow.
+    assert.equal(await page.getAttribute('#hist-btn', 'title'), 'Conversations (Ctrl+K)');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
+    await page.keyboard.press('Control+k');
+    await page.waitForSelector('.hist-item');
+    await page.keyboard.press('Escape');
+    // Unsaved change: a first Esc warns, the second discards it.
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    await page.locator('.set-switch').first().click();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.isVisible('#settings'), true);
+    assert.equal(await page.getAttribute('.set-message', 'data-kind'), 'warn');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
+    assert.deepEqual(readConfig(), saved);
+    // Reset everything to the defaults: the managed keys leave the file.
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    await page.click('.set-btn.outline');
+    await page.click('.set-btn.primary');
+    await page.waitForFunction(() => document.querySelector('.set-message').dataset.kind === 'ok');
+    saved = readConfig();
+    for (const k of ['keybindings', 'language', 'shortcut']) assert.ok(!(k in saved), k);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
 
     // Navigation and window opening are blocked (last: Playwright then waits for
     // a navigation that will never happen).

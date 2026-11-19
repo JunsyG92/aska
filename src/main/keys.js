@@ -22,6 +22,7 @@ const DEFAULT_KEYBINDINGS = {
   copyAnswer: ['Ctrl+Shift+C'],
   toggleMini: ['Ctrl+M'],
   togglePin: ['Ctrl+P'],
+  settings: ['Ctrl+,'],
 };
 const ACTIONS = Object.keys(DEFAULT_KEYBINDINGS);
 
@@ -76,30 +77,36 @@ function reservedReason(c) {
  * its defaults ([] or false removes them). A combo given for an action is
  * taken away from the action that had it by default; between two configured
  * actions, the first one keeps it.
- * Returns { bindings: { action: [combo] }, warnings: [string] }.
+ * Returns { bindings: { action: [combo] }, warnings: [string], problems: [{ action, message }] }
+ * (problems: the same warnings, tied to their action, for the settings panel).
  */
 function resolveKeybindings(user) {
   const warnings = [];
+  const problems = [];
+  const warn = (action, message) => {
+    warnings.push(message);
+    problems.push({ action, message });
+  };
   const configured = {};
   if (user !== undefined && (user === null || typeof user !== 'object' || Array.isArray(user))) {
-    warnings.push(t('keys.invalidSection'));
+    warn(null, t('keys.invalidSection'));
     user = {};
   }
   for (const [action, value] of Object.entries(user || {})) {
     if (!ACTIONS.includes(action)) {
-      warnings.push(t('keys.unknownAction', { action }));
+      warn(null, t('keys.unknownAction', { action }));
       continue;
     }
     const list = value === false ? [] : typeof value === 'string' ? [value] : value;
     if (!Array.isArray(list)) {
-      warnings.push(t('keys.invalidValue', { action }));
+      warn(action, t('keys.invalidValue', { action }));
       continue;
     }
     const combos = [];
     for (const text of list) {
       const combo = parseCombo(text);
-      if (!combo) warnings.push(t('keys.invalidCombo', { action, combo: String(text) }));
-      else if (reservedReason(combo)) warnings.push(t(`keys.reserved.${reservedReason(combo)}`, { action, combo: text }));
+      if (!combo) warn(action, t('keys.invalidCombo', { action, combo: String(text) }));
+      else if (reservedReason(combo)) warn(action, t(`keys.reserved.${reservedReason(combo)}`, { action, combo: text }));
       else combos.push(combo);
     }
     // Nothing usable: the defaults stay rather than leaving the action without a key by mistake.
@@ -113,7 +120,7 @@ function resolveKeybindings(user) {
     for (const c of configured[action]) {
       const id = comboId(c);
       if (owner.has(id)) {
-        warnings.push(t('keys.conflict', { combo: formatCombo(c), action, other: owner.get(id) }));
+        warn(action, t('keys.conflict', { combo: formatCombo(c), action, other: owner.get(id) }));
         continue;
       }
       owner.set(id, action);
@@ -126,7 +133,7 @@ function resolveKeybindings(user) {
     for (const c of bindings[action]) owner.set(comboId(c), action);
   }
   // Same order as ACTIONS, whatever the order of the config.
-  return { bindings: Object.fromEntries(ACTIONS.map((a) => [a, bindings[a]])), warnings };
+  return { bindings: Object.fromEntries(ACTIONS.map((a) => [a, bindings[a]])), warnings, problems };
 }
 
 /** Readable combo in the current language: "Ctrl+Shift+M" / "Ctrl+Maj+M". */
@@ -136,9 +143,15 @@ function formatCombo(c) {
   return [c.ctrl && name('Ctrl'), c.alt && name('Alt'), c.shift && name('Shift'), c.meta && name('Meta'), key].filter(Boolean).join('+');
 }
 
+/** Canonical text, as written in the config: "Ctrl+Shift+M", "Ctrl+PageDown". */
+function comboText(c) {
+  const key = c.key.length === 1 ? c.key.toUpperCase() : c.key;
+  return [c.ctrl && 'Ctrl', c.alt && 'Alt', c.shift && 'Shift', c.meta && 'Meta', key].filter(Boolean).join('+');
+}
+
 /** Label of each action: its first shortcut, or "no shortcut". */
 function keyLabels(bindings) {
   return Object.fromEntries(ACTIONS.map((a) => [a, bindings[a] && bindings[a].length ? formatCombo(bindings[a][0]) : t('keys.unassigned')]));
 }
 
-module.exports = { ACTIONS, DEFAULT_KEYBINDINGS, NAMED_KEYS, parseCombo, comboId, reservedReason, resolveKeybindings, formatCombo, keyLabels };
+module.exports = { ACTIONS, DEFAULT_KEYBINDINGS, NAMED_KEYS, parseCombo, comboId, comboText, reservedReason, resolveKeybindings, formatCombo, keyLabels };
