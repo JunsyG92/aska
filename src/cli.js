@@ -103,7 +103,22 @@ function helpText(stream = process.stdout, env = process.env) {
     row(key.toggleMini, t('cli.collapse')),
     row(key.togglePin, t('cli.pin')),
     row(t('cli.keys.copy'), t('cli.copyLast')),
+    row(key.rerun, t('cli.rerun')),
+    row(key.settings, t('cli.settings')),
+    row('/', t('cli.slash')),
     row(t('cli.keys.esc'), t('cli.escape')),
+  );
+  // "/" commands of the config, with what they send.
+  const own = Object.values(cfg.commands || {});
+  if (own.length) {
+    lines.push('', s.bold(t('cli.userCommands')));
+    for (const c of own) {
+      const what = c.description || c.prompt.trim().split('\n')[0].slice(0, 60);
+      const extra = [c.agent, c.mode && MODES[c.mode].label, c.model].filter(Boolean).join(' · ');
+      lines.push(row('/' + c.name, extra ? `${what}  ${s.dim(extra)}` : what));
+    }
+  }
+  lines.push(
     '',
     s.bold(t('cli.status')),
     row(t('cli.outsideClick'), t(pinned ? 'cli.outsideClickPinned' : 'cli.outsideClickHides')),

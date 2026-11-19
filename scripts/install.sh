@@ -116,18 +116,22 @@ fi
 chmod 600 "$CONF/aska/config.json"
 
 if [ "$GNOME" = 1 ]; then
-  if command -v gsettings >/dev/null; then
+  # The system gsettings first: another one in the PATH (Homebrew, Nix...) may lack
+  # the dconf module and write to a private file that GNOME never reads.
+  GSETTINGS="$(command -v gsettings || true)"
+  [ -x /usr/bin/gsettings ] && GSETTINGS=/usr/bin/gsettings
+  if [ -n "$GSETTINGS" ]; then
     SCHEMA=org.gnome.settings-daemon.plugins.media-keys
     KEY=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/aska/
-    LIST="$(gsettings get $SCHEMA custom-keybindings)"
+    LIST="$("$GSETTINGS" get $SCHEMA custom-keybindings)"
     case "$LIST" in
       *"$KEY"*) ;;
-      "@as []"|"[]") gsettings set $SCHEMA custom-keybindings "['$KEY']" ;;
-      *) gsettings set $SCHEMA custom-keybindings "${LIST%]}, '$KEY']" ;;
+      "@as []"|"[]") "$GSETTINGS" set $SCHEMA custom-keybindings "['$KEY']" ;;
+      *) "$GSETTINGS" set $SCHEMA custom-keybindings "${LIST%]}, '$KEY']" ;;
     esac
-    gsettings set "$SCHEMA.custom-keybinding:$KEY" name 'Aska'
-    gsettings set "$SCHEMA.custom-keybinding:$KEY" command "$BIN/aska --toggle"
-    gsettings set "$SCHEMA.custom-keybinding:$KEY" binding '<Control><Alt>space'
+    "$GSETTINGS" set "$SCHEMA.custom-keybinding:$KEY" name 'Aska'
+    "$GSETTINGS" set "$SCHEMA.custom-keybinding:$KEY" command "$BIN/aska --toggle"
+    "$GSETTINGS" set "$SCHEMA.custom-keybinding:$KEY" binding '<Control><Alt>space'
     echo "GNOME shortcut registered: Ctrl+Alt+Space"
   else
     echo "gsettings not found: bind \"$BIN/aska --toggle\" to a shortcut in your keyboard settings." >&2

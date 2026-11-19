@@ -181,6 +181,54 @@ function writePrivate(file, data) {
 }
 
 /** Reads a JSON file only if it belongs to the user and only they can write it. */
+// ---------- POSIX ACLs ----------
+// Some systems (domain-joined machines, home folders managed by a policy) put
+// an ACL on every file that names its owner with rwx. The ACL mask then shows up
+// as the group bits (mode 670), although nobody else can write. These helpers
+// read the real ACL, so that only a file someone else can actually write is refused.
+
+/**
+ * From the output of "getfacl --omit-header --numeric": can a user other than
+ * ownerUid write the file? null if the output cannot be read.
+ */
+function aclWritableByOthers(text, ownerUid) {
+  const entries = String(text)
+    .split('\n')
+    .map((l) => l.replace(/#.*/, '').trim())
+    .filter(Boolean)
+    .map((l) => l.split(':'))
+    .filter((p) => p.length === 3 && /^[r-][w-][x-]$/.test(p[2]));
+  if (!entries.some(([tag]) => tag === 'user') || !entries.some(([tag]) => tag === 'other')) return null;
+  const mask = entries.find(([tag]) => tag === 'mask');
+  const effectiveW = (perm) => perm[1] === 'w' && (!mask || mask[2][1] === 'w');
+  for (const [tag, qualifier, perm] of entries) {
+    if (tag === 'user' && qualifier !== '' && Number(qualifier) !== ownerUid && effectiveW(perm)) return true;
+    if (tag === 'group' && effectiveW(perm)) return true; // owning group or named group
+    if (tag === 'other' && perm[1] === 'w') return true;
+  }
+  return false;
+}
+
+// getfacl from the system only (root-owned, not writable by others), never from the PATH.
+const GETFACL = ['/usr/bin/getfacl', '/bin/getfacl'].find((p) => {
+  try {
+    const st = fs.statSync(p);
+    return st.uid === 0 && !(st.mode & 0o022);
+  } catch {
+    return false;
+  }
+});
+
+/** Linux, file open on fd: does its ACL let someone else write it? true when unknown. */
+function othersCanWriteAcl(fd, ownerUid) {
+  if (process.platform !== 'linux' || !GETFACL) return true;
+  // Through the open descriptor: the file checked is the file read.
+  const r = require('child_process').spawnSync(GETFACL, ['--omit-header', '--numeric', '--absolute-names', `/proc/${process.pid}/fd/${fd}`], { encoding: 'utf8', timeout: 3000 });
+  if (r.status !== 0 || r.error) return true;
+  const w = aclWritableByOthers(r.stdout, ownerUid);
+  return w === null ? true : w;
+}
+
 function readOwnedJson(file) {
   // The checks and the read go through the same descriptor: the file cannot be
   // swapped between the two (symbolic links are followed, as before).
@@ -193,7 +241,8 @@ function readOwnedJson(file) {
   try {
     const st = fs.fstatSync(fd);
     if (POSIX && st.uid !== uid()) return { error: t('security.fileNotOwned', { file }) };
-    if (POSIX && st.mode & 0o022) {
+    // Group or other write bit: refused, unless the real ACL shows that only the owner can write.
+    if (POSIX && st.mode & 0o022 && othersCanWriteAcl(fd, st.uid)) {
       return { error: t('security.fileWritable', { file }) };
     }
     try {
@@ -257,6 +306,6 @@ function readRecentPrompts(file, limit = 50) {
 }
 
 module.exports = {
-  resolveBinary, buildEnv, checkWorkdir, readOwnedJson, writePrivate, ensurePrivateDir,
+  resolveBinary, buildEnv, checkWorkdir, readOwnedJson, writePrivate, ensurePrivateDir, aclWritableByOthers,
   TrustStore, appendAudit, readRecentPrompts, BASE_ENV, setEnvVar, within, posixSystemDirs,
 };

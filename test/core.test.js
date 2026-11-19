@@ -527,7 +527,7 @@ test('system tray icon: menu wired to actions, rebuilt only when needed', () => 
     nativeImage: { createFromPath: (p) => path.basename(p) },
   };
   const called = [];
-  const actions = Object.fromEntries(['toggle', 'new', 'cancel', 'quit'].map((k) => [k, () => called.push(k)]));
+  const actions = Object.fromEntries(['toggle', 'new', 'cancel', 'settings', 'quit'].map((k) => [k, () => called.push(k)]));
   const handle = createTray(electron, actions);
 
   handle.update({ running: 0, visible: false });
@@ -546,7 +546,7 @@ test('system tray icon: menu wired to actions, rebuilt only when needed', () => 
   // Each entry calls its action; clicking the icon shows or hides.
   for (const it of tray.menu) if (it.click) it.click();
   tray.handlers.click();
-  assert.deepEqual(called, ['toggle', 'new', 'cancel', 'quit', 'toggle']);
+  assert.deepEqual(called, ['toggle', 'new', 'cancel', 'settings', 'quit', 'toggle']);
 
   handle.destroy();
   handle.destroy();
@@ -1003,9 +1003,15 @@ test('config: keybindings fill {key:…} in strings and in aska --help', () => {
   for (const k of Object.keys(env)) if (/^XDG_/.test(k)) delete env[k];
   const P = require('../src/main/config').paths(env, home);
   fs.mkdirSync(P.configDir, { recursive: true });
-  fs.writeFileSync(P.config, JSON.stringify({ language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }), { mode: 0o600 });
+  const commands = { trad: 'Traduis en anglais : {input}', review: { prompt: 'Relis', description: 'Relecture', mode: 'read', model: 'opus' }, new: 'x' };
+  fs.writeFileSync(P.config, JSON.stringify({ language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' }, commands }), { mode: 0o600 });
   const out = execFileSync(process.execPath, [path.join(__dirname, '..', 'src', 'cli.js'), '--help'], { env, encoding: 'utf8' });
   assert.match(out, /Ctrl\+J\s+Historique des conversations/);
+  // "/" commands: the line in the window, the user's commands, and the refused one.
+  assert.match(out, /\n {2}\/\s+Commandes \(\/help/);
+  assert.match(out, /\/trad\s+Traduis en anglais : \{input\}/);
+  assert.match(out, /\/review\s+Relecture {2}Lecture seule · opus/);
+  assert.match(out, /Commande « \/new » ignorée/);
   assert.match(out, /Alt\+Maj\+M\s+Choisir le modèle/);
   assert.ok(!/Ctrl\+H\s/.test(out), 'Ctrl+H no longer listed');
 });
@@ -1087,4 +1093,295 @@ test('model discovery: Copilot through ACP, its empty session removed', async ()
   assert.equal(fs.existsSync(dir), false);
   const notLogged = await discoverModels('copilot', async () => ({ ok: false, text: '', err: 'Error: No authentication information found.\n' }), env, { cwd, home });
   assert.deepEqual(notLogged, { models: [], error: 'No authentication information found.' });
+});
+
+// ---------- settings panel ----------
+
+const settings = require('../src/main/settings');
+const gnome = require('../src/main/gnome');
+
+test('shortcuts: canonical text for the config, settings action', () => {
+  assert.equal(keys.comboText(keys.parseCombo('shift+ctrl+pagedown')), 'Ctrl+Shift+PageDown');
+  assert.equal(keys.comboText(keys.parseCombo('cmd+,')), 'Meta+,');
+  assert.deepEqual(keys.resolveKeybindings(undefined).bindings.settings.map(keys.comboId), ['ctrl+,']);
+  const r = keys.resolveKeybindings({ history: 'Ctrl+C', nope: 'Ctrl+K' });
+  assert.deepEqual(r.problems.map((p) => p.action), ['history', null]);
+});
+
+test('settings: validation of the values sent by the window', () => {
+  const { validateSettings } = settings;
+  const ok = validateSettings(
+    { language: 'fr', defaultAgent: 'codex', defaultMode: 'edit', timeoutSec: 120, tray: false, notify: 'never', shortcut: 'ctrl+alt+a', keybindings: { history: ['Ctrl+J'] }, agents: { evil: {} }, allowAutoMode: true },
+    { agentIds: ['claude', 'codex'] }
+  );
+  assert.deepEqual(ok.errors, {});
+  assert.deepEqual(ok.values, { language: 'fr', defaultAgent: 'codex', defaultMode: 'edit', timeoutSec: 120, tray: false, notify: 'never', shortcut: 'Control+Alt+A', keybindings: { history: ['Ctrl+J'] } });
+  assert.ok(!('agents' in ok.values) && !('allowAutoMode' in ok.values), 'keys outside the panel are dropped');
+
+  const bad = validateSettings(
+    { language: 'de', defaultAgent: 'gemini', defaultMode: 'auto', timeoutSec: 2, tray: 'yes', notify: 'always', shortcut: 'A' },
+    { agentIds: ['claude'] }
+  );
+  assert.deepEqual(Object.keys(bad.errors).sort(), ['defaultAgent', 'defaultMode', 'language', 'notify', 'shortcut', 'timeoutSec', 'tray']);
+  assert.match(bad.errors.timeoutSec, /5 and 3600/);
+  for (const s of ['Shift+A', 'Control+Alt+Enter', 'Control+Control+A', 'Hyper+A']) assert.ok(validateSettings({ shortcut: s }).errors.shortcut, s);
+  assert.equal(validateSettings({ shortcut: false }).values.shortcut, false);
+  assert.equal(validateSettings({ shortcut: 'Super+F12' }).values.shortcut, 'Super+F12');
+
+  // Shortcut conflicts and reserved combos: errors on the action, nothing to write.
+  const kb = validateSettings({ keybindings: { history: ['Ctrl+J'], copyAnswer: ['Ctrl+J'], pickDir: ['Ctrl+V'] } });
+  assert.deepEqual(Object.keys(kb.errors).sort(), ['keybindings.copyAnswer', 'keybindings.pickDir']);
+  assert.match(validateSettings(null).errors._, /Invalid/);
+});
+
+test('settings: config.json keeps the rest and only what differs from the defaults', () => {
+  const { mergeConfig } = settings;
+  const raw = { shortcut: 'Control+Alt+A', tray: false, agents: { claude: { extraArgs: ['--max-turns', '20'] } }, keybindings: { togglePin: false } };
+  const out = mergeConfig(raw, {
+    tray: true, // back to the default: removed
+    language: 'fr',
+    shortcut: 'Control+Alt+Space', // default: removed
+    keybindings: { history: ['Ctrl+J'], togglePin: ['Ctrl+P'], closeTab: [] },
+    allowAutoMode: true, // not managed: ignored
+  });
+  assert.deepEqual(out, {
+    agents: { claude: { extraArgs: ['--max-turns', '20'] } },
+    keybindings: { history: ['Ctrl+J'], closeTab: false },
+    language: 'fr',
+  });
+  assert.deepEqual(mergeConfig({ keybindings: { history: ['Ctrl+J'] } }, { keybindings: { history: ['Ctrl+H'] } }), {}, 'no keybindings left: section removed');
+  assert.deepEqual(mergeConfig(null, { shortcut: false }), { shortcut: false });
+  // The view sends the effective values and the defaults, shortcuts as text.
+  const v = settings.settingsView(loadConfig(path.join(tmp(), 'absent.json')).config);
+  assert.equal(v.values.shortcut, 'Control+Alt+Space');
+  assert.deepEqual(v.values.keybindings.prevTab, ['Ctrl+Shift+Tab', 'Ctrl+PageUp']);
+  assert.deepEqual(v.defaults.keybindings.settings, ['Ctrl+,']);
+});
+
+test('GNOME shortcut: conversions and gsettings calls', async () => {
+  assert.equal(gnome.toGnome('Control+Alt+A'), '<Control><Alt>a');
+  assert.equal(gnome.toGnome('Super+Shift+Space'), '<Super><Shift>space');
+  assert.equal(gnome.toGnome('Control+F5'), '<Control>F5');
+  assert.equal(gnome.toGnome(false), '');
+  assert.equal(gnome.fromGnome('<Primary><Alt>space'), 'Control+Alt+Space');
+  assert.equal(gnome.fromGnome('<Alt><Control>a'), 'Control+Alt+A');
+  assert.equal(gnome.fromGnome(''), false);
+  assert.equal(gnome.isGnomeSession({ XDG_CURRENT_DESKTOP: 'ubuntu:GNOME' }, 'linux'), true);
+  assert.equal(gnome.isGnomeSession({ XDG_CURRENT_DESKTOP: 'KDE' }, 'linux'), false);
+  assert.equal(gnome.isGnomeSession({ XDG_CURRENT_DESKTOP: 'GNOME' }, 'darwin'), false);
+  // The system gsettings (root-owned) wins over one from the PATH (Homebrew…), which may write elsewhere.
+  const fakeStat = (files) => (p) => {
+    if (!files[p]) throw new Error('ENOENT');
+    return { isFile: () => true, ...files[p] };
+  };
+  assert.equal(gnome.systemGsettings({ stat: fakeStat({ '/usr/bin/gsettings': { uid: 0, mode: 0o755 } }) }), '/usr/bin/gsettings');
+  assert.equal(gnome.systemGsettings({ stat: fakeStat({ '/usr/bin/gsettings': { uid: 1000, mode: 0o755 } }) }), null, 'not root-owned');
+  assert.equal(gnome.systemGsettings({ stat: fakeStat({ '/usr/bin/gsettings': { uid: 0, mode: 0o777 } }) }), null, 'writable by others');
+  assert.equal(gnome.systemGsettings({ stat: fakeStat({}) }), null);
+
+  // Fake gsettings: an in-memory store, as GVariant text.
+  const fake = (initial) => {
+    const db = { ...initial };
+    const calls = [];
+    const run = async (args) => {
+      calls.push(args);
+      const [op, schema, key, value] = args;
+      if (op === 'get') return (db[`${schema} ${key}`] ?? (key === 'custom-keybindings' ? '@as []' : "''")) + '\n';
+      db[`${schema} ${key}`] = value;
+      return '';
+    };
+    return { db, calls, run };
+  };
+  const LIST = `${gnome.SCHEMA} custom-keybindings`;
+  const E = `${gnome.SCHEMA}.custom-keybinding:${gnome.KEY}`;
+
+  // No entry yet: added after the existing ones, with the given command.
+  const other = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/';
+  const f = fake({ [LIST]: `['${other}']` });
+  assert.deepEqual(await gnome.readShortcut(f.run), { binding: false, command: '' });
+  await gnome.writeShortcut(f.run, 'Control+Alt+A', '/home/me/.local/bin/aska --toggle');
+  assert.deepEqual(gnome.parseList(f.db[LIST]), [other, gnome.KEY]);
+  assert.equal(f.db[`${E} binding`], "'<Control><Alt>a'");
+  assert.equal(f.db[`${E} command`], "'/home/me/.local/bin/aska --toggle'");
+  assert.deepEqual(await gnome.readShortcut(f.run), { binding: 'Control+Alt+A', command: '/home/me/.local/bin/aska --toggle' });
+
+  // Existing entry: list untouched, command kept, binding emptied for "none".
+  f.db[`${E} command`] = "'/opt/aska/bin/aska --toggle'";
+  const before = f.calls.length;
+  await gnome.writeShortcut(f.run, false, '/other --toggle');
+  assert.ok(!f.calls.slice(before).some((c) => c[0] === 'set' && c[2] === 'custom-keybindings'));
+  assert.equal(f.db[`${E} command`], "'/opt/aska/bin/aska --toggle'");
+  assert.equal(f.db[`${E} binding`], "''");
+  // Quotes in a value are escaped for GVariant; only fixed arguments, no shell.
+  const g = fake({});
+  await gnome.writeShortcut(g.run, 'Control+Alt+A', "/home/o'neil/aska --toggle");
+  assert.equal(g.db[`${E} command`], "'/home/o\\'neil/aska --toggle'");
+  assert.ok(g.calls.every((c) => Array.isArray(c) && c.length <= 4));
+
+  // Command for a new entry: the launcher if installed, else Electron, quoted when needed.
+  assert.equal(gnome.toggleCommand({ env: {}, home: '/home/me', exists: () => true }), '/home/me/.local/bin/aska --toggle');
+  assert.equal(gnome.toggleCommand({ env: {}, home: '/h', exists: () => false, execPath: '/opt/my apps/electron', appPath: '/src/aska' }), '"/opt/my apps/electron" /src/aska --toggle');
+});
+
+// ---------- POSIX ACLs ----------
+
+test('ACL: only a real write access for someone else refuses a private file', () => {
+  const w = (text) => sec.aclWritableByOthers(text, 1000);
+  // ACL naming the owner (domain-joined machine): mode 670, nobody else can write.
+  assert.equal(w('user::rw-\nuser:1000:rwx\ngroup::---\nmask::rwx\nother::---\n'), false);
+  assert.equal(w('user::rw-\ngroup::r--\nother::r--\n'), false);
+  assert.equal(w('user::rw-\nuser:1001:rw-\ngroup::---\nmask::rwx\nother::---\n'), true, 'another user');
+  assert.equal(w('user::rw-\nuser:1001:rw-\ngroup::---\nmask::r--\nother::---\n'), false, 'masked out');
+  assert.equal(w('user::rw-\ngroup::rw-\nother::---\n'), true, 'owning group');
+  assert.equal(w('user::rw-\ngroup::---\ngroup:50:rwx\nmask::rwx\nother::---\n'), true, 'named group');
+  assert.equal(w('user::rw-\ngroup::---\nother::rw-\n'), true, 'other');
+  assert.equal(w('user::rw-\nuser:1000:rwx\t#effective:r--\ngroup::---\nmask::r--\nother::---\n'), false, 'comments ignored');
+  assert.equal(w('garbage'), null);
+});
+
+test('ACL: a real file with an ACL naming its owner is read, another user refuses it', (t) => {
+  const { execFileSync } = require('child_process');
+  if (process.platform !== 'linux' || !fs.existsSync('/usr/bin/setfacl')) return t.skip('setfacl not available');
+  const f = path.join(tmp(), 'config.json');
+  fs.writeFileSync(f, '{"ok":true}', { mode: 0o600 });
+  try {
+    execFileSync('/usr/bin/setfacl', ['-m', `u:${process.getuid()}:rwx`, f]);
+  } catch {
+    return t.skip('ACLs not supported on this file system');
+  }
+  assert.equal(fs.statSync(f).mode & 0o070, 0o070, 'the mask shows up as the group bits');
+  assert.deepEqual(sec.readOwnedJson(f), { data: { ok: true } });
+  execFileSync('/usr/bin/setfacl', ['-m', 'g::rw', f]);
+  assert.match(sec.readOwnedJson(f).error, /writable by other users/);
+});
+
+// ---------- "/" commands typed in the field (renderer, pure logic) ----------
+
+const commands = require('../src/renderer/commands');
+
+test('commands: what is a command, what is a message', () => {
+  const ctx = { agents: [{ id: 'claude', label: 'Claude' }, { id: 'codex', label: 'Codex' }] };
+  assert.deepEqual(commands.parse('/new', ctx), { kind: 'command', name: 'new', arg: '' });
+  assert.deepEqual(commands.parse('  /MODE  edit ', ctx), { kind: 'command', name: 'mode', arg: 'edit' });
+  assert.deepEqual(commands.parse('/clear', ctx), { kind: 'command', name: 'new', arg: '' }, 'alias');
+  assert.deepEqual(commands.parse('/cd ~/my project', ctx), { kind: 'command', name: 'cd', arg: '~/my project' });
+  // An agent id: switch, and send the rest (several lines kept).
+  assert.deepEqual(commands.parse('/codex explain\nthis', ctx), { kind: 'agent', agentId: 'codex', rest: 'explain\nthis' });
+  assert.deepEqual(commands.parse('/cursor hi', ctx), { kind: 'unknown', name: 'cursor' }, 'unavailable agent');
+  assert.deepEqual(commands.parse('/review', ctx), { kind: 'unknown', name: 'review' });
+  // Messages: a path, a slash elsewhere, "//" escapes.
+  assert.deepEqual(commands.parse('/etc/hosts: what is it?', ctx), { kind: 'send', text: '/etc/hosts: what is it?' });
+  assert.deepEqual(commands.parse('a/b /new', ctx), { kind: 'send', text: 'a/b /new' });
+  assert.deepEqual(commands.parse('//review the diff', ctx), { kind: 'send', text: '/review the diff' });
+  assert.deepEqual(commands.parse('/', ctx), { kind: 'send', text: '/' });
+  assert.deepEqual(commands.parse('/1abc', ctx), { kind: 'send', text: '/1abc' });
+  // No context: no agent, never "__proto__" or the like.
+  assert.deepEqual(commands.parse('/__proto__'), { kind: 'send', text: '/__proto__' });
+  assert.deepEqual(commands.parse('/constructor'), { kind: 'unknown', name: 'constructor' });
+});
+
+test('commands: suggestions while typing', () => {
+  const ctx = {
+    agents: [{ id: 'claude', label: 'Claude' }, { id: 'codex', label: 'Codex' }],
+    modes: [{ id: 'read', label: 'Read-only' }, { id: 'edit', label: 'Edit' }],
+    models: ['opus', 'sonnet'],
+  };
+  const names = (text) => commands.suggest(text, ctx).map((i) => i.name);
+  // Not a command being typed.
+  for (const s of ['hello', '//x', '/new\n', '', ' /new']) assert.equal(commands.suggest(s, ctx), null, s);
+  // "/" alone: every command, then the agents.
+  assert.equal(names('/').length, 16, 'every command and agent');
+  assert.equal(commands.suggest('/', { agents: Array.from({ length: 50 }, (_, i) => ({ id: 'a' + i, label: 'A' })) }).length, 40, 'capped');
+  assert.deepEqual(names('/c'), ['clear', 'close', 'cd', 'copy', 'claude', 'codex']);
+  assert.deepEqual(names('/MO'), ['mode', 'model']);
+  // A required argument: the line waits for it.
+  const mode = commands.suggest('/mode', ctx)[0];
+  assert.deepEqual([mode.line, mode.done, mode.arg], ['/mode ', false, 'mode']);
+  const nw = commands.suggest('/new', ctx)[0];
+  assert.deepEqual([nw.line, nw.done], ['/new', true]);
+  const cl = commands.suggest('/cla', ctx)[0];
+  assert.deepEqual([cl.line, cl.desc, cl.descParams], ['/claude', 'switchTo', { agent: 'Claude' }]);
+  // Values of the argument.
+  assert.deepEqual(commands.suggest('/mode ', ctx).map((i) => i.line), ['/mode read', '/mode edit']);
+  assert.deepEqual(names('/mode e'), ['edit']);
+  assert.deepEqual(names('/model '), ['default', 'opus', 'sonnet']);
+  assert.deepEqual(names('/agent co'), ['codex']);
+  assert.deepEqual(names('/cd ~/'), [], 'free argument');
+  assert.deepEqual(names('/mode edit now'), [], 'one argument at most');
+  assert.deepEqual(names('/zzz '), []);
+  assert.deepEqual(names('/zzz'), []);
+});
+
+test('commands: every description and argument is translated', () => {
+  for (const lang of i18n.LANGUAGES) {
+    const ui = i18n.DICTS[lang].ui.commands;
+    for (const c of commands.COMMANDS) {
+      assert.equal(typeof ui.desc[c.name], 'string', `${lang}: ${c.name}`);
+      if (c.arg) assert.equal(typeof ui.args[c.arg], 'string', `${lang}: ${c.arg}`);
+    }
+    assert.equal(typeof ui.desc.switchTo, 'string');
+    assert.equal(typeof ui.args.message, 'string');
+  }
+});
+
+test('commands of the config: validated, reserved names refused', () => {
+  const { resolveCommands, loadConfig } = require('../src/main/config');
+  const r = resolveCommands({
+    trad: 'Translate into English: {input}',
+    review: { prompt: 'Review the diff', description: '  Review  ', agent: 'claude', mode: 'read', model: 'opus' },
+    'fix-typo': { prompt: 'Fix', model: null },
+    new: 'taken by Aska',
+    clear: 'alias of /new',
+    codex: 'taken by an agent',
+    mine: 'taken by a custom agent',
+    Bad: 'uppercase',
+    '1x': 'digit first',
+    empty: '   ',
+    noprompt: { description: 'x' },
+    list: ['x'],
+    nul: 'a\0b',
+    long: 'x'.repeat(20001),
+    odd: { prompt: 'p', agent: 'nope', mode: 'bypass', model: '--dangerously-skip-permissions' },
+  }, ['claude', 'codex', 'mine']);
+  assert.deepEqual(Object.keys(r.commands), ['trad', 'review', 'fix-typo', 'odd']);
+  assert.deepEqual(r.commands.review, { name: 'review', prompt: 'Review the diff', description: 'Review', agent: 'claude', mode: 'read', model: 'opus' });
+  assert.deepEqual(r.commands['fix-typo'], { name: 'fix-typo', prompt: 'Fix', model: null });
+  assert.deepEqual(r.commands.odd, { name: 'odd', prompt: 'p' }, 'invalid fields dropped, the command kept');
+  assert.equal(r.warnings.length, 14);
+  assert.equal(r.warnings.filter((w) => /taken by Aska or by an agent/.test(w)).length, 4);
+  assert.match(resolveCommands([]).warnings[0], /"commands" ignored/);
+  assert.deepEqual(resolveCommands(undefined), { commands: {}, warnings: [] });
+  // Through loadConfig: the agents of the config are reserved too.
+  const d = tmp();
+  const file = path.join(d, 'config.json');
+  fs.writeFileSync(file, JSON.stringify({ agents: { mine: { bin: 'x', modes: { read: [] } } }, commands: { mine: 'x', ok: 'y' } }), { mode: 0o600 });
+  const c = loadConfig(file);
+  assert.deepEqual(Object.keys(c.config.commands), ['ok']);
+  assert.ok(c.warnings.some((w) => /\/mine/.test(w)));
+});
+
+test('commands of the config: parsed, suggested and filled in', () => {
+  const custom = [
+    { name: 'trad', prompt: 'Translate into English: {input}' },
+    { name: 'review', prompt: 'Review the diff\nwith care', description: 'Review by Claude' },
+  ];
+  const ctx = { agents: [{ id: 'claude', label: 'Claude' }], custom };
+  assert.deepEqual(commands.parse('/trad bonjour à tous', ctx), { kind: 'custom', command: custom[0], arg: 'bonjour à tous' });
+  assert.deepEqual(commands.parse('/review', ctx).kind, 'custom');
+  // Aska's commands keep their meaning (the config refuses those names anyway).
+  assert.equal(commands.parse('/new', { custom: [{ name: 'new', prompt: 'x' }] }).kind, 'command');
+  const items = commands.suggest('/', ctx);
+  const own = items.filter((i) => i.custom);
+  assert.deepEqual(own.map((i) => [i.line, i.text, i.arg, i.done]), [
+    ['/trad', 'Translate into English: {input}', 'text', true],
+    ['/review', 'Review by Claude', 'text', true],
+  ]);
+  assert.ok(items.findIndex((i) => i.custom) < items.findIndex((i) => i.name === 'claude'), 'before the agents');
+  assert.deepEqual(commands.suggest('/tr', ctx).map((i) => i.name), ['trad']);
+  // "{input}" replaced (every occurrence), or the text added after a blank line.
+  assert.equal(commands.expand('Translate: {input}', ' hello '), 'Translate: hello');
+  assert.equal(commands.expand('{input} / {input}', 'a'), 'a / a');
+  assert.equal(commands.expand('Translate: {input}', ''), 'Translate:');
+  assert.equal(commands.expand('Review the diff  ', 'focus on tests'), 'Review the diff\n\nfocus on tests');
+  assert.equal(commands.expand('Review the diff', ''), 'Review the diff');
 });

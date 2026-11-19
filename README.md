@@ -30,6 +30,7 @@ driven by their official CLIs. Linux, macOS and Windows.
 - 🛡️ **Read-only by default**: the agent changes nothing until you switch modes, and never without your approval for the folder.
 - 📌 **Out of the way or always there**: a click outside hides the chat; pinned, it stays on top where you put it. Minimized to a pill, it shows you how the agent is doing.
 - 🔔 **Notified as soon as the AI answers**: a system notification (agent and start of the answer) when the chat is hidden or minimized; one click brings you back to the conversation.
+- ⌨️ **`/` commands**: `/model`, `/mode`, `/cd`, `/codex …` from the field, and your own prompts as commands (`/trad bonjour`).
 - 🌗 **Light or dark**, following your system theme.
 - 🌐 **English or French**: the interface follows your system language (`"language"` in the config to force one).
 
@@ -173,11 +174,14 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Ctrl+O` | working folder (right-click the folder: back to the scratch space) |
 | `↑` / `↓` | recall a message already sent |
 | `Ctrl+Shift+C` | copy the last answer |
+| `Ctrl+R` | after denied actions: run the request again in the next mode (the button of the last answer) |
 | `Ctrl+M` | minimize to a pill / expand |
 | `Ctrl+P` | pin: the chat stays visible when you click elsewhere |
+| `Ctrl+,` | settings |
+| `/` | [commands](#commands): `/model sonnet`, `/cd ~/project`, `/codex …`, and your own |
 | `Esc` | cancel the current request, otherwise hide |
 
-The shortcuts that use `Ctrl` can be changed with `"keybindings"` in the [configuration](#configuration); the tooltips and `aska --help` show the ones you chose.
+The shortcuts that use `Ctrl` can be changed in the [settings](#settings) or with `"keybindings"` in the [configuration](#configuration); the tooltips and `aska --help` show the ones you chose.
 
 A click outside the chat hides it; the agent keeps working. To keep it visible, pin it (📌 or `Ctrl+P`): the choice is remembered. Minimized to a pill, it always stays visible. The window is moved with the handle on the left or the bottom bar, and its position is remembered.
 
@@ -188,6 +192,33 @@ the running requests and quits Aska. On GNOME, a click opens this menu and a
 double-click shows or hides the chat directly; elsewhere, a left click shows or
 hides the chat and a right click opens the menu. `"tray": false` in the config
 removes it.
+
+### Commands
+
+Type `/` in the field: a list of commands opens above it (`↑` `↓` to choose, `Tab` to complete, `Enter` to run, `Esc` to close). They are run by Aska and never sent to the agent, so they work the same with every agent.
+
+| Command | Action |
+| --- | --- |
+| `/help` | list the commands |
+| `/new` (or `/clear`), `/close` | new tab, close the tab |
+| `/agent codex`, or just `/codex` | switch agent; `/codex explain this` also sends the rest to it |
+| `/mode read` · `edit` · `auto` | change the permission mode |
+| `/model sonnet` | pick the model (`/model default`: the CLI's own; `/model` alone opens the picker) |
+| `/cd ~/project` | change the working folder (`~` and relative paths accepted; `/cd` alone opens the picker) |
+| `/retry` | send the last request of the conversation again |
+| `/copy`, `/history`, `/settings`, `/pin`, `/mini` | same as their shortcuts |
+
+Your own commands go in `"commands"` in the [configuration](#configuration): a name and the prompt it sends, with `{input}` replaced by what you type after the name (`/trad bonjour` sends `Translate into English: bonjour`; without `{input}`, that text is added after a blank line). They show in the list with their `description`, or the first line of the prompt. An object can also pick the `agent` and the permission `mode` (switched in the window, as if you did it) and a `model` for that request only (`null`: the CLI's default). Names are lowercase letters, digits and `-`; a name taken by Aska's commands or by an agent is refused, and the window and `aska --help` say why.
+
+Only `/word` followed by a space or the end is a command: `/etc/hosts, what is it?` is a message. To send a message that starts with a command name (an agent's own `/review`, say), double the slash: `//review` sends `/review`.
+
+## Settings
+
+`Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in two tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcut, the shortcuts inside the window (press the keys to record one), and the fixed keys. **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
+
+- On GNOME, the global shortcut is the "Aska" entry of the GNOME custom keyboard shortcuts (`aska --toggle`): the settings change it there, since an application cannot grab a global shortcut under Wayland.
+- Agents, their programs and arguments, `envPassthrough` and the autonomous mode stay in `config.json`, edited by hand: they decide which programs run, so the window cannot change them.
+- A value the main process refuses (shortcut already used, reserved combo…) is shown next to its field, and nothing is saved.
 
 ## Notifications
 
@@ -266,7 +297,12 @@ shown at the bottom of the panel. Aska always starts in **Read-only**.
 - In read-only, Claude only loads your settings (`--setting-sources user`):
   the hooks and permissions in the `.claude/settings.json` of an unverified project
   do not run.
-- When Claude reports denied actions, Aska shows it and offers to switch modes.
+- When the agent reports denied actions (Claude does), the answer
+  says so with a **Run again in "Edit" mode** button (the next wider mode the agent
+  offers; Autonomous only if it is allowed). It switches the mode, then sends the
+  same request again, as you would with `Shift+Tab` and `Enter`: the folder approval
+  still applies, and your draft stays in the field. Only the last answer has it;
+  `Ctrl+R` (the `rerun` shortcut) does the same from the keyboard.
 
 ## Security
 
@@ -301,7 +337,7 @@ In short: **no shell** ever sees the text of your requests, the agent only recei
   remote images. Only `http(s)` links are clickable: they open in your
   browser, and their real destination is shown on hover.
 - Every call from the UI is revalidated by the main process.
-- `config.json` is ignored if it is writable by another user.
+- `config.json` is ignored if it is writable by another user. On Linux, an ACL that only names the owner (common on domain-joined machines, where the mode then shows `670`) is not counted as such: the real ACL is read with `getfacl`.
 - Private audit log (`~/.local/state/aska/history.jsonl`, 0600): date, agent,
   mode, folder, command, result. `"savePrompts": false` to keep requests out of it
   and not save conversations.
@@ -352,6 +388,10 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
   "envPassthrough": [],
   "language": "auto",
   "keybindings": { "history": "Ctrl+J", "togglePin": false },
+  "commands": {
+    "trad": "Translate into English: {input}",
+    "review": { "prompt": "Review the uncommitted changes of this folder.", "description": "Review the diff", "agent": "claude", "mode": "read", "model": "opus" }
+  },
   "agents": {
     "claude": { "model": "sonnet", "extraArgs": ["--max-turns", "20"] },
     "codex": { "bin": "/home/me/.npm-global/bin/codex", "models": ["model-name-a", "model-name-b"] },
@@ -381,10 +421,12 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 | `pickDir` | `Ctrl+O` |
 | `modelMenu` | `Ctrl+Shift+M` |
 | `copyAnswer` | `Ctrl+Shift+C` |
+| `rerun` | `Ctrl+R` |
 | `toggleMini` | `Ctrl+M` |
 | `togglePin` | `Ctrl+P` |
+| `settings` | `Ctrl+,` |
 
-`Enter`, `Esc`, `Tab`, the arrows and `Del` are fixed. An invalid or conflicting shortcut is ignored and reported in the window and in `aska --help`; an action left with no valid shortcut keeps its defaults.
+`Enter`, `Shift+Enter`, `Tab`, `Shift+Tab`, `Esc`, the arrows, `Del` and `Ctrl+1` to `Ctrl+9` are fixed (the settings list them). An invalid or conflicting shortcut is ignored and reported in the window and in `aska --help`; an action left with no valid shortcut keeps its defaults.
 
 `language` picks the interface language (window, notifications, `aska --help`): `"auto"` (default) follows the system language (French for any `fr*` locale, English otherwise), `"en"` or `"fr"` forces one. Requests sent to the agents are not translated.
 
