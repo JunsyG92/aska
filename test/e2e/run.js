@@ -13,6 +13,7 @@ const FAKE = path.join(ROOT, 'test', 'fixtures', 'fake-agent.js');
 const WIN = process.platform === 'win32';
 const POSIX = !WIN;
 const { paths } = require(path.join(ROOT, 'src', 'main', 'config'));
+const { BUILTIN } = require(path.join(ROOT, 'src', 'main', 'agents'));
 const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
 
 (async () => {
@@ -67,7 +68,20 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     setVar('PATH', [bin, path.dirname(process.execPath), sys32].join(';'));
   } else {
     setVar('HOME', home);
-    setVar('PATH', `${bin}:/usr/bin:/bin`);
+    // The system tools stay reachable, but not an agent CLI installed on this machine
+    // (VS Code puts a "copilot" in /usr/bin): the test only sees its fake agents.
+    const sysbin = path.join(home, 'sysbin');
+    fs.mkdirSync(sysbin);
+    const agentBins = new Set(Object.values(BUILTIN).flatMap((a) => a.bin));
+    const linked = new Set();
+    for (const dir of ['/usr/bin', '/bin']) {
+      for (const f of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
+        if (agentBins.has(f) || linked.has(f)) continue;
+        linked.add(f);
+        fs.symlinkSync(path.join(dir, f), path.join(sysbin, f));
+      }
+    }
+    setVar('PATH', `${bin}:${sysbin}`);
   }
   const P = paths(env, home);
   fs.mkdirSync(P.configDir, { recursive: true });
