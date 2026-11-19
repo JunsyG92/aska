@@ -188,7 +188,9 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForSelector('#model-menu:not([hidden])');
     // The list comes from the CLI itself (here its help), added to the known aliases.
     await page.waitForFunction(() => document.querySelectorAll('.model-opt').length === 5);
-    assert.deepEqual(await page.locator('.model-opt').allTextContents(), ['CLI default', 'opus', 'sonnet', 'haiku', 'fable']);
+    // "CLI default" shows the full name the CLI reported in the answers so far.
+    assert.deepEqual(await page.locator('.model-opt').allTextContents(), ['CLI defaultfake-model-1', 'opus', 'sonnet', 'haiku', 'fable']);
+    assert.equal(JSON.parse(fs.readFileSync(P.state, 'utf8')).resolvedModels.claude[''], 'fake-model-1');
     await page.waitForTimeout(250);
     await shot('3-model-light');
     await page.keyboard.press('ArrowDown');

@@ -52,6 +52,9 @@ let tabs = null; // open tabs (see tabs.js); each one carries its conversation a
 let savedTabs = null; // saved tabs, reopened at startup
 const picked = {}; // model chosen per agent: { claude: 'opus' } (missing = default)
 const extraModels = {}; // models typed in by hand, per agent
+// Full name the CLI reported for a model it was given ("opus" -> "claude-opus-5-5"),
+// per agent; "" is its default model. Shown in the model picker.
+const resolvedModels = {};
 const discovered = {}; // models reported by each CLI: { cursor: { models, error } }
 
 // PATH extended with the usual CLI locations (see launch.js).
@@ -111,6 +114,11 @@ function loadEverything() {
     }
     for (const [k, v] of Object.entries(d.extraModels && typeof d.extraModels === 'object' ? d.extraModels : {})) {
       if (Object.hasOwn(agents, k) && Array.isArray(v)) extraModels[k] = v.filter(isModel).slice(0, 12);
+    }
+    for (const [k, v] of Object.entries(d.resolvedModels && typeof d.resolvedModels === 'object' ? d.resolvedModels : {})) {
+      if (!Object.hasOwn(agents, k) || !v || typeof v !== 'object') continue;
+      const ok = Object.entries(v).filter(([from, to]) => (from === '' || isModel(from)) && isModel(to)).slice(0, 30);
+      if (ok.length) resolvedModels[k] = Object.fromEntries(ok);
     }
     if (typeof d.pinned === 'boolean') pinned = d.pinned;
     savedTabs = { ids: d.tabs, active: d.activeTab };
@@ -173,7 +181,7 @@ function fsRealWorkspace() {
 function saveState() {
   try {
     const open = tabs && cfg.savePrompts ? tabs.serialize() : {};
-    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels, pinned, ...open }));
+    sec.writePrivate(P.state, JSON.stringify({ cwd, pos: savedPos, models: picked, extraModels, resolvedModels, pinned, ...open }));
   } catch { /* state is a convenience, not a necessity */ }
 }
 
@@ -186,6 +194,17 @@ const tilde = (p) => {
 // Model used for an agent: choice in the UI, else config, else the CLI's default.
 function modelFor(a) {
   return picked[a.id] || a.model || null;
+}
+
+// The CLI was given `asked` (null: its default) and reports `used`: remembered when they differ.
+function noteResolved(agentId, asked, used) {
+  const from = asked || '';
+  if (!isModel(used) || used === asked) return;
+  const r = resolvedModels[agentId] || (resolvedModels[agentId] = Object.create(null));
+  if (r[from] === used) return;
+  if (!Object.hasOwn(r, from) && Object.keys(r).length >= 30) return;
+  r[from] = used;
+  saveState();
 }
 
 function publicTurn(t) {
@@ -518,7 +537,10 @@ function startRun(req) {
     (ev) => {
       if (ev.type === 'text' && turn.answer.length < MAX_ANSWER) turn.answer += ev.text;
       else if (ev.type === 'session') sessionId = ev.id;
-      else if (ev.type === 'meta' && ev.model) turn.model = ev.model;
+      else if (ev.type === 'meta' && ev.model) {
+        turn.model = ev.model;
+        noteResolved(agent.id, model, ev.model);
+      }
       else if (ev.type === 'error') streamError = ev.text;
       else if (ev.type === 'denied') denied = ev;
       if (ev.type !== 'session') send({ id, tabId: tab.id, ...ev });
@@ -604,16 +626,21 @@ async function listModels(req) {
   const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
   if (!a || !a.modelFlag) return { models: [], current: null, error: null };
   if (a.binPath && (!discovered[a.id] || req.refresh === true)) {
-    discovered[a.id] = await discoverModels(a.id, (args) => {
+    const cwdForList = fsRealWorkspace();
+    discovered[a.id] = await discoverModels(a.id, (args, { stdin = '', timeoutMs = 12000 } = {}) => {
       let text = '';
+      let err = '';
       const h = launchAgent(
         a,
         args,
-        { cwd: fsRealWorkspace(), stdin: '', output: 'text', timeoutMs: 12000, maxBytes: 512 * 1024 },
-        (ev) => { if (ev.type === 'text') text += ev.text; }
+        { cwd: cwdForList, stdin, output: 'text', timeoutMs, maxBytes: 512 * 1024 },
+        (ev) => {
+          if (ev.type === 'text') text += ev.text;
+          else if (ev.type === 'stderr') err += ev.text;
+        }
       );
-      return h.done.then((r) => ({ ok: r.ok, text }));
-    }, process.env);
+      return h.done.then((r) => ({ ok: r.ok, text, err: err || r.stderrTail || '' }));
+    }, process.env, { cwd: cwdForList });
   }
   const found = discovered[a.id] || { models: [], error: null };
   const byId = new Map();
@@ -622,7 +649,16 @@ async function listModels(req) {
   for (const id of extraModels[a.id] || []) if (!byId.has(id)) byId.set(id, { id, label: null });
   const current = modelFor(a);
   if (current && !byId.has(current)) byId.set(current, { id: current, label: null });
-  return { models: [...byId.values()], current, error: found.error, fromCli: found.models.length > 0 };
+  // An alias without a label shows the full name the CLI reported for it.
+  const resolved = resolvedModels[a.id] || {};
+  for (const m of byId.values()) if (!m.label && Object.hasOwn(resolved, m.id)) m.label = resolved[m.id];
+  return {
+    models: [...byId.values()],
+    current,
+    defaultModel: Object.hasOwn(resolved, '') ? resolved[''] : null,
+    error: found.error,
+    fromCli: found.models.length > 0,
+  };
 }
 
 function registerIpc() {

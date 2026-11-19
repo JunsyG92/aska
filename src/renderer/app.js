@@ -256,6 +256,7 @@
   let modelSel = 0;
   let modelAll = [];
   let modelCurrent = null;
+  let modelDefault = null; // full name of the CLI's default model, once seen in an answer
   const MODEL_RE = /^[A-Za-z0-9][\w.:/[\]-]{0,79}$/;
 
   function closeModelMenu() {
@@ -286,7 +287,7 @@
     const needle = q.toLowerCase();
     const match = (m) => !needle || m.id.toLowerCase().includes(needle) || (m.label || '').toLowerCase().includes(needle);
     modelItems = [];
-    if (!needle) modelItems.push({ id: null, label: t('model.cliDefault') });
+    if (!needle) modelItems.push({ id: null, label: t('model.cliDefault'), sub: modelDefault });
     modelItems.push(...modelAll.filter(match).slice(0, 300));
     // A name missing from the list is still usable, if the CLI knows it.
     if (q && MODEL_RE.test(q) && !modelItems.length) modelItems.push({ id: q, label: t('model.use', { model: q }), custom: true });
@@ -295,7 +296,7 @@
         const row = el('div', 'model-opt');
         row.setAttribute('role', 'option');
         row.setAttribute('aria-selected', String(m.id === modelCurrent));
-        row.append(el('span', 'model-label', m.label || ''), el('span', 'model-id', m.custom || m.id === null ? '' : m.id));
+        row.append(el('span', 'model-label', m.label || ''), el('span', 'model-id', m.custom ? '' : m.id === null ? m.sub || '' : m.id));
         row.addEventListener('click', () => chooseModel(m.id));
         row.addEventListener('mousemove', () => highlightModel(i, false));
         return row;
@@ -316,6 +317,7 @@
     if (!menuOpen || agentId !== a.id) return;
     modelAll = res.models;
     modelCurrent = res.current;
+    modelDefault = res.defaultModel || null;
     $('model-note').textContent = res.fromCli
       ? ''
       : res.error
@@ -331,6 +333,7 @@
     if (running || !a || !a.canPickModel) return;
     if (menuOpen) return closeModelMenu();
     modelAll = a.models.map((id) => ({ id, label: null }));
+    modelDefault = null;
     modelCurrent = a.model || null;
     $('model-filter').value = '';
     $('model-filter').placeholder = t('model.search', { agent: a.label });
