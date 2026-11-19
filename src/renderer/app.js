@@ -9,12 +9,14 @@
   const result = $('result');
   const thread = $('thread');
   const historyBox = $('history');
+  const settingsBox = $('settings');
   const activity = $('activity');
   const notice = $('notice');
   const confirmBox = $('confirm');
   const modelMenu = $('model-menu');
   const status = $('status');
   const keys = $('keys');
+  const cmdMenu = $('cmd-menu');
   const api = window.aska;
 
   let agents = [];
@@ -35,13 +37,15 @@
   let warnings = [];
   let mini = false;
   let activityText = '';
-  let view = 'chat'; // 'chat' | 'history'
+  let view = 'chat'; // 'chat' | 'history' | 'settings'
   let menuOpen = false;
   let pinned = false;
   let unread = 0;
   let tabList = []; // tabs: [{ id, title, color, running, unread, active }]
   const tabUi = new Map(); // per tab: { draft, agentId, mode }, kept when switching tabs
   let closeArmed = null; // working tab waiting for the close confirmation
+  let lastPrompt = ''; // last request of the active conversation, for /retry
+  let customCommands = []; // "/" commands of the config: [{ name, prompt, description?, agent?, mode?, model? }]
 
   // ---------- translations (strings sent by the main process) ----------
 
@@ -110,7 +114,11 @@
   // ---------- footer, status, pill ----------
 
   function setKeys() {
-    const items = running
+    const items = view === 'settings'
+      ? [[t('keys.esc'), t('footer.back')]]
+      : cmdOpen()
+      ? [['↑ ↓', t('footer.select')], ['Tab', t('footer.complete')], ['⏎', t('footer.run')], [t('keys.esc'), t('footer.close')]]
+      : running
       ? [[t('keys.esc'), t('footer.cancel')]]
       : pendingTrust || menuOpen
         ? []
@@ -179,7 +187,7 @@
   }
 
   function syncOpen() {
-    const open = view === 'history' || thread.childElementCount > 0 || !activity.hidden || !notice.hidden;
+    const open = view !== 'chat' || thread.childElementCount > 0 || !activity.hidden || !notice.hidden;
     result.classList.toggle('open', open);
   }
 
@@ -188,6 +196,7 @@
     if (mini === v) return;
     mini = v;
     panel.classList.toggle('mini', mini);
+    refreshPalette();
     syncMiniLabels();
     api.setMini(mini);
     window.AskaTabs.update(mini ? [] : tabList); // no tab bar in the pill
@@ -413,6 +422,7 @@
     conversation.turns.forEach((t, i) => addTurn(t, true, i === conversation.turns.length - 1));
     const last = conversation.turns[turnCount - 1];
     lastAnswer = last ? last.answer : '';
+    lastPrompt = last ? last.prompt : '';
     panel.dataset.state = 'idle';
     setStatus('');
     syncOpen();
@@ -432,6 +442,7 @@
     agents = s.agents.filter((a) => a.available);
     history = s.history || [];
     warnings = s.warnings || [];
+    customCommands = s.commands || [];
     $('cwd-name').textContent = s.cwd;
     $('cwd').title = t('cwdTitle', { path: s.cwdIsScratch ? t('cwdScratch') : s.cwd });
     $('hist-btn').hidden = !s.historyEnabled;
@@ -490,6 +501,7 @@
     const ui = tabUi.get(s.conversation.id);
     input.value = ui ? ui.draft || '' : '';
     histIdx = -1;
+    refreshPalette();
     running = !!s.run;
     live = null;
     runId = null;
@@ -553,16 +565,55 @@
     input.focus();
   }
 
-  // `direct`: a request sent again (button after denied actions); the field keeps its draft.
+  /**
+   * Sends the field, or `direct`: a request sent again (/retry, the button after
+   * denied actions), which leaves the field as it is. A "/" command is run by the
+   * window and never reaches the agent (see commands.js).
+   */
   async function submit(trust, direct) {
-    if (pendingTrust) direct = pendingTrust.direct;
-    const prompt = pendingTrust ? pendingTrust.prompt : direct || input.value.trim();
+    let prompt;
+    let typed; // as typed, for the recall with ↑
+    let model; // model for this request only (command of the config), undefined: the chosen one
+    if (pendingTrust) ({ prompt, typed, model, direct } = pendingTrust);
+    else if (direct) prompt = typed = direct;
+    else {
+      typed = input.value.trim();
+      if (!typed) return;
+      const cmd = window.AskaCommands.parse(typed, cmdCtx());
+      if (cmd.kind === 'command') return runCommand(cmd.name, cmd.arg);
+      if (cmd.kind === 'unknown') return setStatus(t('commands.unknown', { name: cmd.name }), 'err');
+      if (cmd.kind === 'custom') {
+        const c = cmd.command;
+        if (running) return setStatus(t('commands.busy'), 'err');
+        if (c.agent) {
+          if (!agents.some((x) => x.id === c.agent)) return setStatus(t('commands.unknownAgent', { name: c.agent }), 'err');
+          if (c.agent !== agentId) setAgent(c.agent, true);
+        }
+        if (c.mode && c.mode !== mode) {
+          const offered = agent().modes;
+          if (!offered.includes(c.mode)) {
+            const list = offered.map((id) => `${id} (${modes[id] ? modes[id].label : id})`).join(', ');
+            return setStatus(t('commands.unknownMode', { name: c.mode, agent: agent().label, list }), 'err');
+          }
+          setMode(c.mode, true);
+        }
+        if (c.model !== undefined && agent().canPickModel) model = c.model;
+        prompt = window.AskaCommands.expand(c.prompt, cmd.arg);
+      } else if (cmd.kind === 'agent') {
+        if (running) return setStatus(t('commands.busy'), 'err');
+        setAgent(cmd.agentId, true);
+        if (!cmd.rest) return setInput('');
+        prompt = cmd.rest;
+      } else prompt = cmd.text;
+    }
     const a = agent();
     if (running || !prompt || !a) return;
     if (view === 'history') showHistory(false);
-    const res = await api.run({ tabId: convId, agentId, mode, prompt, trust });
+    const req = { tabId: convId, agentId, mode, prompt, trust };
+    if (model !== undefined) req.model = model;
+    const res = await api.run(req);
     if (res.needsTrust) {
-      pendingTrust = { prompt, direct };
+      pendingTrust = { prompt, typed, model, direct };
       confirmBox.dataset.mode = res.mode;
       const what = t(res.mode === 'auto' ? 'trust.editAndRun' : 'trust.editFiles');
       $('confirm-text').textContent = t(res.reason === 'content' ? 'trust.content' : 'trust.allow', { agent: res.agent, cwd: res.cwd, what });
@@ -582,15 +633,17 @@
     // The request joins the thread and the field clears for the next message.
     runId = res.id;
     running = true;
-    if (history[history.length - 1] !== prompt) history.push(prompt);
+    if (history[history.length - 1] !== typed) history.push(typed);
+    lastPrompt = prompt;
     histIdx = -1;
     if (!direct) {
       draft = '';
       input.value = '';
+      refreshPalette();
     }
     showNotice('');
     thread.querySelectorAll('.notice .rerun').forEach((b) => b.remove()); // only on the last turn
-    live = addTurn({ label: a.label, color: a.color, model: a.model, mode, prompt, answer: '', status: 'running' }, false);
+    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode, prompt, answer: '', status: 'running' }, false);
     live.node.classList.add('live');
     turnCount += 1;
     panel.dataset.state = 'running';
@@ -647,6 +700,178 @@
     setKeys();
     autosize();
     scrollEnd(true);
+  }
+
+  // ---------- "/" commands (parsing and suggestions: commands.js) ----------
+
+  let cmdItems = [];
+  let cmdSel = 0;
+  let cmdDismissed = null; // field value on which Esc closed the palette
+  // A list that opens under a still pointer gets a mousemove without any movement:
+  // it must not move the keyboard selection.
+  let pointerAt = '';
+  let pointerMoved = false;
+  document.addEventListener('mousemove', (e) => {
+    const at = e.screenX + ',' + e.screenY;
+    pointerMoved = at !== pointerAt;
+    pointerAt = at;
+  }, true);
+  function cmdOpen() {
+    return !cmdMenu.hidden;
+  }
+
+  function cmdCtx() {
+    const a = agent();
+    return {
+      agents: agents.map((x) => ({ id: x.id, label: x.label })),
+      modes: (a ? a.modes : []).map((id) => ({ id, label: modes[id] ? modes[id].label : id })),
+      models: a && a.canPickModel ? a.models : [],
+      custom: customCommands,
+    };
+  }
+
+  function setInput(value) {
+    input.value = value;
+    histIdx = -1;
+    autosize();
+    input.setSelectionRange(value.length, value.length);
+    refreshPalette();
+  }
+
+  function highlightCmd(i, scroll) {
+    const nodes = $('cmd-list').children;
+    if (!nodes.length) return;
+    cmdSel = Math.min(Math.max(i, 0), nodes.length - 1);
+    [...nodes].forEach((n, j) => {
+      n.classList.toggle('active', j === cmdSel);
+      n.setAttribute('aria-selected', String(j === cmdSel));
+    });
+    if (scroll) nodes[cmdSel].scrollIntoView({ block: 'nearest' });
+  }
+
+  // Palette above the footer while a command is typed (not while recalling with ↑).
+  function refreshPalette() {
+    const quiet = view !== 'chat' || mini || pendingTrust || menuOpen || histIdx !== -1 || input.value === cmdDismissed;
+    const items = quiet ? null : window.AskaCommands.suggest(input.value, cmdCtx());
+    if (input.value !== cmdDismissed) cmdDismissed = null;
+    const wasOpen = cmdOpen();
+    const prev = wasOpen && cmdItems[cmdSel] ? cmdItems[cmdSel].line : null;
+    cmdItems = items || [];
+    cmdMenu.hidden = !cmdItems.length;
+    if (cmdItems.length) {
+      $('cmd-list').replaceChildren(
+        ...cmdItems.map((it, i) => {
+          const row = el('div', 'cmd-opt');
+          row.setAttribute('role', 'option');
+          if (it.desc || it.custom) {
+            row.append(el('span', 'cmd-name', '/' + it.name));
+            if (it.arg) row.append(el('span', 'cmd-arg', t('commands.args.' + it.arg)));
+            row.append(el('span', 'cmd-desc', it.custom ? it.text : t('commands.desc.' + it.desc, it.descParams || {})));
+          } else {
+            row.append(el('span', 'cmd-name', it.name), el('span', 'cmd-desc', it.label || ''));
+          }
+          row.addEventListener('mousedown', (e) => e.preventDefault()); // the field keeps the focus
+          row.addEventListener('click', () => acceptCmd(it, true));
+          row.addEventListener('mousemove', () => { if (pointerMoved && cmdSel !== i) highlightCmd(i, false); });
+          return row;
+        })
+      );
+      const keep = cmdItems.findIndex((it) => it.line === prev);
+      highlightCmd(keep >= 0 ? keep : 0, true);
+    }
+    if (wasOpen !== cmdOpen()) setKeys();
+  }
+
+  // Tab completes; Enter (or a click) runs when nothing more is needed.
+  function acceptCmd(it, run) {
+    if (run && it.done) {
+      input.value = it.line;
+      submit();
+      return;
+    }
+    setInput(it.line + (it.arg && !it.line.endsWith(' ') ? ' ' : ''));
+  }
+
+  async function runCommand(name, arg) {
+    const a = agent();
+    const busy = () => setStatus(t('commands.busy'), 'err');
+    const done = () => setInput('');
+    switch (name) {
+      case 'help':
+        cmdDismissed = null;
+        return setInput('/');
+      case 'new':
+        done();
+        return newConversation();
+      case 'close':
+        done();
+        return closeTab();
+      case 'agent': {
+        const needle = arg.toLowerCase();
+        const target = agents.find((x) => x.id === needle || x.label.toLowerCase() === needle);
+        if (!target) return setStatus(t('commands.unknownAgent', { name: arg }), 'err');
+        if (running) return busy();
+        setAgent(target.id, true);
+        return done();
+      }
+      case 'mode': {
+        if (running) return busy();
+        const needle = arg.toLowerCase();
+        const m = a && a.modes.find((id) => id === needle || (modes[id] && modes[id].label.toLowerCase() === needle));
+        if (!m) {
+          const list = (a ? a.modes : []).map((id) => `${id} (${modes[id] ? modes[id].label : id})`).join(', ');
+          return setStatus(t('commands.unknownMode', { name: arg, agent: a ? a.label : '', list }), 'err');
+        }
+        setMode(m, true);
+        return done();
+      }
+      case 'model': {
+        if (!a || !a.canPickModel) return setStatus(t('commands.noModel', { agent: a ? a.label : '' }), 'err');
+        if (running) return busy();
+        done();
+        if (!arg) return openModelMenu();
+        const value = arg === window.AskaCommands.DEFAULT_MODEL ? null : arg;
+        if (value !== null && !MODEL_RE.test(value)) return setStatus(t('errors.invalidModel'), 'err');
+        applyState(await api.setModel(a.id, value));
+        replay(modelBtn, 'swap');
+        return setStatus(t('commands.model', { model: value || t('model.cliDefault') }), 'ok');
+      }
+      case 'cd': {
+        if (running) return busy();
+        if (!arg) {
+          done();
+          return applyState(await api.pickDir());
+        }
+        const res = await api.setDir(arg);
+        applyState(res);
+        if (res.error) return setStatus(res.error, 'err');
+        done();
+        return setStatus(t('commands.folder', { path: res.cwd }), 'ok');
+      }
+      case 'retry':
+        if (running) return busy();
+        if (!lastPrompt) return setStatus(t('commands.noRetry'), 'err');
+        done();
+        return submit(undefined, lastPrompt);
+      case 'copy':
+        done();
+        if (lastAnswer) await api.copy(lastAnswer).then(() => setStatus(t('status.copied'), 'ok'));
+        return;
+      case 'history':
+        done();
+        if (!$('hist-btn').hidden) showHistory(true);
+        return;
+      case 'settings':
+        done();
+        return showSettings(true);
+      case 'pin':
+        done();
+        return setPinned(!pinned, true);
+      case 'mini':
+        done();
+        return setMini(true);
+      default:
+    }
   }
 
   // New conversation: in a new tab (or the active tab if it is empty).
@@ -753,8 +978,31 @@
     highlightHist(q ? 0 : Math.max(cur, 0), true);
   }
 
+  // ---------- settings (see settings.js) ----------
+
+  async function showSettings(on) {
+    if (on && view === 'settings') return;
+    if (on && view === 'history') await showHistory(false);
+    view = on ? 'settings' : 'chat';
+    refreshPalette();
+    $('settings-btn').setAttribute('aria-pressed', String(on));
+    settingsBox.hidden = !on;
+    thread.hidden = on;
+    panel.classList.toggle('in-settings', on); // no tabs, chips or history while editing
+    if (on) {
+      setStatus('');
+      await window.AskaSettings.open();
+    } else {
+      scrollEnd(true);
+      input.focus();
+    }
+    syncOpen();
+    setKeys();
+  }
+
   async function showHistory(on) {
     view = on ? 'history' : 'chat';
+    refreshPalette();
     $('hist-btn').setAttribute('aria-pressed', String(on));
     historyBox.hidden = !on;
     thread.hidden = on;
@@ -851,6 +1099,19 @@
       setPinned(!pinned, true);
       return;
     }
+    // Settings: the form keeps the keyboard; Esc (or the settings shortcut) closes it.
+    if (view === 'settings') {
+      if (e.key === 'Escape' || is('settings')) {
+        e.preventDefault();
+        window.AskaSettings.requestClose();
+      }
+      return;
+    }
+    if (is('settings') && !mini && !pendingTrust && !menuOpen) {
+      e.preventDefault();
+      showSettings(true);
+      return;
+    }
     if (!mini && !pendingTrust && !menuOpen) {
       // Ctrl+1 to Ctrl+9 stay fixed: tab n°1 to 8, Ctrl+9 the last one.
       const tabNumber = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key) && tabList.length > 1;
@@ -913,6 +1174,21 @@
       } else if (e.key === 'Tab') e.preventDefault();
       return;
     }
+    if (cmdOpen() && e.target === input && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const it = cmdItems[cmdSel];
+      const key =
+        e.key === 'ArrowDown' ? () => highlightCmd(cmdSel + 1, true)
+        : e.key === 'ArrowUp' ? () => highlightCmd(cmdSel - 1, true)
+        : e.key === 'Tab' && !e.shiftKey ? () => acceptCmd(it, false)
+        : e.key === 'Enter' && !e.shiftKey && !e.isComposing ? () => acceptCmd(it, true)
+        : e.key === 'Escape' ? () => { cmdDismissed = input.value; refreshPalette(); }
+        : null;
+      if (key) {
+        e.preventDefault();
+        key();
+        return;
+      }
+    }
     if (e.key === 'Escape') {
       e.preventDefault();
       if (running) api.cancel(convId);
@@ -951,6 +1227,7 @@
   input.addEventListener('input', () => {
     histIdx = -1;
     autosize();
+    refreshPalette();
   });
   agentBtn.addEventListener('click', () => { cycleAgent(1); input.focus(); });
   modeBtn.addEventListener('click', () => { cycleMode(); input.focus(); });
@@ -969,6 +1246,14 @@
   $('close-btn').addEventListener('click', () => api.hide());
   $('new-btn').addEventListener('click', newConversation);
   $('hist-btn').addEventListener('click', () => showHistory(view !== 'history'));
+  $('settings-btn').addEventListener('click', () => (view === 'settings' ? window.AskaSettings.requestClose() : showSettings(true)));
+  window.AskaSettings.init(settingsBox, {
+    api,
+    t,
+    modeLabel: (m) => (modes[m] ? modes[m].label : m),
+    onClose: () => showSettings(false),
+    onSaved: (s) => applyState(s), // language, shortcuts, tooltips… applied at once
+  });
 
   // The window follows the panel size (minimized, expanded, growing thread).
   new ResizeObserver(() => {
@@ -980,6 +1265,7 @@
 
   api.onRunEvent(onRunEvent);
   api.onNewConversation(() => newConversation()); // system tray icon menu
+  api.onOpenSettings(() => showSettings(true)); // system tray icon menu
   api.onUnread(setUnread);
   $('pin-btn').addEventListener('click', () => { setPinned(!pinned, true); input.focus(); });
   api.onWillHide(() => {

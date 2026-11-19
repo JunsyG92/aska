@@ -60,6 +60,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     if (v !== undefined) env[k] = v;
   };
   for (const k of ['XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_DATA_HOME']) setVar(k);
+  // Never the desktop of whoever runs the test: on GNOME, the settings panel would write its shortcuts.
+  setVar('XDG_CURRENT_DESKTOP');
   if (WIN) {
     const sys32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
     setVar('USERPROFILE', home);
@@ -85,7 +87,12 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   }
   const P = paths(env, home);
   fs.mkdirSync(P.configDir, { recursive: true });
-  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'en' }), { mode: 0o600 });
+  // Two "/" commands of the user, checked with the others.
+  const userCommands = {
+    trad: 'Translate into English: {input}',
+    sum: { prompt: 'Summarize these notes', description: 'Summary with Haiku', model: 'haiku' },
+  };
+  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'en', commands: userCommands }), { mode: 0o600 });
   const args = [ROOT];
   if (process.env.ASKA_E2E_NO_SANDBOX === '1') args.unshift('--no-sandbox');
   const app = await electron.launch({ executablePath: require(path.join(ROOT, 'node_modules', 'electron')), args, env, cwd: ROOT });
@@ -551,7 +558,97 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(st.activeTab, st.tabs[0]);
     assert.deepEqual(await tabTitles(), ['Summarize main.js (deny)']);
 
+    // ---------- "/" commands, run by the window ----------
+    const cmdNames = () => page.locator('#cmd-list .cmd-name').allTextContents();
+    const modelBefore = await page.textContent('#model-name');
+    await page.fill('#input', '/mo');
+    await page.waitForSelector('#cmd-menu:not([hidden])');
+    assert.deepEqual(await cmdNames(), ['/mode', '/model']);
+    assert.match(await page.textContent('#keys'), /complete/);
+    await page.waitForTimeout(250);
+    await shot('12-commands-light');
+    // Enter on a command that needs an argument: the line waits for it, with its values.
+    await page.keyboard.press('Enter');
+    assert.equal(await page.inputValue('#input'), '/mode ');
+    assert.equal((await cmdNames())[0], 'read');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.textContent('#mode-name'), 'Edit');
+    assert.equal(await page.inputValue('#input'), '');
+    assert.equal(await page.isHidden('#cmd-menu'), true);
+    await send('/mode read');
+    assert.equal(await page.textContent('#mode-name'), 'Read-only');
+    // Agents: by name, or with /agent (Tab completes).
+    await send('/codex');
+    assert.equal(await page.textContent('#agent-name'), 'Codex');
+    await page.fill('#input', '/agent cl');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.inputValue('#input'), '/agent claude');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.textContent('#agent-name'), 'Claude');
+    // Model and folder, applied at once.
+    await send('/model sonnet');
+    await page.waitForFunction(() => document.querySelector('#model-name').textContent === 'sonnet');
+    await send('/cd ~');
+    await page.waitForFunction(() => document.querySelector('#cwd-name').textContent === '~');
+    await send('/cd ./does-not-exist');
+    await page.waitForFunction(() => document.querySelector('#status').classList.contains('err'));
+    assert.equal(await page.inputValue('#input'), '/cd ./does-not-exist', 'kept to be fixed');
+    await page.evaluate(() => window.aska.resetDir());
+    // Unknown command: nothing is sent, the hint says how to send it anyway.
+    const turnsBefore = await turns();
+    await send('/nope');
+    assert.match(await page.textContent('#status'), /Unknown command "\/nope".*\/\/nope/);
+    assert.equal(await turns(), turnsBefore);
+    // Esc closes the palette, not the window.
+    await page.fill('#input', '/');
+    await page.waitForSelector('#cmd-menu:not([hidden])');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.isHidden('#cmd-menu'), true);
+    assert.equal(await visible(), true);
+    // "//" sends a message that starts with "/"; /retry sends the last request again.
+    await send('//new is not a command');
+    await settled('running');
+    await settled('done');
+    assert.equal(await turns(), turnsBefore + 1);
+    assert.equal(await page.locator('.turn .q').last().textContent(), '/new is not a command');
+    assert.equal(calls().pop().stdin, '/new is not a command');
+    await send('/retry');
+    await settled('running');
+    await settled('done');
+    assert.equal(await turns(), turnsBefore + 2);
+    assert.equal(await page.locator('.turn .q').last().textContent(), '/new is not a command');
+    // Commands of the config: listed with a description, prompt filled in, model for this request only.
+    await page.fill('#input', '/su');
+    await page.waitForSelector('#cmd-menu:not([hidden])');
+    assert.deepEqual(await cmdNames(), ['/sum']);
+    assert.equal(await page.textContent('#cmd-list .cmd-desc'), 'Summary with Haiku');
+    await page.fill('#input', '');
+    await send('/trad bonjour');
+    await settled('running');
+    await settled('done');
+    assert.equal(await page.locator('.turn .q').last().textContent(), 'Translate into English: bonjour');
+    assert.ok(calls().pop().stdin.endsWith('Translate into English: bonjour'));
+    const chosenModel = await page.textContent('#model-name');
+    await send('/sum first point, second point');
+    await settled('running');
+    await settled('done');
+    const sumCall = calls().pop();
+    assert.ok(sumCall.stdin.endsWith('Summarize these notes\n\nfirst point, second point'));
+    assert.deepEqual(sumCall.args.slice(sumCall.args.indexOf('--model'), sumCall.args.indexOf('--model') + 2), ['--model', 'haiku']);
+    assert.match(await page.locator('.turn .meta').last().textContent(), /Claude · haiku/);
+    assert.equal(await page.textContent('#model-name'), chosenModel, 'the chosen model does not change');
+    // /new and /close: tabs.
+    await send('/new');
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
+    await send('/close');
+    await page.waitForFunction((n) => document.querySelectorAll('.turn').length === n, turnsBefore + 4);
+    await send(modelBefore === 'Default model' ? '/model default' : `/model ${modelBefore}`);
+    await page.waitForFunction((m) => document.querySelector('#model-name').textContent === m, modelBefore);
+    assert.equal(await page.textContent('#cwd-name'), 'Scratch space');
+
     // Actions denied by the mode: Ctrl+R (or the button) runs the same request again in the next wider mode.
+    const turnsHere = await turns();
     await page.keyboard.press('Control+t');
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
     assert.equal(await page.textContent('#agent-name'), 'Claude');
@@ -604,7 +701,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await page.textContent('#mode-name'), 'Read-only');
     await page.fill('#input', '');
     await page.keyboard.press('Control+w');
-    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 10);
+    await page.waitForFunction((n) => document.querySelectorAll('.turn').length === n, turnsHere);
 
     // French UI: "language" in the config, picked up by "aska --reload" and the next show.
     // Same for the shortcuts: history moved to Ctrl+J, model menu to Alt+Shift+M.
@@ -648,14 +745,82 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     };
     await page.keyboard.press('Escape');
     await waitVisible(false);
-    await app.evaluate(({ BrowserWindow }) => {
-      const w = BrowserWindow.getAllWindows()[0];
-      w.show();
-      w.webContents.send('aska:new-conversation');
+    // Same path as the menu: the window is shown the usual way, then asked for a new tab.
+    await app.evaluate(({ app, BrowserWindow }) => {
+      app.emit('second-instance', {}, ['--toggle']);
+      BrowserWindow.getAllWindows()[0].webContents.send('aska:new-conversation');
     });
     await waitVisible(true);
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
     assert.equal(await page.locator('.tab').count(), tabsBefore + 1);
+
+    // ---------- settings panel ----------
+    // Config at this point: { shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
+    const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));
+    const configBefore = readConfig();
+    const row = (action) => page.locator(`.set-row[data-action="${action}"]`);
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    assert.equal(await page.isHidden('#thread'), true);
+    await page.waitForTimeout(500); // end of the opening animation
+    await shot('10-settings-light');
+    // Second tab: the global shortcut and the shortcuts inside the window.
+    await page.click('.set-tab[data-page="keys"]');
+    await page.waitForSelector('.set-row[data-action="history"]');
+    assert.equal(await page.getAttribute('.set-tab[data-page="keys"]', 'aria-selected'), 'true');
+    assert.deepEqual(await row('history').locator('kbd').allTextContents(), ['Ctrl+J']);
+    await shot('11-settings-keys-light');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(150);
+    await shot('11-settings-keys-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    // History: Ctrl+J replaced by Ctrl+K, captured from the keyboard.
+    await row('history').locator('.set-chip-x').click();
+    await row('history').locator('.set-icon', { hasText: '+' }).click();
+    await page.keyboard.press('Control+k');
+    assert.deepEqual(await row('history').locator('kbd').allTextContents(), ['Ctrl+K']);
+    // The same combo on another action: refused on save, nothing written.
+    await row('copyAnswer').locator('.set-icon', { hasText: '+' }).click();
+    await page.keyboard.press('Control+k');
+    await page.click('.set-btn.primary');
+    await page.waitForSelector('.set-row[data-action="copyAnswer"] .set-error');
+    assert.match(await page.textContent('.set-message'), /rien n’a été enregistré/);
+    assert.deepEqual(readConfig(), configBefore);
+    await row('copyAnswer').locator('.set-chip', { hasText: 'Ctrl+K' }).locator('.set-chip-x').click();
+    await page.click('.set-btn.primary');
+    await page.waitForFunction(() => document.querySelector('.set-message').dataset.kind === 'ok');
+    let saved = readConfig();
+    assert.deepEqual(saved.keybindings, { history: ['Ctrl+K'], modelMenu: ['Alt+Shift+M'] });
+    assert.equal(saved.language, 'fr');
+    assert.equal(saved.shortcut, false, 'unchanged values are not rewritten');
+    if (!WIN) assert.equal(fs.statSync(P.config).mode & 0o777, 0o600);
+    // Applied at once: the tooltip and the shortcut follow.
+    assert.equal(await page.getAttribute('#hist-btn', 'title'), 'Conversations (Ctrl+K)');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
+    await page.keyboard.press('Control+k');
+    await page.waitForSelector('.hist-item');
+    await page.keyboard.press('Escape');
+    // Unsaved change: a first Esc warns, the second discards it.
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    await page.locator('.set-switch').first().click();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.isVisible('#settings'), true);
+    assert.equal(await page.getAttribute('.set-message', 'data-kind'), 'warn');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
+    assert.deepEqual(readConfig(), saved);
+    // Reset everything to the defaults: the managed keys leave the file.
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    await page.click('.set-btn.outline');
+    await page.click('.set-btn.primary');
+    await page.waitForFunction(() => document.querySelector('.set-message').dataset.kind === 'ok');
+    saved = readConfig();
+    for (const k of ['keybindings', 'language', 'shortcut']) assert.ok(!(k in saved), k);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
 
     // Navigation and window opening are blocked (last: Playwright then waits for
     // a navigation that will never happen).

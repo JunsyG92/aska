@@ -27,6 +27,7 @@ function trayModel({ running = 0, agentLabels = [], visible = false } = {}) {
       { id: 'new', label: t('tray.newConversation'), enabled: true },
       { id: 'cancel', label: t('tray.cancel', { count: Math.max(count, 1) }), enabled: count > 0 },
       { type: 'separator' },
+      { id: 'settings', label: t('tray.settings'), enabled: true },
       { id: 'quit', label: t('tray.quit'), enabled: true },
     ],
   };
@@ -34,7 +35,7 @@ function trayModel({ running = 0, agentLabels = [], visible = false } = {}) {
 
 /**
  * Creates the icon. `electron` provides { Tray, Menu, nativeImage }; `actions`
- * maps each menu entry (toggle, new, cancel, quit) to a function.
+ * maps each menu entry (toggle, new, cancel, settings, quit) to a function.
  */
 function createTray(electron, actions, iconDir = ICON_DIR) {
   const { Tray, Menu, nativeImage } = electron;
