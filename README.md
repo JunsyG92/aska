@@ -164,7 +164,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Tab` | next agent |
 | `Shift+Tab` | next permission mode |
 | `Ctrl+Shift+M` | pick the model |
-| `Ctrl+T` (or `Ctrl+N`) | new tab |
+| `Ctrl+T` (or `Ctrl+N`, `Ctrl+L`) | new tab |
 | `Ctrl+W` | close the tab (twice if it is working: its request is cancelled) |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | next / previous tab (also `Ctrl+PgDn` / `Ctrl+PgUp`) |
 | `Ctrl+1` … `Ctrl+9` | go to tab 1 to 8, `Ctrl+9`: the last one |
@@ -175,6 +175,8 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Ctrl+M` | minimize to a pill / expand |
 | `Ctrl+P` | pin: the chat stays visible when you click elsewhere |
 | `Esc` | cancel the current request, otherwise hide |
+
+The shortcuts that use `Ctrl` can be changed with `"keybindings"` in the [configuration](#configuration); the tooltips and `aska --help` show the ones you chose.
 
 A click outside the chat hides it; the agent keeps working. To keep it visible, pin it (📌 or `Ctrl+P`): the choice is remembered. Minimized to a pill, it always stays visible. The window is moved with the handle on the left or the bottom bar, and its position is remembered.
 
@@ -344,6 +346,7 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
   "notifySound": true,
   "envPassthrough": [],
   "language": "auto",
+  "keybindings": { "history": "Ctrl+J", "togglePin": false },
   "agents": {
     "claude": { "model": "sonnet", "extraArgs": ["--max-turns", "20"] },
     "codex": { "bin": "/home/me/.npm-global/bin/codex", "models": ["model-name-a", "model-name-b"] },
@@ -361,6 +364,22 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 ```
 
 `hideOnBlur` sets the default behavior on an outside click (`true`: the chat hides; `false`: it stays, as if pinned); the pin in the UI changes it afterwards. `alwaysOnTop: false` lets the window go behind others. `tray: false` removes the system tray icon.
+
+`keybindings` changes the shortcuts inside the window. Each action given replaces its default shortcuts: a shortcut (`"Ctrl+J"`), a list (`["Ctrl+J", "Alt+H"]`), or `false` for none. A shortcut is written like `Ctrl+Shift+M`, with `Ctrl`, `Shift`, `Alt` or `Meta` (`Cmd`), then one character or `Tab`, `PageUp`, `PageDown`, `Home`, `End`, `Insert`, `F1` to `F12`. It needs `Ctrl`, `Alt` or `Meta`; the text editing shortcuts (`Ctrl+C`, `Ctrl+V`, `Ctrl+X`, `Ctrl+A`, `Ctrl+Z`, `Ctrl+Y`) and `Ctrl+1` to `Ctrl+9` are kept. A shortcut taken from another action's defaults is removed there. Actions and defaults:
+
+| Action | Default |
+| --- | --- |
+| `newTab` | `Ctrl+T`, `Ctrl+N`, `Ctrl+L` |
+| `closeTab` | `Ctrl+W` |
+| `nextTab` / `prevTab` | `Ctrl+Tab`, `Ctrl+PageDown` / `Ctrl+Shift+Tab`, `Ctrl+PageUp` |
+| `history` | `Ctrl+H` |
+| `pickDir` | `Ctrl+O` |
+| `modelMenu` | `Ctrl+Shift+M` |
+| `copyAnswer` | `Ctrl+Shift+C` |
+| `toggleMini` | `Ctrl+M` |
+| `togglePin` | `Ctrl+P` |
+
+`Enter`, `Esc`, `Tab`, the arrows and `Del` are fixed. An invalid or conflicting shortcut is ignored and reported in the window and in `aska --help`; an action left with no valid shortcut keeps its defaults.
 
 `language` picks the interface language (window, notifications, `aska --help`): `"auto"` (default) follows the system language (French for any `fr*` locale, English otherwise), `"en"` or `"fr"` forces one. Requests sent to the agents are not translated.
 

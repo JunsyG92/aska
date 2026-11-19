@@ -537,7 +537,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.deepEqual(await tabTitles(), ['Summarize main.js (deny)']);
 
     // French UI: "language" in the config, picked up by "aska --reload" and the next show.
-    fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'fr' }), { mode: 0o600 });
+    // Same for the shortcuts: history moved to Ctrl+J, model menu to Alt+Shift+M.
+    fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }), { mode: 0o600 });
     await app.evaluate(({ app }) => app.emit('second-instance', {}, ['--reload']));
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
@@ -547,7 +548,13 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await page.getAttribute('#input', 'placeholder'), 'Répondre à Claude…');
     assert.equal(await page.textContent('#cwd-name'), 'Espace temporaire');
     assert.equal(await page.getAttribute('#close-btn', 'title'), 'Masquer (Échap)');
-    await page.keyboard.press('Control+h');
+    // Tooltips show the configured shortcuts, in French.
+    assert.equal(await page.getAttribute('#hist-btn', 'title'), 'Conversations (Ctrl+J)');
+    assert.match(await page.getAttribute('#model', 'title'), /\(Alt\+Maj\+M( pour changer)?\)$/);
+    await page.keyboard.press('Control+h'); // no longer bound
+    await page.waitForTimeout(300);
+    assert.equal(await page.isHidden('#history'), true);
+    await page.keyboard.press('Control+j');
     await page.waitForSelector('.hist-item');
     assert.equal(await page.textContent('.hist-group'), "Aujourd'hui");
     assert.match(await page.locator('.hist-time').first().textContent(), /^\d\d:\d\d$/);
