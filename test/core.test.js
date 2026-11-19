@@ -380,7 +380,10 @@ test('model discovery: each CLI format, invalid entries dropped', async () => {
   );
   const viaCli = await discoverModels('cursor', async (args) => ({ ok: true, text: args[0] === '--list-models' ? 'a-1 - Model A\n' : '' }));
   assert.deepEqual(viaCli, { models: [{ id: 'a-1', label: 'Model A' }], error: null });
-  assert.match((await discoverModels('cursor', async () => ({ ok: false, text: 'not logged in' }))).error, /model list/);
+  // No list: what the CLI said (stderr first), else a generic message.
+  assert.equal((await discoverModels('cursor', async () => ({ ok: false, text: '', err: "Error: Authentication required. Run 'agent login'\n" }))).error, "Authentication required. Run 'agent login'");
+  assert.equal((await discoverModels('cursor', async () => ({ ok: false, text: 'not logged in' }))).error, 'not logged in');
+  assert.match((await discoverModels('cursor', async () => ({ ok: false, text: '' }))).error, /model list/);
   const home = tmp();
   fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'o-test' }] }), { mode: 0o600 });
   assert.deepEqual((await discoverModels('codex', null, { CODEX_HOME: home })).models, [{ id: 'o-test', label: null }]);
@@ -1011,6 +1014,85 @@ test('config: keybindings fill {key:…} in strings and in aska --help', () => {
   assert.match(out, /Commande « \/new » ignorée/);
   assert.match(out, /Alt\+Maj\+M\s+Choisir le modèle/);
   assert.ok(!/Ctrl\+H\s/.test(out), 'Ctrl+H no longer listed');
+});
+
+test('model discovery: Copilot through ACP, its empty session removed', async () => {
+  const { acpRequests, parseAcpSession, removeEmptyAcpSession, discoverModels } = require('../src/main/models');
+  const sid = '40970345-cc8d-4cc0-84b3-20da3af8a26b';
+  const cwd = path.join(tmp(), 'workspace');
+  const reqs = acpRequests(cwd).trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(reqs.map((r) => r.method), ['initialize', 'session/new']);
+  assert.deepEqual(reqs[1].params, { cwd, mcpServers: [] });
+  const answer = [
+    JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } }),
+    'not json',
+    JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: sid } }),
+    JSON.stringify({ jsonrpc: '2.0', id: 2, result: { sessionId: sid, models: { availableModels: [
+      { modelId: 'auto', name: 'Auto' },
+      { modelId: 'claude-sonnet-5.5', name: 'Claude Sonnet 5.5', _meta: {} },
+      { modelId: 'gpt-6.2-sol', name: 'gpt-6.2-sol' },
+      { modelId: '--evil', name: 'x' },
+      { modelId: 'auto', name: 'dup' },
+      null,
+    ] } } }),
+  ].join('\n');
+  assert.deepEqual(parseAcpSession(answer), {
+    sessionId: sid,
+    error: null,
+    models: [{ id: 'auto', label: 'Auto' }, { id: 'claude-sonnet-5.5', label: 'Claude Sonnet 5.5' }, { id: 'gpt-6.2-sol', label: null }],
+  });
+  assert.deepEqual(parseAcpSession(JSON.stringify({ id: 2, error: { message: 'Not authenticated' } })).error, 'Not authenticated');
+  assert.deepEqual(parseAcpSession('').models, []);
+
+  // The session Copilot saves for it: removed only if it is that one, in our folder, untouched.
+  const home = tmp();
+  const make = (id, { yamlCwd = cwd, summary = 0, extra } = {}) => {
+    const dir = path.join(home, '.copilot', 'session-state', id);
+    for (const d of ['checkpoints', 'files', 'research']) fs.mkdirSync(path.join(dir, d), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'workspace.yaml'), `id: ${id}\ncwd: ${yamlCwd}\nclient_name: github/acp\nsummary_count: ${summary}\n`);
+    fs.writeFileSync(path.join(dir, '.workspace-fork.lock'), '');
+    fs.writeFileSync(path.join(dir, 'checkpoints', 'index.md'), '# Checkpoints\n');
+    if (extra) fs.writeFileSync(path.join(dir, extra), 'x');
+    return dir;
+  };
+  const env = {};
+  let dir = make(sid);
+  assert.equal(removeEmptyAcpSession(sid, { cwd, env, home }), true);
+  assert.equal(fs.existsSync(dir), false);
+  const other = '11111111-2222-3333-4444-555555555555';
+  for (const [opts, why] of [
+    [{ yamlCwd: '/home/me/project' }, 'another folder'],
+    [{ summary: 2 }, 'used'],
+    [{ extra: 'events.jsonl' }, 'with events'],
+    [{ extra: 'files/notes.md' }, 'with a file'],
+  ]) {
+    dir = make(other, opts);
+    assert.equal(removeEmptyAcpSession(other, { cwd, env, home }), false, why);
+    assert.equal(fs.existsSync(dir), true, why);
+    fs.rmSync(dir, { recursive: true });
+  }
+  assert.equal(removeEmptyAcpSession('../../etc', { cwd, env, home }), false);
+  assert.equal(removeEmptyAcpSession(sid, { cwd, env, home }), false, 'absent');
+  // COPILOT_HOME moves its files.
+  const moved = tmp();
+  fs.mkdirSync(path.join(moved, 'session-state', sid, 'files'), { recursive: true });
+  fs.writeFileSync(path.join(moved, 'session-state', sid, 'workspace.yaml'), `id: ${sid}\ncwd: ${cwd}\nsummary_count: 0\n`);
+  assert.equal(removeEmptyAcpSession(sid, { cwd, env: { COPILOT_HOME: moved }, home }), true);
+
+  // Through discoverModels: the requests go on stdin, the session is cleaned up.
+  dir = make(sid);
+  let seen = null;
+  const found = await discoverModels('copilot', async (args, opts) => {
+    seen = { args, opts };
+    return { ok: true, text: answer, err: '' };
+  }, env, { cwd, home });
+  assert.deepEqual(seen.args, ['--acp']);
+  assert.equal(seen.opts.stdin, acpRequests(cwd));
+  assert.equal(found.models.length, 3);
+  assert.equal(found.error, null);
+  assert.equal(fs.existsSync(dir), false);
+  const notLogged = await discoverModels('copilot', async () => ({ ok: false, text: '', err: 'Error: No authentication information found.\n' }), env, { cwd, home });
+  assert.deepEqual(notLogged, { models: [], error: 'No authentication information found.' });
 });
 
 // ---------- settings panel ----------

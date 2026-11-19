@@ -263,12 +263,16 @@ The model is chosen per agent and the choice is remembered. "CLI default" lets t
 
 | Agent | Source of the list |
 | --- | --- |
-| Claude | the aliases `opus`, `sonnet`, `haiku`, plus those listed by `claude --help` |
-| Cursor | `cursor-agent --list-models` |
-| Copilot | the `--model` choices in `copilot help` |
+| Claude | the aliases `opus`, `sonnet`, `haiku`, plus those named by `claude --help` |
+| Cursor | `cursor-agent --list-models` (you must be signed in: `cursor-agent login`) |
+| Copilot | the list its ACP mode gives when a session opens (`copilot --acp`, in Aska's empty folder, nothing is sent) |
 | Codex | the catalog Codex caches in `~/.codex/` |
 
-The ↻ button queries the CLI again. If a CLI returns nothing, type the model name in the search field ("Use ...") or declare your models in the configuration with `"models"`.
+Claude Code only names aliases: next to each one, and next to "CLI default", the picker shows the full name the CLI reported in its answers (`opus` · `claude-opus-5-5`), once you have used it.
+
+Copilot saves the session opened to read its list; Aska removes it right away, but only if it is that session, in Aska's empty folder, and still empty.
+
+The ↻ button queries the CLI again. If a CLI returns nothing, the picker says why in the CLI's own words (not signed in, for instance); type the model name in the search field ("Use ...") or declare your models in the configuration with `"models"`.
 
 ## Permission modes
 
