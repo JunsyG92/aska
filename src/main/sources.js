@@ -203,7 +203,7 @@ function htmlToText(html) {
     else if (closing && HTML_BLOCK.has(name)) out += '\n';
   }
   const text = decodeEntities(out)
-    .replace(/[ \t\f\v ]+/g, ' ')
+    .replace(/[ \t\f\v\u00a0]+/g, ' ')
     .replace(/ ?\n ?/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
