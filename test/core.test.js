@@ -1442,6 +1442,10 @@ test('sources: text is extracted from pages and files, binary files are not sent
   assert.equal(page.title, 'My & page');
   assert.equal(page.text, 'Title\nOne line\ntwo <b> é\n- a\n- b');
   assert.ok(!/steal|color/.test(page.text));
+  // Tags split or nested to get around a filter, comments, unfinished tags: nothing but text comes out.
+  assert.equal(sources.htmlToText('<scr<script>x</script>ipt>alert(1)</script>Safe <!-- <p>hidden</p> --> text, a < b<p>end').text, 'xipt>alert(1)Safe text, a < bend');
+  assert.equal(sources.htmlToText('<!doctype html><SCRIPT type="x">evil()</SCRIPT ><p>Kept</p><style>never closed').text, 'Kept');
+  assert.equal(sources.htmlToText('before <a href="x"').text, 'before');
 
   const dir = tmp();
   try {
@@ -1474,6 +1478,9 @@ test('sources: a page is fetched without credentials, bounded, and only if it is
   assert.equal(seen[0].init.credentials, 'omit');
   assert.equal((await sources.fetchUrlSource('https://example.com/a', { fetchImpl: respond('{"a":1}', 'application/json') })).text, '{"a":1}');
   assert.match((await sources.fetchUrlSource('https://example.com/a', { fetchImpl: respond('x', 'image/png') })).error, /Not a text page \(image\/png\)/);
+  // "json" or "xml" somewhere in the type is not enough: the type itself must be a text one.
+  assert.match((await sources.fetchUrlSource('https://example.com/a', { fetchImpl: respond('x', 'application/x-notjson-binary') })).error, /Not a text page/);
+  assert.equal((await sources.fetchUrlSource('https://example.com/a', { fetchImpl: respond('<a/>', 'application/atom+xml; charset=utf-8') })).text, '<a/>');
   assert.match((await sources.fetchUrlSource('https://example.com/a', { fetchImpl: respond('gone', 'text/plain', 404) })).error, /error 404/);
   const big = await sources.fetchUrlSource('https://example.com/a', { fetchImpl: respond('x'.repeat(5000), 'text/plain'), maxBytes: 1000 });
   assert.equal(big.text.length, 1000);

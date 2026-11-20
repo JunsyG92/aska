@@ -149,26 +149,65 @@ function decodeEntities(s) {
   });
 }
 
-/** Readable text of an HTML page: no scripts, styles or tags; blocks become lines. */
+// Elements whose content is not text to read, and those that end a line.
+const HTML_SKIP = new Set(['script', 'style', 'noscript', 'template', 'svg', 'title']);
+const HTML_BLOCK = new Set(['p', 'div', 'section', 'article', 'header', 'footer', 'li', 'ul', 'ol', 'tr', 'table', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre']);
+
+/**
+ * Readable text of an HTML page: no scripts, styles or tags; blocks become lines.
+ * The page is scanned tag by tag (no rewriting by patterns, which a crafted page
+ * could get around); the result is plain text for a prompt, never shown as HTML.
+ */
 function htmlToText(html) {
   const s = String(html);
-  const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(s);
-  const title = m ? decodeEntities(m[1]).replace(/\s+/g, ' ').trim().slice(0, 200) : '';
-  const text = decodeEntities(
-    s
-      .replace(/<!--[\s\S]*?-->/g, ' ')
-      .replace(/<(script|style|noscript|template|svg|head|title)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-      .replace(/<(br|hr)\b[^>]*>/gi, '\n')
-      .replace(/<\/(p|div|section|article|header|footer|li|ul|ol|tr|table|h[1-6]|blockquote|pre)\s*>/gi, '\n')
-      .replace(/<li\b[^>]*>/gi, '- ')
-      .replace(/<\/(td|th)\s*>/gi, ' | ')
-      .replace(/<[^>]*>/g, '')
-  )
+  let out = '';
+  let title = '';
+  let i = 0;
+  while (i < s.length) {
+    const lt = s.indexOf('<', i);
+    if (lt < 0) {
+      out += s.slice(i);
+      break;
+    }
+    out += s.slice(i, lt);
+    if (s.startsWith('<!--', lt)) {
+      const end = s.indexOf('-->', lt + 4);
+      i = end < 0 ? s.length : end + 3;
+      continue;
+    }
+    const tag = /^<(\/?)([a-zA-Z][a-zA-Z0-9]*)/.exec(s.slice(lt, lt + 40));
+    if (!tag) {
+      // A "<" that opens no tag ("a < b") is text; "<!doctype…>" and "<?xml…?>" are not.
+      const decl = s[lt + 1] === '!' || s[lt + 1] === '?';
+      const end = decl ? s.indexOf('>', lt) : -1;
+      if (!decl) out += '<';
+      i = decl ? (end < 0 ? s.length : end + 1) : lt + 1;
+      continue;
+    }
+    const gt = s.indexOf('>', lt);
+    if (gt < 0) break; // unfinished tag: nothing readable after it
+    const closing = tag[1] === '/';
+    const name = tag[2].toLowerCase();
+    i = gt + 1;
+    if (!closing && HTML_SKIP.has(name)) {
+      // Everything up to the closing tag is left out (the title is kept apart).
+      const close = new RegExp(`</${name}\\b`, 'gi');
+      close.lastIndex = i;
+      const m = close.exec(s);
+      if (name === 'title' && !title && m) title = s.slice(i, m.index);
+      const end = m ? s.indexOf('>', m.index) : -1;
+      i = end < 0 ? s.length : end + 1;
+    } else if (name === 'br' || name === 'hr') out += '\n';
+    else if (name === 'li' && !closing) out += '- ';
+    else if ((name === 'td' || name === 'th') && closing) out += ' | ';
+    else if (closing && HTML_BLOCK.has(name)) out += '\n';
+  }
+  const text = decodeEntities(out)
     .replace(/[ \t\f\v\u00a0]+/g, ' ')
     .replace(/ ?\n ?/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  return { title, text };
+  return { title: decodeEntities(title).replace(/\s+/g, ' ').trim().slice(0, 200), text };
 }
 
 /** Binary content: a NUL byte, or bytes that are not UTF-8 text. */
@@ -226,6 +265,9 @@ async function readFileSource(file, { pdftotext = null } = {}) {
   return { text: text.trim(), mtimeMs, size, clipped: size > buf.length };
 }
 
+// Content types read as text: text/*, and the usual structured formats.
+const TEXT_TYPE = /^(text\/|application\/(json|xml|xhtml\+xml|javascript|yaml|x-yaml|[a-z0-9.-]+\+(json|xml))(;|$))/;
+
 /** Text of a page, fetched without cookies or credentials. Only text content is accepted. */
 async function fetchUrlSource(url, { fetchImpl = globalThis.fetch, timeoutMs = FETCH_TIMEOUT_MS, maxBytes = MAX_READ_BYTES } = {}) {
   try {
@@ -237,7 +279,7 @@ async function fetchUrlSource(url, { fetchImpl = globalThis.fetch, timeoutMs = F
     });
     if (!res.ok) return { error: t('sources.httpError', { status: res.status }) };
     const type = String(res.headers.get('content-type') || '').toLowerCase();
-    if (type && !/^text\/|json|xml|javascript|yaml|markdown/.test(type)) return { error: t('sources.unsupportedType', { type: type.split(';')[0] }) };
+    if (type && !TEXT_TYPE.test(type)) return { error: t('sources.unsupportedType', { type: type.split(';')[0] }) };
     const chunks = [];
     let total = 0;
     let clipped = false;
