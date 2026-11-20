@@ -96,6 +96,22 @@ function buildCommand(launch, argv) {
   return { command: comspec, args: ['/d', '/s', '/c', `""${launch.command}" ${args.join(' ')}"`], verbatim: true };
 }
 
+/** bin folders of the Node versions installed by nvm, newest first. */
+function nvmBins(versionsDir) {
+  let names;
+  try {
+    names = fs.readdirSync(versionsDir).filter((n) => /^v\d+\.\d+\.\d+$/.test(n));
+  } catch {
+    return [];
+  }
+  const num = (n) => n.slice(1).split('.').map(Number);
+  names.sort((a, b) => {
+    const [x, y] = [num(a), num(b)];
+    return y[0] - x[0] || y[1] - x[1] || y[2] - x[2];
+  });
+  return names.map((n) => path.join(versionsDir, n, 'bin'));
+}
+
 /**
  * Extended PATH: a graphical session does not always have the terminal's PATH,
  * so the usual locations of user-installed CLIs are added.
@@ -120,6 +136,8 @@ function extendedPath({ env = process.env, home = require('os').homedir(), platf
     ];
   } else {
     extra = ['.local/bin', 'bin', '.npm-global/bin', '.bun/bin', '.volta/bin'].map((d) => p.join(home, d));
+    // nvm: CLIs installed with "npm i -g" live in the folder of each Node version.
+    extra.push(...nvmBins(p.join(get('NVM_DIR') || p.join(home, '.nvm'), 'versions', 'node')));
     extra.push('/usr/local/bin');
     if (platform === 'darwin') extra.push('/opt/homebrew/bin'); // Homebrew on Apple Silicon
   }
@@ -128,4 +146,4 @@ function extendedPath({ env = process.env, home = require('os').homedir(), platf
   return parts.join(p.delimiter);
 }
 
-module.exports = { resolveLaunch, buildCommand, parseNpmShim, findOnPath, extendedPath, WIN };
+module.exports = { resolveLaunch, buildCommand, parseNpmShim, findOnPath, extendedPath, nvmBins, WIN };

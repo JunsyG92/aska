@@ -18,6 +18,7 @@ module.exports = {
     invalidPrompt: 'Prompt invalide',
     emptyPrompt: 'Prompt vide',
     invalidModel: 'Nom de modèle invalide',
+    modelRequired: "Choisissez d'abord un modèle {agent} ({key:modelMenu})",
     invalidSession: 'Identifiant de session invalide',
     modeNotOffered: '{agent} ne propose pas le mode « {mode} »',
     timeout: 'Arrêté : délai de {sec} s dépassé',
@@ -148,6 +149,7 @@ module.exports = {
     missingTarget: 'le lanceur {launcher} vise un fichier absent ({target})',
     unsupportedPath: 'chemin du lanceur non pris en charge : {path}',
     cmdInterpret: "ce CLI passe par cmd.exe, qui interpréterait l'argument « {arg} ». Indiquez son exécutable (.exe) ou son script (.js) avec \"bin\" dans la configuration.",
+    thinking: 'Réflexion…',
   },
 
   models: {

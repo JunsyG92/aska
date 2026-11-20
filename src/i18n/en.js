@@ -20,6 +20,7 @@ module.exports = {
     invalidPrompt: 'Invalid prompt',
     emptyPrompt: 'Empty prompt',
     invalidModel: 'Invalid model name',
+    modelRequired: 'Pick a model for {agent} first ({key:modelMenu})',
     invalidSession: 'Invalid session id',
     modeNotOffered: '{agent} does not offer the "{mode}" mode',
     timeout: 'Stopped: {sec} s timeout exceeded',
@@ -150,6 +151,7 @@ module.exports = {
     missingTarget: 'the launcher {launcher} targets a missing file ({target})',
     unsupportedPath: 'unsupported launcher path: {path}',
     cmdInterpret: 'this CLI goes through cmd.exe, which would interpret the argument "{arg}". Set its executable (.exe) or script (.js) with "bin" in the config.',
+    thinking: 'Thinking…',
   },
 
   models: {

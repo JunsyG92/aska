@@ -1385,3 +1385,80 @@ test('commands of the config: parsed, suggested and filled in', () => {
   assert.equal(commands.expand('Review the diff  ', 'focus on tests'), 'Review the diff\n\nfocus on tests');
   assert.equal(commands.expand('Review the diff', ''), 'Review the diff');
 });
+
+// ---------- Copilot: read-only shell commands ----------
+
+test('Copilot: a closed list of read commands, never the whole shell nor a command that writes', () => {
+  const { agents } = resolveAgents({});
+  for (const mode of ['read', 'edit']) {
+    const argv = buildInvocation(agents.copilot, mode, 'x').argv;
+    // "--deny-tool shell" would beat any allow: Copilot could no longer read anything.
+    assert.ok(!argv.some((a, i) => a === 'shell' && argv[i - 1] === '--deny-tool'), mode);
+    assert.ok(!argv.includes('--allow-all-tools'), mode);
+    const allowed = argv.filter((a, i) => argv[i - 1] === '--allow-tool' && a.startsWith('shell('));
+    assert.ok(allowed.includes('shell(cat)') && allowed.includes('shell(git status)'), mode);
+    for (const risky of ['find', 'sed', 'sort', 'rg', 'tree', 'rm', 'git push', 'git branch', 'git checkout', 'git reset']) {
+      assert.ok(!allowed.includes(`shell(${risky})`), `${mode}: ${risky}`);
+    }
+    // No wildcard command like git:* that would open all of git.
+    assert.ok(!allowed.some((a) => a.includes(':*') || a === 'shell'), mode);
+  }
+  const read = buildInvocation(agents.copilot, 'read', 'x').argv;
+  assert.ok(read.includes('write') && read[read.indexOf('write') - 1] === '--deny-tool', 'read-only: writing refused');
+  assert.ok(!read.includes('shell(git log)'), 'git log --output writes a file: not in read-only');
+  assert.ok(buildInvocation(agents.copilot, 'edit', 'x').argv.includes('shell(git log)'));
+});
+
+// ---------- Ollama ----------
+
+test('Ollama: positional model, required, read-only only', () => {
+  const { buildInvocation: build, resolveAgents: resolve } = require('../src/main/agents');
+  const o = resolve({}).agents.ollama;
+  assert.deepEqual(Object.keys(o.modes), ['read']);
+  const inv = build(o, 'read', 'Hello', { model: 'llama3.2:latest' });
+  assert.deepEqual(inv.argv, ['run', 'llama3.2:latest']);
+  assert.equal(inv.stdin, 'Hello');
+  assert.throws(() => build(o, 'read', 'x', { model: null }), /Pick a model for Ollama first/);
+  assert.throws(() => build(o, 'edit', 'x', { model: 'm' }), /does not offer/);
+  assert.throws(() => build(o, 'read', 'x', { model: '--insecure' }), /Invalid model/);
+});
+
+test('Ollama: the thinking block becomes an activity, the answer stays text', () => {
+  const { createOllamaParser } = require('../src/main/runner');
+  const run = (chunks) => {
+    const ev = [];
+    const p = createOllamaParser((e) => ev.push(e));
+    for (const c of chunks) p.push(c);
+    p.end();
+    return { text: ev.filter((e) => e.type === 'text').map((e) => e.text).join(''), acts: ev.filter((e) => e.type === 'activity').map((e) => e.text) };
+  };
+  // Thinking model, block split anywhere.
+  let r = run(['Think', 'ing...\nI must compare 9.9 and 9.11', '.\n...done thi', 'nking.\n\n9.9 is larger.\n']);
+  assert.equal(r.text, '9.9 is larger.\n');
+  assert.deepEqual(r.acts, ['Thinking…']);
+  // Model without thinking: everything is the answer, even a start that looks alike.
+  r = run(['Thin', 'k positive!']);
+  assert.equal(r.text, 'Think positive!');
+  assert.deepEqual(r.acts, []);
+  r = run(['Hello ', 'world']);
+  assert.equal(r.text, 'Hello world');
+});
+
+test('Ollama: list of installed models', () => {
+  const { parseOllamaList } = require('../src/main/models');
+  const out = 'NAME                ID              SIZE      MODIFIED\nllama3.2:latest     a80c4f17acd5    2.0 GB    3 weeks ago\nqwen3:8b            500a1f067a9f    5.2 GB    2 days ago\n';
+  assert.deepEqual(parseOllamaList(out), [
+    { id: 'llama3.2:latest', label: 'llama3.2 · 2.0 GB' },
+    { id: 'qwen3:8b', label: 'qwen3:8b · 5.2 GB' },
+  ]);
+  assert.deepEqual(parseOllamaList('Error: could not connect to ollama app, is it running?\n'), []);
+  assert.deepEqual(parseOllamaList('NAME    ID    SIZE    MODIFIED\n'), []);
+});
+
+test('extended PATH: Node versions installed by nvm, newest first', () => {
+  const { nvmBins } = require('../src/main/launch');
+  const d = tmp();
+  for (const v of ['v18.20.4', 'v22.22.0', 'v22.3.1', 'not-a-version']) fs.mkdirSync(path.join(d, v, 'bin'), { recursive: true });
+  assert.deepEqual(nvmBins(d).map((p) => path.basename(path.dirname(p))), ['v22.22.0', 'v22.3.1', 'v18.20.4']);
+  assert.deepEqual(nvmBins(path.join(d, 'absent')), []);
+});
