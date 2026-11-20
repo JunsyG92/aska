@@ -24,6 +24,7 @@ driven by their official CLIs. Linux, macOS and Windows.
 ## At a glance
 
 - ⌨️ **`Ctrl+Alt+Space`** opens the window, wherever you are. `Tab` switches agent, `Enter` sends.
+- ✂️ **Ask about what you selected**: `Ctrl+Alt+Shift+Space` opens Aska with the text selected in any window quoted in the field, ready for your question.
 - 💬 **A real conversation thread**: each message keeps the context of the previous ones, even if you switch agents along the way.
 - 🗂️ **Tabs that work in parallel**: one conversation per topic, and Claude can think in one while you ask Codex something in another.
 - 🔌 **Your CLIs, your accounts**: Aska calls no API and stores no key. It runs the CLIs already installed and signed in on your machine, with their MCP servers and skills.
@@ -107,13 +108,13 @@ You need **Node.js ≥ 20** and at least one agent CLI installed and signed in:
 
 ```sh
 git clone https://github.com/JunsyG92/aska.git && cd aska
-./scripts/install.sh                    # X11: global shortcut Ctrl+Alt+Space
-./scripts/install.sh --gnome-shortcut   # GNOME / Wayland: shortcut registered in GNOME
+./scripts/install.sh                    # X11: global shortcuts Ctrl+Alt+Space and Ctrl+Alt+Shift+Space
+./scripts/install.sh --gnome-shortcut   # GNOME / Wayland: shortcuts registered in GNOME
 aska --hidden &                         # or log in again (autostart)
 ```
 
 - **Ubuntu 24.04+**: the script offers to configure the Electron sandbox (asks for your `sudo` password). Without it, Aska does not start; `--sandbox-fix` does it without asking.
-- **Wayland**: an application cannot always grab a global shortcut. If `Ctrl+Alt+Space` does nothing, bind the command `aska --toggle` to a shortcut in your desktop's keyboard settings (KDE, Sway, Hyprland...) and set `"shortcut": false` in the configuration.
+- **Wayland**: an application cannot always grab a global shortcut. If `Ctrl+Alt+Space` does nothing, bind the command `aska --toggle` to a shortcut in your desktop's keyboard settings (KDE, Sway, Hyprland...) and set `"shortcut": false` in the configuration. Same for `Ctrl+Alt+Shift+Space`: bind `aska --selection` and set `"selectionShortcut": false`.
 - **Wayland**: the `aska` command runs Aska through XWayland (`--ozone-platform=x11`). As a native Wayland client, the window gets no keyboard focus when a shortcut shows it on GNOME, and hides as soon as you drag it. `aska --ozone-platform=wayland` still forces native Wayland. If you installed Aska before this change, run `./scripts/install.sh` again to update the command, then `aska --restart`.
 
 ### macOS
@@ -151,6 +152,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | Command | Effect |
 | --- | --- |
 | `aska` / `aska --toggle` | shows or hides the window (starts the app if needed) |
+| `aska --selection` | shows the window with the selected text quoted in the field (see [Ask about the selection](#ask-about-the-selection)) |
 | `aska --hidden` | starts in the background |
 | `aska --reload` | reloads the configuration |
 | `aska --restart` | restarts Aska (after an update) |
@@ -162,6 +164,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | Key | Action |
 | --- | --- |
 | `Ctrl+Alt+Space` | show / hide the window (global shortcut, configurable) |
+| `Ctrl+Alt+Shift+Space` | ask about the text selected in another window (global shortcut, configurable) |
 | `Enter` | send · `Shift+Enter`: new line |
 | `Tab` | next agent |
 | `Shift+Tab` | next permission mode |
@@ -212,11 +215,20 @@ Your own commands go in `"commands"` in the [configuration](#configuration): a n
 
 Only `/word` followed by a space or the end is a command: `/etc/hosts, what is it?` is a message. To send a message that starts with a command name (an agent's own `/review`, say), double the slash: `//review` sends `/review`.
 
+### Ask about the selection
+
+Select some text anywhere (a page, an error in a terminal, a mail), then press `Ctrl+Alt+Shift+Space`: Aska shows up with that text quoted in the field (`> ` in front of each line), above your draft, and you type the question. Nothing is sent until you press `Enter`.
+
+- **Linux**: the highlighted text (the primary selection), no need to copy it. If nothing is highlighted, the clipboard, and the window says so.
+- **macOS and Windows**: they have no primary selection: copy the text first (`Cmd+C` / `Ctrl+C`), then press the shortcut.
+- The text is cleaned (control characters and terminal colors dropped) and cut at 20,000 characters.
+- `"selectionShortcut"` in the configuration (or the settings) changes it; `false` removes it. `aska --selection` does the same from a script or a desktop shortcut.
+
 ## Settings
 
-`Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in two tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcut, the shortcuts inside the window (press the keys to record one), and the fixed keys. **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
+`Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in two tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcuts (show / hide, ask about the selection), the shortcuts inside the window (press the keys to record one), and the fixed keys. **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
 
-- On GNOME, the global shortcut is the "Aska" entry of the GNOME custom keyboard shortcuts (`aska --toggle`): the settings change it there, since an application cannot grab a global shortcut under Wayland.
+- On GNOME, the global shortcuts are the "Aska" (`aska --toggle`) and "Aska (selection)" (`aska --selection`) entries of the GNOME custom keyboard shortcuts: the settings change them there, since an application cannot grab a global shortcut under Wayland.
 - Agents, their programs and arguments, `envPassthrough` and the autonomous mode stay in `config.json`, edited by hand: they decide which programs run, so the window cannot change them.
 - A value the main process refuses (shortcut already used, reserved combo…) is shown next to its field, and nothing is saved.
 
@@ -373,6 +385,7 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 ```json
 {
   "shortcut": "Control+Alt+Space",
+  "selectionShortcut": "Control+Alt+Shift+Space",
   "defaultAgent": "claude",
   "defaultMode": "read",
   "allowAutoMode": false,
