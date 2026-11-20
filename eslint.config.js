@@ -39,4 +39,9 @@ module.exports = [
     files: ['src/renderer/**/*.js'],
     languageOptions: { sourceType: 'script', globals: { ...globals.browser } },
   },
+  {
+    // Audio thread of the microphone capture (AudioWorklet).
+    files: ['src/renderer/listen-worklet.js'],
+    languageOptions: { sourceType: 'script', globals: { ...globals.audioWorklet } },
+  },
 ];

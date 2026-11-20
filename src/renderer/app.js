@@ -42,6 +42,15 @@
   let menuOpen = false;
   let srcOpen = false; // documents and links of the conversation
   let sources = []; // [{ key, kind, label }]
+  // Listening to the microphone (see the "listening" section below).
+  let listenInfo = { ready: false, hint: null, answer: 'questions', tabId: null };
+  let capture = null; // recording in progress: { stop() }
+  let listenStarting = false;
+  let listenTab = null; // the tab that listens: what is heard and the answers go there
+  let listenAgent = null;
+  let heard = []; // last utterances: [{ text, question }]
+  let unanswered = []; // said since the last answer, for "answer now"
+  let heardQueue = null; // question heard while a request was running
   let pinned = false;
   let unread = 0;
   let tabList = []; // tabs: [{ id, title, color, running, unread, active }]
@@ -129,7 +138,9 @@
         ? []
         : view === 'history'
           ? [['↑ ↓', t('footer.select')], ['⏎', t('footer.open')], [t('keys.del'), t('footer.delete')], [t('keys.esc'), t('footer.back')]]
-          : [['Tab', t('footer.agent')], ['⇧ Tab', t('footer.mode')]];
+          : listeningHere()
+            ? [['⏎', t('footer.answer')], ...((keymap.listen || []).length ? [[keyLabels.listen, t('footer.stop')]] : [])]
+            : [['Tab', t('footer.agent')], ['⇧ Tab', t('footer.mode')]];
     keys.replaceChildren(
       ...items.map(([k, label]) => {
         const s = el('span');
@@ -147,6 +158,8 @@
         ? t('tabs.running', { count: others })
         : unread
         ? t('unread', { count: unread })
+        : capture
+        ? t('listen.on')
         : status.textContent;
   }
 
@@ -192,7 +205,7 @@
   }
 
   function syncOpen() {
-    const open = view !== 'chat' || thread.childElementCount > 0 || !activity.hidden || !notice.hidden;
+    const open = view !== 'chat' || thread.childElementCount > 0 || !activity.hidden || !notice.hidden || !$('heard').hidden;
     result.classList.toggle('open', open);
   }
 
@@ -375,7 +388,7 @@
   function fillMeta(metaEl, turn) {
     const secs = turn.durationMs ? t('duration', { secs: (turn.durationMs / 1000).toLocaleString(locale, { maximumFractionDigits: 1 }) }) : null;
     const docs = turn.sources ? t('sources.used', { count: turn.sources }) : null;
-    const parts = [turn.model, modes[turn.mode] ? modes[turn.mode].label : null, docs, secs].filter(Boolean);
+    const parts = [turn.heard ? t('listen.heard') : null, turn.model, modes[turn.mode] ? modes[turn.mode].label : null, docs, secs].filter(Boolean);
     metaEl.dataset.cancelled = t('cancelled');
     metaEl.replaceChildren(el('i'), el('b', null, turn.label), parts.length ? ' · ' + parts.join(' · ') : '');
   }
@@ -454,6 +467,9 @@
     warnings = s.warnings || [];
     customCommands = s.commands || [];
     setSources(s.conversation.sources || []);
+    listenInfo = s.listen || listenInfo;
+    // The listening tab was closed: the recording stops with it.
+    if (capture && listenInfo.tabId !== listenTab) stopListening(true);
     $('cwd-name').textContent = s.cwd;
     $('cwd').title = t('cwdTitle', { path: s.cwdIsScratch ? t('cwdScratch') : s.cwd });
     $('hist-btn').hidden = !s.historyEnabled;
@@ -529,6 +545,7 @@
     } else setActivity('');
     autosize();
     setKeys();
+    syncListen();
   }
 
   async function newTab() {
@@ -582,11 +599,11 @@
    * denied actions), which leaves the field as it is. A "/" command is run by the
    * window and never reaches the agent (see commands.js).
    */
-  async function submit(trust, direct) {
+  async function submit(trust, direct, isHeard) {
     let prompt;
     let typed; // as typed, for the recall with ↑
     let model; // model for this request only (command of the config), undefined: the chosen one
-    if (pendingTrust) ({ prompt, typed, model, direct } = pendingTrust);
+    if (pendingTrust) ({ prompt, typed, model, direct, isHeard } = pendingTrust);
     else if (direct) prompt = typed = direct;
     else {
       typed = input.value.trim();
@@ -621,11 +638,14 @@
     const a = agent();
     if (running || !prompt || !a) return;
     if (view === 'history') showHistory(false);
-    const req = { tabId: convId, agentId, mode, prompt, trust };
+    // Something heard is only read and answered, whatever the mode of the tab.
+    const runMode = isHeard ? 'read' : mode;
+    const req = { tabId: convId, agentId, mode: runMode, prompt, trust };
     if (model !== undefined) req.model = model;
+    if (isHeard) req.heard = true;
     const res = await api.run(req);
     if (res.needsTrust) {
-      pendingTrust = { prompt, typed, model, direct };
+      pendingTrust = { prompt, typed, model, direct, isHeard };
       confirmBox.dataset.mode = res.mode;
       const what = t(res.mode === 'auto' ? 'trust.editAndRun' : 'trust.editFiles');
       $('confirm-text').textContent = t(res.reason === 'content' ? 'trust.content' : 'trust.allow', { agent: res.agent, cwd: res.cwd, what });
@@ -645,7 +665,7 @@
     // The request joins the thread and the field clears for the next message.
     runId = res.id;
     running = true;
-    if (history[history.length - 1] !== typed) history.push(typed);
+    if (!isHeard && history[history.length - 1] !== typed) history.push(typed);
     lastPrompt = prompt;
     histIdx = -1;
     if (!direct) {
@@ -655,7 +675,7 @@
     }
     showNotice('');
     thread.querySelectorAll('.notice .rerun').forEach((b) => b.remove()); // only on the last turn
-    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode, prompt, answer: '', status: 'running', sources: sources.length }, false);
+    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode: runMode, prompt, answer: '', status: 'running', sources: sources.length, heard: !!isHeard }, false);
     live.node.classList.add('live');
     turnCount += 1;
     panel.dataset.state = 'running';
@@ -670,6 +690,12 @@
 
   function onRunEvent(ev) {
     if (ev.type === 'end' && ev.tabs) setTabs(ev.tabs);
+    // A question heard while the listening tab was answering is asked once it is done.
+    if (ev.type === 'end' && ev.tabId === listenTab && heardQueue) {
+      const next = heardQueue;
+      heardQueue = null;
+      setTimeout(() => askHeard(next), 0);
+    }
     if (ev.tabId !== convId || ev.id !== runId || !live) return;
     switch (ev.type) {
       case 'text':
@@ -871,6 +897,9 @@
       case 'sources':
         done();
         return openSources();
+      case 'listen':
+        done();
+        return toggleListen();
       case 'retry':
         if (running) return busy();
         if (!lastPrompt) return setStatus(t('commands.noRetry'), 'err');
@@ -1038,6 +1067,127 @@
     }
   }
 
+  // ---------- listening (recording: listen.js; transcription: the main process) ----------
+
+  const heardBox = $('heard');
+  const listenBtn = $('listen-btn');
+
+  function listeningHere() {
+    return !!capture && listenTab === convId && view === 'chat';
+  }
+
+  function syncListen() {
+    listenBtn.setAttribute('aria-pressed', String(!!capture));
+    listenBtn.title = t(capture ? 'listen.stopTitle' : 'listen.title');
+    heardBox.hidden = !listeningHere();
+    if (!heardBox.hidden) {
+      const lines = heard.length
+        ? heard.slice(-3).map((h) => el('p', h.question ? 'ask' : null, h.text))
+        : [el('p', 'wait', t('listen.waiting'))];
+      $('heard-lines').replaceChildren(...lines);
+    }
+    syncOpen();
+    syncMini();
+    setKeys();
+    scrollEnd(false);
+  }
+
+  async function startListening() {
+    if (capture || listenStarting || mini || pendingTrust || view !== 'chat' || !agent()) return;
+    listenStarting = true;
+    try {
+      const tab = convId;
+      const res = await api.listenStart(tab);
+      if (res.error) return showNotice(res.error, res.setup ? 'warn' : 'error');
+      let rec;
+      try {
+        rec = await window.AskaListen.start({ onSegment: onUtterance, onLevel });
+      } catch (e) {
+        await api.listenStop();
+        return showNotice(t(e && e.name === 'NotFoundError' ? 'listen.noMic' : 'listen.micDenied'), 'error');
+      }
+      capture = rec;
+      listenTab = tab;
+      listenAgent = agentId;
+      listenInfo = { ...listenInfo, answer: res.answer, tabId: tab };
+      heard = [];
+      unanswered = [];
+      heardQueue = null;
+      showNotice('');
+      setStatus(t('listen.on'), 'ok');
+      syncListen();
+    } finally {
+      listenStarting = false;
+    }
+  }
+
+  function stopListening(quiet) {
+    if (!capture) return;
+    const rec = capture;
+    capture = null;
+    rec.stop(); // what was being said is still transcribed, and kept with the conversation
+    api.listenStop();
+    listenTab = null;
+    heardQueue = null;
+    listenInfo = { ...listenInfo, tabId: null };
+    heardBox.style.removeProperty('--level');
+    if (!quiet) setStatus(t('listen.off'));
+    syncListen();
+  }
+
+  function toggleListen() {
+    if (capture) stopListening();
+    else startListening();
+    input.focus();
+  }
+
+  function onLevel(level, speaking) {
+    heardBox.style.setProperty('--level', level.toFixed(2));
+    heardBox.classList.toggle('speaking', speaking);
+  }
+
+  // One utterance was recorded: the main process transcribes it and says whether it sounds like a question.
+  async function onUtterance(pcm) {
+    const tab = listenTab;
+    const res = await api.listenAudio(pcm);
+    if (!capture || listenTab !== tab) return;
+    if (res.error) return setStatus(res.error, 'err');
+    if (res.dropped || !res.text) return;
+    heard.push({ text: res.text, question: !!res.question });
+    if (heard.length > 20) heard.shift();
+    unanswered.push(res.text);
+    if (unanswered.length > 4) unanswered.shift();
+    syncListen();
+    if (res.question && listenInfo.answer === 'questions') askHeard(res.text);
+  }
+
+  // Asks the agent of the listening tab what to answer. One request at a time: a
+  // question heard meanwhile waits, and only the most recent one is kept.
+  async function askHeard(text) {
+    if (!capture || !text) return;
+    unanswered = [];
+    if (listenTab === convId) {
+      if (running || pendingTrust) heardQueue = text;
+      else {
+        listenAgent = agentId;
+        submit(undefined, text, true);
+      }
+      return;
+    }
+    // The user is looking at another tab: the answer arrives in the listening one.
+    if (tabList.some((x) => x.id === listenTab && x.running)) heardQueue = text;
+    else await api.run({ tabId: listenTab, agentId: listenAgent, mode: 'read', prompt: text, heard: true });
+  }
+
+  // Enter on the empty field: answer what was just said, question or not.
+  function answerNow() {
+    const text = unanswered.join(' ') || (heard.length ? heard[heard.length - 1].text : '');
+    if (!text) return setStatus(t('listen.nothingHeard'));
+    askHeard(text);
+  }
+
+  listenBtn.addEventListener('click', toggleListen);
+
   // ---------- conversation history ----------
 
   const histList = $('hist-list');
@@ -1155,8 +1305,7 @@
       scrollEnd(true);
       input.focus();
     }
-    syncOpen();
-    setKeys();
+    syncListen();
   }
 
   async function showHistory(on) {
@@ -1177,8 +1326,7 @@
       scrollEnd(true);
       input.focus();
     }
-    syncOpen();
-    setKeys();
+    syncListen();
   }
 
   async function openConversation(id) {
@@ -1257,6 +1405,11 @@
     if (is('togglePin') && !mini) {
       e.preventDefault();
       setPinned(!pinned, true);
+      return;
+    }
+    if (is('listen') && !mini && view === 'chat' && !pendingTrust) {
+      e.preventDefault();
+      toggleListen();
       return;
     }
     // Settings: the form keeps the keyboard; Esc (or the settings shortcut) closes it.
@@ -1376,7 +1529,8 @@
       else cycleAgent(1);
     } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      submit();
+      if (!input.value.trim() && listeningHere()) answerNow();
+      else submit();
     } else if (is('modelMenu')) {
       e.preventDefault();
       openModelMenu();

@@ -1,5 +1,6 @@
 'use strict';
-const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell, Tray, Menu, nativeImage, systemPreferences } = require('electron');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -9,6 +10,7 @@ const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('
 const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const src = require('./sources');
+const lst = require('./listen');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
 const sec = require('./security');
@@ -53,6 +55,13 @@ let savedPos = null; // anchor chosen by the user: left edge and BOTTOM edge of 
 let saveTimer = null;
 let store = null; // saved conversations
 let loader = null; // text of the documents and links attached to conversations (see sources.js)
+// Listening to the microphone (see listen.js): the tab that listens, the program
+// that transcribes, and the utterances waiting for it (one at a time).
+let listening = null; // { tabId }
+let transcriber = { error: '' };
+let transcribing = Promise.resolve();
+let transcribeWaiting = 0;
+let utteranceSeq = 0;
 let tabs = null; // open tabs (see tabs.js); each one carries its conversation and its running request
 let savedTabs = null; // saved tabs, reopened at startup
 const picked = {}; // model chosen per agent: { claude: 'opus' } (missing = default)
@@ -141,6 +150,11 @@ function loadEverything() {
       showWindow();
     },
   });
+  transcriber = resolveTranscriber();
+  // Recordings left by an interrupted transcription.
+  try {
+    for (const f of fs.readdirSync(P.listenDir)) if (/^utterance-.*\.wav$/.test(f)) fs.rmSync(path.join(P.listenDir, f), { force: true });
+  } catch { /* nothing recorded yet */ }
   store = new ConversationStore(P.conversations, { persist: cfg.savePrompts });
   // PDFs are read through pdftotext when it is installed (same checks as an agent's binary).
   const pdftotext = sec.resolveBinary(['pdftotext'], { envPath: searchPath() }).path || null;
@@ -151,6 +165,43 @@ function loadEverything() {
     tabs.restore(cfg.savePrompts && savedTabs ? savedTabs.ids : [], savedTabs && savedTabs.active, cwd);
     syncCwd();
   } else tabs.store = store; // --reload
+}
+
+// The program that turns an utterance into text: resolved and checked like an agent's binary.
+function resolveTranscriber() {
+  const spec = lst.transcriberSpec(cfg.listen);
+  if (spec.error) return { error: spec.error };
+  const r = sec.resolveBinary(spec.names || [], { override: spec.override, envPath: searchPath() });
+  if (!r.path) return { error: t('listen.binNotFound', { name: spec.label, error: r.error }) };
+  const l = resolveLaunch(r.path, { envPath: searchPath() });
+  if (l.error) return { error: t('listen.binNotFound', { name: spec.label, error: l.error }) };
+  return { launch: l, args: spec.args, label: spec.label };
+}
+
+/** Transcribes one utterance (raw samples): written to a private file, removed as soon as it is read. */
+function transcribe(pcm) {
+  const file = path.join(P.listenDir, `utterance-${process.pid}-${++utteranceSeq}.wav`);
+  try {
+    sec.ensurePrivateDir(P.listenDir);
+    fs.writeFileSync(file, lst.wavFile(pcm), { mode: 0o600 });
+  } catch (e) {
+    return Promise.resolve({ error: t('listen.failed', { error: e.message }) });
+  }
+  let text = '';
+  const h = launchAgent(
+    { launch: transcriber.launch, env: [] },
+    transcriber.args(file),
+    { cwd: fsRealWorkspace(), stdin: '', output: 'text', timeoutMs: 60000, maxBytes: 1024 * 1024 },
+    (ev) => {
+      if (ev.type === 'text') text += ev.text;
+    }
+  );
+  return h.done.then((res) => {
+    fs.rmSync(file, { force: true });
+    if (res.ok) return { text: lst.cleanTranscript(text) };
+    const why = res.reason === 'timeout' ? 'timeout' : res.error || (res.stderrTail || '').split('\n').pop() || `code ${res.code}`;
+    return { error: t('listen.failed', { error: String(why).slice(0, 300) }) };
+  });
 }
 
 // The working folder follows the active tab (a folder that is gone falls back to the scratch space).
@@ -240,6 +291,7 @@ function publicTurn(t) {
     notice: t.notice || null,
     durationMs: t.durationMs || 0,
     sources: Number.isInteger(t.sources) ? t.sources : 0,
+    heard: t.heard === true,
   };
 }
 
@@ -296,6 +348,8 @@ function publicState() {
     run: tabs.active().run ? { id: tabs.active().run.id } : null,
     conversation: { id: tabs.active().conv.id, title: tabs.active().conv.title, turns: tabs.active().conv.turns.map(publicTurn), sources: publicSources(tabs.active().conv) },
     tabs: publicTabs(),
+    // Listening: whether a transcriber is set up (else how to), and the tab that listens.
+    listen: { ready: !transcriber.error, hint: transcriber.error || null, answer: cfg.listen.answer, tabId: listening ? listening.tabId : null },
     historyEnabled: cfg.savePrompts,
     pinned,
     unread,
@@ -351,8 +405,11 @@ function createWindow() {
   // Click outside: the chat hides, unless it is pinned or collapsed into a pill
   // (whose whole point is to stay visible while you work).
   win.on('blur', () => {
-    if (!pinned && !mini && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
+    // While listening the chat stays in view: its answers are meant to be read at once.
+    if (!pinned && !mini && !listening && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
   });
+  // A page that reloads no longer records.
+  win.webContents.on('did-start-loading', () => { listening = null; });
   win.on('show', refreshTray);
   win.on('hide', refreshTray);
   win.on('close', (e) => {
@@ -602,6 +659,9 @@ function startRun(req, loaded = []) {
     return { error: t('errors.autoDisabled') };
   }
   if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 100000) return { error: t('errors.invalidPrompt') };
+  // Something heard while listening: the agent only reads and answers, whatever the tab's mode.
+  const heard = req.heard === true;
+  if (heard && mode !== 'read') return { error: t('listen.readOnly') };
 
   const tabCwd = typeof conv.cwd === 'string' && !sec.checkWorkdir(conv.cwd, 'read').error ? conv.cwd : P.workspace;
   const dir = sec.checkWorkdir(tabCwd, mode, os.homedir(), [fsRealWorkspace()]);
@@ -629,8 +689,12 @@ function startRun(req, loaded = []) {
   const canResume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length && !(sess.sources && !docs);
   const resume = canResume ? sess.id : null;
   const sendDocs = docs && !(resume && sess.sources === docsHash);
-  const body = resume ? prompt : buildContextPrompt(conv.turns, prompt);
-  const fullPrompt = sendDocs ? src.withSources(docs, body, { hasHistory: body !== prompt }) : body;
+  // What was heard while listening goes along too: all of it, or what the resumed session lacks.
+  const said = lst.buildHeardBlock(conv.heard, { after: resume && Number.isInteger(sess.heard) ? sess.heard : 0 });
+  const ask = heard ? lst.liveRequest(prompt) : prompt;
+  const body = resume ? ask : buildContextPrompt(conv.turns, ask);
+  const before = [sendDocs ? docs : '', said.block].filter(Boolean).join('\n\n');
+  const fullPrompt = src.withSources(before, body, { hasHistory: heard || body !== ask });
   const used = docs ? loaded.filter((l) => !l.error) : [];
   // A "/" command of the config may name a model for this request only (null: the CLI's default).
   let model = modelFor(agent);
@@ -649,6 +713,7 @@ function startRun(req, loaded = []) {
   const thread = conv;
   const turn = { agent: agent.id, label: agent.label, model, mode, prompt, answer: '', status: 'running', ts: new Date().toISOString() };
   if (used.length) turn.sources = used.length;
+  if (heard) turn.heard = true;
   thread.turns.push(turn);
   thread.cwd = dir.path;
   let sessionId = null;
@@ -707,7 +772,7 @@ function startRun(req, loaded = []) {
       };
     }
     // The CLI session only "covers" the thread if this turn succeeded.
-    if (ok && sessionId && agent.resumeFlag) thread.sessions[agent.id] = { id: sessionId, cwd: dir.path, upTo: thread.turns.length, sources: docsHash };
+    if (ok && sessionId && agent.resumeFlag) thread.sessions[agent.id] = { id: sessionId, cwd: dir.path, upTo: thread.turns.length, sources: docsHash, heard: said.upTo };
     else if (!ok) delete thread.sessions[agent.id];
     store.save(thread);
     sec.appendAudit(P.audit, {
@@ -722,6 +787,7 @@ function startRun(req, loaded = []) {
       prompt: cfg.savePrompts ? prompt : undefined,
       // What was sent along with the request (documents of the conversation).
       sources: used.length ? (cfg.savePrompts ? used.map((l) => (l.source.kind === 'url' ? l.source.url : l.source.path)) : used.length) : undefined,
+      heard: heard || undefined,
       result: res.reason,
       code: res.code ?? null,
       durationMs: res.durationMs,
@@ -828,6 +894,7 @@ function registerIpc() {
   });
   // ----- tabs -----
   const tabChanged = (extra = {}) => {
+    if (listening && !tabs.get(listening.tabId)) listening = null; // its tab was closed
     syncCwd();
     saveState();
     return { ...publicState(), ...extra };
@@ -926,6 +993,39 @@ function registerIpc() {
       error: l.error || null,
       note: l.unreadable || l.stale || null,
     }));
+  });
+  // ----- listening to the microphone -----
+  handle('aska:listen-start', async (tabId) => {
+    const tab = typeof tabId === 'string' ? tabs.get(tabId) : null;
+    if (!tab) return { error: t('errors.tabNotFound') };
+    if (transcriber.error) return { error: transcriber.error, setup: true };
+    // macOS asks the user once; a test microphone (Chromium's fake device) needs no such approval.
+    if (process.platform === 'darwin' && !app.commandLine.hasSwitch('use-fake-device-for-media-stream')) {
+      const granted = await systemPreferences.askForMediaAccess('microphone').catch(() => false);
+      if (!granted) return { error: t('listen.micDenied') };
+    }
+    listening = { tabId: tab.id };
+    return { ok: true, answer: cfg.listen.answer };
+  });
+  handle('aska:listen-stop', () => {
+    listening = null;
+    return true;
+  });
+  // One utterance, as raw samples: transcribed, then added to what the conversation heard.
+  handle('aska:listen-audio', (data) => {
+    const tab = listening ? tabs.get(listening.tabId) : null;
+    const pcm = lst.checkPcm(data);
+    if (!tab || !pcm || transcriber.error) return { error: t('listen.invalidAudio') };
+    if (transcribeWaiting >= 3) return { dropped: true }; // the transcriber cannot keep up
+    transcribeWaiting += 1;
+    const job = transcribing.then(() => transcribe(pcm)).finally(() => { transcribeWaiting -= 1; });
+    transcribing = job.catch(() => {});
+    return job.then((r) => {
+      if (r.error || !r.text) return r.error ? { error: r.error } : { text: '' };
+      lst.addHeard(tab.conv, r.text);
+      store.save(tab.conv);
+      return { text: r.text, question: lst.isQuestion(r.text) };
+    });
   });
   handle('aska:settings-get', () => settingsGet());
   handle('aska:settings-save', (values) => settingsSave(values));
@@ -1110,9 +1210,14 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     try {
       sec.writePrivate(P.run, JSON.stringify({ pid: process.pid, build: BUILD, version: app.getVersion(), startedAt: new Date().toISOString() }));
     } catch { /* convenience only */ }
-    // No web permission (camera, geolocation, web notifications…) is granted.
-    session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
-    session.defaultSession.setPermissionCheckHandler(() => false);
+    // No web permission (camera, geolocation, web notifications…) is granted, except the
+    // microphone alone, to Aska's own window, while the user has it listening.
+    const micOnly = (wc) => !!listening && !!win && wc === win.webContents;
+    session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => {
+      const audioOnly = Array.isArray(details && details.mediaTypes) && details.mediaTypes.length === 1 && details.mediaTypes[0] === 'audio';
+      cb(perm === 'media' && audioOnly && micOnly(wc));
+    });
+    session.defaultSession.setPermissionCheckHandler((wc, perm, _origin, details) => perm === 'media' && !!details && details.mediaType === 'audio' && micOnly(wc));
 
     loadEverything();
     registerIpc();
