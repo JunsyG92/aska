@@ -1,6 +1,7 @@
-# Continuous integration: lint, unit and end-to-end tests on Linux and
-# Windows, Windows installation. The "CI" job sums it all up: it is the only
-# check to make required in branch protection.
+# Continuous integration: lint, dependencies, unit and end-to-end tests on Linux,
+# Windows and macOS, installation. The security review of PRs is in pr-review.yml.
+# The "CI" job sums it all up: it is the only check to make required in branch
+# protection.
 name: CI
 
 on:
@@ -58,6 +59,20 @@ jobs:
             } else {
               core.info(`Valid title: ${title}`);
             }
+
+  dependencies:
+    name: Dependencies
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Refuses an added or updated dependency that has a known vulnerability.
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: moderate
 
   tests:
     name: Tests (${{ matrix.os }})
@@ -155,7 +170,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [lint, pr-title, tests]
+    needs: [lint, pr-title, dependencies, tests]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

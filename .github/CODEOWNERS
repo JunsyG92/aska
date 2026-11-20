@@ -5,6 +5,9 @@
 *                         @JunsyG92
 
 # Sensitive files: security of agent execution and the delivery pipeline.
-/src/main/security.js     @JunsyG92
-/src/main/launch.js       @JunsyG92
+/src/main/                @JunsyG92
+/src/renderer/index.html  @JunsyG92
+/scripts/                 @JunsyG92
+/package.json             @JunsyG92
+/package-lock.json        @JunsyG92
 /.github/                 @JunsyG92
