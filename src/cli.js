@@ -100,6 +100,8 @@ function helpText(stream = process.stdout, env = process.env) {
     row(`${key.nextTab}, Ctrl+1…9`, t('cli.switchTab')),
     row(key.history, t('cli.history')),
     row(key.pickDir, t('cli.workingFolder')),
+    row(key.sources, t('cli.sources')),
+    row(key.listen, t('cli.listen')),
     row(key.toggleMini, t('cli.collapse')),
     row(key.togglePin, t('cli.pin')),
     row(t('cli.keys.copy'), t('cli.copyLast')),

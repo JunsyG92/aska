@@ -17,6 +17,7 @@
   const status = $('status');
   const keys = $('keys');
   const cmdMenu = $('cmd-menu');
+  const srcMenu = $('src-menu');
   const api = window.aska;
 
   let agents = [];
@@ -39,6 +40,17 @@
   let activityText = '';
   let view = 'chat'; // 'chat' | 'history' | 'settings'
   let menuOpen = false;
+  let srcOpen = false; // documents and links of the conversation
+  let sources = []; // [{ key, kind, label }]
+  // Listening to the microphone (see the "listening" section below).
+  let listenInfo = { ready: false, hint: null, answer: 'questions', tabId: null };
+  let capture = null; // recording in progress: { stop() }
+  let listenStarting = false;
+  let listenTab = null; // the tab that listens: what is heard and the answers go there
+  let listenAgent = null;
+  let heard = []; // last utterances: [{ text, question }]
+  let unanswered = []; // said since the last answer, for "answer now"
+  let heardQueue = null; // question heard while a request was running
   let pinned = false;
   let unread = 0;
   let tabList = []; // tabs: [{ id, title, color, running, unread, active }]
@@ -116,6 +128,8 @@
   function setKeys() {
     const items = view === 'settings'
       ? [[t('keys.esc'), t('footer.back')]]
+      : srcOpen
+      ? [['⏎', t('footer.add')], [t('keys.del'), t('footer.remove')], [t('keys.esc'), t('footer.close')]]
       : cmdOpen()
       ? [['↑ ↓', t('footer.select')], ['Tab', t('footer.complete')], ['⏎', t('footer.run')], [t('keys.esc'), t('footer.close')]]
       : running
@@ -124,7 +138,9 @@
         ? []
         : view === 'history'
           ? [['↑ ↓', t('footer.select')], ['⏎', t('footer.open')], [t('keys.del'), t('footer.delete')], [t('keys.esc'), t('footer.back')]]
-          : [['Tab', t('footer.agent')], ['⇧ Tab', t('footer.mode')]];
+          : listeningHere()
+            ? [['⏎', t('footer.answer')], ...((keymap.listen || []).length ? [[keyLabels.listen, t('footer.stop')]] : [])]
+            : [['Tab', t('footer.agent')], ['⇧ Tab', t('footer.mode')]];
     keys.replaceChildren(
       ...items.map(([k, label]) => {
         const s = el('span');
@@ -142,6 +158,8 @@
         ? t('tabs.running', { count: others })
         : unread
         ? t('unread', { count: unread })
+        : capture
+        ? t('listen.on')
         : status.textContent;
   }
 
@@ -187,7 +205,7 @@
   }
 
   function syncOpen() {
-    const open = view !== 'chat' || thread.childElementCount > 0 || !activity.hidden || !notice.hidden;
+    const open = view !== 'chat' || thread.childElementCount > 0 || !activity.hidden || !notice.hidden || !$('heard').hidden;
     result.classList.toggle('open', open);
   }
 
@@ -341,6 +359,7 @@
     const a = agent();
     if (running || !a || !a.canPickModel) return;
     if (menuOpen) return closeModelMenu();
+    if (srcOpen) closeSources();
     modelAll = a.models.map((id) => ({ id, label: null }));
     modelDefault = null;
     modelCurrent = a.model || null;
@@ -368,7 +387,8 @@
 
   function fillMeta(metaEl, turn) {
     const secs = turn.durationMs ? t('duration', { secs: (turn.durationMs / 1000).toLocaleString(locale, { maximumFractionDigits: 1 }) }) : null;
-    const parts = [turn.model, modes[turn.mode] ? modes[turn.mode].label : null, secs].filter(Boolean);
+    const docs = turn.sources ? t('sources.used', { count: turn.sources }) : null;
+    const parts = [turn.heard ? t('listen.heard') : null, turn.model, modes[turn.mode] ? modes[turn.mode].label : null, docs, secs].filter(Boolean);
     metaEl.dataset.cancelled = t('cancelled');
     metaEl.replaceChildren(el('i'), el('b', null, turn.label), parts.length ? ' · ' + parts.join(' · ') : '');
   }
@@ -446,6 +466,10 @@
     history = s.history || [];
     warnings = s.warnings || [];
     customCommands = s.commands || [];
+    setSources(s.conversation.sources || []);
+    listenInfo = s.listen || listenInfo;
+    // The listening tab was closed: the recording stops with it.
+    if (capture && listenInfo.tabId !== listenTab) stopListening(true);
     $('cwd-name').textContent = s.cwd;
     $('cwd').title = t('cwdTitle', { path: s.cwdIsScratch ? t('cwdScratch') : s.cwd });
     $('hist-btn').hidden = !s.historyEnabled;
@@ -498,6 +522,7 @@
     closeArmed = null;
     pendingTrust = null;
     confirmBox.hidden = true;
+    if (srcOpen) closeSources(true);
     if (view === 'history') showHistory(false);
     showNotice('');
     renderThread(s.conversation);
@@ -520,6 +545,7 @@
     } else setActivity('');
     autosize();
     setKeys();
+    syncListen();
   }
 
   async function newTab() {
@@ -573,11 +599,11 @@
    * denied actions), which leaves the field as it is. A "/" command is run by the
    * window and never reaches the agent (see commands.js).
    */
-  async function submit(trust, direct) {
+  async function submit(trust, direct, isHeard) {
     let prompt;
     let typed; // as typed, for the recall with ↑
     let model; // model for this request only (command of the config), undefined: the chosen one
-    if (pendingTrust) ({ prompt, typed, model, direct } = pendingTrust);
+    if (pendingTrust) ({ prompt, typed, model, direct, isHeard } = pendingTrust);
     else if (direct) prompt = typed = direct;
     else {
       typed = input.value.trim();
@@ -612,11 +638,14 @@
     const a = agent();
     if (running || !prompt || !a) return;
     if (view === 'history') showHistory(false);
-    const req = { tabId: convId, agentId, mode, prompt, trust };
+    // Something heard is only read and answered, whatever the mode of the tab.
+    const runMode = isHeard ? 'read' : mode;
+    const req = { tabId: convId, agentId, mode: runMode, prompt, trust };
     if (model !== undefined) req.model = model;
+    if (isHeard) req.heard = true;
     const res = await api.run(req);
     if (res.needsTrust) {
-      pendingTrust = { prompt, typed, model, direct };
+      pendingTrust = { prompt, typed, model, direct, isHeard };
       confirmBox.dataset.mode = res.mode;
       const what = t(res.mode === 'auto' ? 'trust.editAndRun' : 'trust.editFiles');
       $('confirm-text').textContent = t(res.reason === 'content' ? 'trust.content' : 'trust.allow', { agent: res.agent, cwd: res.cwd, what });
@@ -636,7 +665,7 @@
     // The request joins the thread and the field clears for the next message.
     runId = res.id;
     running = true;
-    if (history[history.length - 1] !== typed) history.push(typed);
+    if (!isHeard && history[history.length - 1] !== typed) history.push(typed);
     lastPrompt = prompt;
     histIdx = -1;
     if (!direct) {
@@ -646,7 +675,7 @@
     }
     showNotice('');
     thread.querySelectorAll('.notice .rerun').forEach((b) => b.remove()); // only on the last turn
-    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode, prompt, answer: '', status: 'running' }, false);
+    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode: runMode, prompt, answer: '', status: 'running', sources: sources.length, heard: !!isHeard }, false);
     live.node.classList.add('live');
     turnCount += 1;
     panel.dataset.state = 'running';
@@ -661,6 +690,12 @@
 
   function onRunEvent(ev) {
     if (ev.type === 'end' && ev.tabs) setTabs(ev.tabs);
+    // A question heard while the listening tab was answering is asked once it is done.
+    if (ev.type === 'end' && ev.tabId === listenTab && heardQueue) {
+      const next = heardQueue;
+      heardQueue = null;
+      setTimeout(() => askHeard(next), 0);
+    }
     if (ev.tabId !== convId || ev.id !== runId || !live) return;
     switch (ev.type) {
       case 'text':
@@ -754,7 +789,7 @@
 
   // Palette above the footer while a command is typed (not while recalling with ↑).
   function refreshPalette() {
-    const quiet = view !== 'chat' || mini || pendingTrust || menuOpen || histIdx !== -1 || input.value === cmdDismissed;
+    const quiet = view !== 'chat' || mini || pendingTrust || menuOpen || srcOpen || histIdx !== -1 || input.value === cmdDismissed;
     const items = quiet ? null : window.AskaCommands.suggest(input.value, cmdCtx());
     if (input.value !== cmdDismissed) cmdDismissed = null;
     const wasOpen = cmdOpen();
@@ -851,6 +886,20 @@
         done();
         return setStatus(t('commands.folder', { path: res.cwd }), 'ok');
       }
+      case 'add': {
+        if (!arg) {
+          done();
+          return pickSources();
+        }
+        if (await addSource(arg)) done();
+        return;
+      }
+      case 'sources':
+        done();
+        return openSources();
+      case 'listen':
+        done();
+        return toggleListen();
       case 'retry':
         if (running) return busy();
         if (!lastPrompt) return setStatus(t('commands.noRetry'), 'err');
@@ -882,6 +931,262 @@
     if (view === 'history') showHistory(false);
     await newTab();
   }
+
+  // ---------- documents and links (read by the main process, see sources.js) ----------
+
+  const srcList = $('src-list');
+  const srcInput = $('src-input');
+  let srcInfo = new Map(); // key -> what the main process read: { title, chars, error, note }
+  let srcSel = -1;
+  let srcError = ''; // why the last entry was refused, shown in the panel
+  const SRC_ICON = {
+    file: 'M4 2.5h5l3 3v8H4zM9 2.5v3h3',
+    url: 'M6.7 9.3a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.8.8M9.3 6.7a2.6 2.6 0 0 0-3.7 0L3.4 8.9a2.6 2.6 0 0 0 3.7 3.7l.8-.8',
+  };
+
+  function icon(d) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+    return svg;
+  }
+
+  function setSources(list) {
+    sources = list;
+    $('sources-count').textContent = list.length ? String(list.length) : '';
+    $('sources').classList.toggle('on', list.length > 0);
+    if (srcOpen) renderSources();
+  }
+
+  function highlightSource(i, scroll) {
+    const rows = srcList.children;
+    srcSel = rows.length ? Math.min(Math.max(i, -1), rows.length - 1) : -1;
+    [...rows].forEach((r, j) => {
+      r.classList.toggle('active', j === srcSel);
+      r.setAttribute('aria-selected', String(j === srcSel));
+    });
+    if (scroll && srcSel >= 0) rows[srcSel].scrollIntoView({ block: 'nearest' });
+  }
+
+  function renderSources() {
+    srcList.replaceChildren(
+      ...sources.map((s, i) => {
+        const info = srcInfo.get(s.key);
+        const row = el('div', 'src-item');
+        row.setAttribute('role', 'option');
+        const sub = !info
+          ? t('sources.loading')
+          : info.error || [info.title, info.chars ? t('sources.chars', { count: info.chars }) : null, info.note].filter(Boolean).join(' · ');
+        const del = el('button', 'src-del', t('sources.remove'));
+        del.type = 'button';
+        del.tabIndex = -1;
+        del.title = t('sources.removeTitle', { name: s.label });
+        del.addEventListener('click', () => removeSource(s.key));
+        row.append(icon(SRC_ICON[s.kind] || SRC_ICON.file), el('div', 'src-name', s.label), del, el('div', 'src-sub' + (info && info.error ? ' err' : ''), sub));
+        row.title = s.label;
+        row.addEventListener('mousemove', () => { if (pointerMoved && srcSel !== i) highlightSource(i, false); });
+        return row;
+      })
+    );
+    $('src-note').textContent = srcError || t(sources.length ? 'sources.note' : 'sources.empty');
+    $('src-note').classList.toggle('err', !!srcError);
+    highlightSource(Math.min(srcSel, sources.length - 1), false);
+  }
+
+  // What each source gave once read (size, title, or why it could not be read).
+  async function loadSourceInfo(refresh) {
+    if (!sources.length) return;
+    const btn = $('src-refresh');
+    const forConv = convId;
+    btn.classList.add('busy');
+    const list = await api.listSources(refresh);
+    btn.classList.remove('busy');
+    if (forConv !== convId) return;
+    srcInfo = new Map(list.map((x) => [x.key, x]));
+    if (srcOpen) renderSources();
+  }
+
+  function openSources() {
+    if (mini || pendingTrust) return;
+    if (srcOpen) return closeSources();
+    if (menuOpen) closeModelMenu();
+    if (view !== 'chat') return;
+    srcOpen = true;
+    srcMenu.hidden = false;
+    srcInput.value = '';
+    srcSel = -1;
+    srcError = '';
+    refreshPalette();
+    renderSources();
+    setKeys();
+    srcInput.focus();
+    loadSourceInfo(false);
+  }
+
+  function closeSources(quiet) {
+    srcOpen = false;
+    srcMenu.hidden = true;
+    if (quiet) return;
+    setKeys();
+    input.focus();
+  }
+
+  function reportSources(res) {
+    srcError = res.errors && res.errors.length ? res.errors[0] : '';
+    applyState(res);
+    if (srcOpen) renderSources();
+    if (srcError) setStatus(srcError, 'err');
+    else if (res.added) setStatus(t('sources.added', { count: res.added }), 'ok');
+    if (res.added) loadSourceInfo(false);
+    return !(res.errors && res.errors.length);
+  }
+
+  /** A link or a file path, typed or pasted (several lines: one per line). */
+  async function addSource(text) {
+    const items = String(text).split('\n').map((x) => x.trim()).filter(Boolean);
+    if (!items.length) return false;
+    return reportSources(await api.addSources(items));
+  }
+
+  async function pickSources() {
+    const ok = reportSources(await api.pickSources());
+    (srcOpen ? srcInput : input).focus();
+    return ok;
+  }
+
+  async function removeSource(key) {
+    const keep = srcSel;
+    applyState(await api.removeSource(key));
+    setStatus(t('sources.removed'), 'ok');
+    if (srcOpen) {
+      highlightSource(Math.min(keep, sources.length - 1), false);
+      srcInput.focus();
+    }
+  }
+
+  // ---------- listening (recording: listen.js; transcription: the main process) ----------
+
+  const heardBox = $('heard');
+  const listenBtn = $('listen-btn');
+
+  function listeningHere() {
+    return !!capture && listenTab === convId && view === 'chat';
+  }
+
+  function syncListen() {
+    listenBtn.setAttribute('aria-pressed', String(!!capture));
+    listenBtn.title = t(capture ? 'listen.stopTitle' : 'listen.title');
+    heardBox.hidden = !listeningHere();
+    if (!heardBox.hidden) {
+      const lines = heard.length
+        ? heard.slice(-3).map((h) => el('p', h.question ? 'ask' : null, h.text))
+        : [el('p', 'wait', t('listen.waiting'))];
+      $('heard-lines').replaceChildren(...lines);
+    }
+    syncOpen();
+    syncMini();
+    setKeys();
+    scrollEnd(false);
+  }
+
+  async function startListening() {
+    if (capture || listenStarting || mini || pendingTrust || view !== 'chat' || !agent()) return;
+    listenStarting = true;
+    try {
+      const tab = convId;
+      const res = await api.listenStart(tab);
+      if (res.error) return showNotice(res.error, res.setup ? 'warn' : 'error');
+      let rec;
+      try {
+        rec = await window.AskaListen.start({ onSegment: onUtterance, onLevel });
+      } catch (e) {
+        await api.listenStop();
+        return showNotice(t(e && e.name === 'NotFoundError' ? 'listen.noMic' : 'listen.micDenied'), 'error');
+      }
+      capture = rec;
+      listenTab = tab;
+      listenAgent = agentId;
+      listenInfo = { ...listenInfo, answer: res.answer, tabId: tab };
+      heard = [];
+      unanswered = [];
+      heardQueue = null;
+      showNotice('');
+      setStatus(t('listen.on'), 'ok');
+      syncListen();
+    } finally {
+      listenStarting = false;
+    }
+  }
+
+  function stopListening(quiet) {
+    if (!capture) return;
+    const rec = capture;
+    capture = null;
+    rec.stop(); // what was being said is still transcribed, and kept with the conversation
+    api.listenStop();
+    listenTab = null;
+    heardQueue = null;
+    listenInfo = { ...listenInfo, tabId: null };
+    heardBox.style.removeProperty('--level');
+    if (!quiet) setStatus(t('listen.off'));
+    syncListen();
+  }
+
+  function toggleListen() {
+    if (capture) stopListening();
+    else startListening();
+    input.focus();
+  }
+
+  function onLevel(level, speaking) {
+    heardBox.style.setProperty('--level', level.toFixed(2));
+    heardBox.classList.toggle('speaking', speaking);
+  }
+
+  // One utterance was recorded: the main process transcribes it and says whether it sounds like a question.
+  async function onUtterance(pcm) {
+    const tab = listenTab;
+    const res = await api.listenAudio(pcm);
+    if (!capture || listenTab !== tab) return;
+    if (res.error) return setStatus(res.error, 'err');
+    if (res.dropped || !res.text) return;
+    heard.push({ text: res.text, question: !!res.question });
+    if (heard.length > 20) heard.shift();
+    unanswered.push(res.text);
+    if (unanswered.length > 4) unanswered.shift();
+    syncListen();
+    if (res.question && listenInfo.answer === 'questions') askHeard(res.text);
+  }
+
+  // Asks the agent of the listening tab what to answer. One request at a time: a
+  // question heard meanwhile waits, and only the most recent one is kept.
+  async function askHeard(text) {
+    if (!capture || !text) return;
+    unanswered = [];
+    if (listenTab === convId) {
+      if (running || pendingTrust) heardQueue = text;
+      else {
+        listenAgent = agentId;
+        submit(undefined, text, true);
+      }
+      return;
+    }
+    // The user is looking at another tab: the answer arrives in the listening one.
+    if (tabList.some((x) => x.id === listenTab && x.running)) heardQueue = text;
+    else await api.run({ tabId: listenTab, agentId: listenAgent, mode: 'read', prompt: text, heard: true });
+  }
+
+  // Enter on the empty field: answer what was just said, question or not.
+  function answerNow() {
+    const text = unanswered.join(' ') || (heard.length ? heard[heard.length - 1].text : '');
+    if (!text) return setStatus(t('listen.nothingHeard'));
+    askHeard(text);
+  }
+
+  listenBtn.addEventListener('click', toggleListen);
 
   // ---------- conversation history ----------
 
@@ -985,6 +1290,7 @@
 
   async function showSettings(on) {
     if (on && view === 'settings') return;
+    if (on && srcOpen) closeSources(true);
     if (on && view === 'history') await showHistory(false);
     view = on ? 'settings' : 'chat';
     refreshPalette();
@@ -999,11 +1305,11 @@
       scrollEnd(true);
       input.focus();
     }
-    syncOpen();
-    setKeys();
+    syncListen();
   }
 
   async function showHistory(on) {
+    if (on && srcOpen) closeSources(true);
     view = on ? 'history' : 'chat';
     refreshPalette();
     $('hist-btn').setAttribute('aria-pressed', String(on));
@@ -1020,8 +1326,7 @@
       scrollEnd(true);
       input.focus();
     }
-    syncOpen();
-    setKeys();
+    syncListen();
   }
 
   async function openConversation(id) {
@@ -1102,6 +1407,11 @@
       setPinned(!pinned, true);
       return;
     }
+    if (is('listen') && !mini && view === 'chat' && !pendingTrust) {
+      e.preventDefault();
+      toggleListen();
+      return;
+    }
     // Settings: the form keeps the keyboard; Esc (or the settings shortcut) closes it.
     if (view === 'settings') {
       if (e.key === 'Escape' || is('settings')) {
@@ -1110,12 +1420,12 @@
       }
       return;
     }
-    if (is('settings') && !mini && !pendingTrust && !menuOpen) {
+    if (is('settings') && !mini && !pendingTrust && !menuOpen && !srcOpen) {
       e.preventDefault();
       showSettings(true);
       return;
     }
-    if (!mini && !pendingTrust && !menuOpen) {
+    if (!mini && !pendingTrust && !menuOpen && !srcOpen) {
       // Ctrl+1 to Ctrl+9 stay fixed: tab n°1 to 8, Ctrl+9 the last one.
       const tabNumber = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key) && tabList.length > 1;
       const tabKey =
@@ -1151,6 +1461,23 @@
       else if (e.key === 'Enter') {
         e.preventDefault();
         if (modelItems[modelSel]) chooseModel(modelItems[modelSel].id);
+      } else if (e.key === 'Tab') e.preventDefault();
+      return;
+    }
+    if (srcOpen) {
+      const sel = sources[srcSel];
+      if (e.key === 'Escape' || is('sources')) { e.preventDefault(); closeSources(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); highlightSource(srcSel + 1, true); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); highlightSource(srcSel - 1, true); }
+      else if (e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault();
+        // Nothing typed: the file picker.
+        if (!srcInput.value.trim()) pickSources();
+        else addSource(srcInput.value).then((ok) => { if (ok) srcInput.value = ''; });
+      } else if (e.key === 'Delete' && sel && srcInput.selectionStart === srcInput.value.length) {
+        // "Del" targets the selected document when there is nothing left to erase in the field.
+        e.preventDefault();
+        removeSource(sel.key);
       } else if (e.key === 'Tab') e.preventDefault();
       return;
     }
@@ -1202,7 +1529,8 @@
       else cycleAgent(1);
     } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      submit();
+      if (!input.value.trim() && listeningHere()) answerNow();
+      else submit();
     } else if (is('modelMenu')) {
       e.preventDefault();
       openModelMenu();
@@ -1220,6 +1548,9 @@
     } else if (is('history')) {
       e.preventDefault();
       if (!$('hist-btn').hidden) showHistory(true);
+    } else if (is('sources')) {
+      e.preventDefault();
+      openSources();
     } else if (e.key === 'ArrowUp' && e.target === input && !input.value.slice(0, input.selectionStart).includes('\n')) {
       if (historyMove(-1)) e.preventDefault();
     } else if (e.key === 'ArrowDown' && e.target === input && histIdx !== -1) {
@@ -1242,6 +1573,10 @@
     e.preventDefault();
     if (!running) api.resetDir().then(applyState);
   });
+  $('sources').addEventListener('click', openSources);
+  srcInput.addEventListener('input', () => { if (srcError) { srcError = ''; renderSources(); } });
+  $('src-pick').addEventListener('click', pickSources);
+  $('src-refresh').addEventListener('click', () => { loadSourceInfo(true); srcInput.focus(); });
   $('trust-once').addEventListener('click', () => submit('once'));
   $('trust-always').addEventListener('click', () => submit('always'));
   $('trust-cancel').addEventListener('click', closeConfirm);
@@ -1281,7 +1616,7 @@
     panel.classList.remove('out', 'in');
     void panel.offsetWidth;
     panel.classList.add('in');
-    if (!pendingTrust && !menuOpen && view === 'chat') input.focus();
+    if (!pendingTrust && !menuOpen && !srcOpen && view === 'chat') input.focus();
     setKeys();
     autosize();
   });

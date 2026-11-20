@@ -51,6 +51,51 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   wrap('codex', ''); // behavior chosen by a [mode] tag in the prompt
   const calls = () => fs.readFileSync(callLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 
+  // Listening: a fake transcriber under the name of whisper.cpp's, a "model" file for it,
+  // and a recording Chromium plays as the microphone (a burst of sound, then silence, in a loop).
+  const sttLog = path.join(home, 'stt.jsonl');
+  const sttCalls = () => (fs.existsSync(sttLog) ? fs.readFileSync(sttLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
+  const sttEntry = path.join(pkg, 'whisper-cli.js');
+  fs.writeFileSync(sttEntry, `process.env.FAKE_STT_LOG = ${JSON.stringify(sttLog)};\nrequire(${JSON.stringify(path.join(ROOT, 'test', 'fixtures', 'fake-transcriber.js'))});\n`);
+  if (WIN) fs.copyFileSync(path.join(bin, 'claude.cmd'), path.join(bin, 'whisper-cli.cmd'));
+  else fs.writeFileSync(path.join(bin, 'whisper-cli'), `#!/bin/sh\nexec "${process.execPath}" "${sttEntry}" "$@"\n`, { mode: 0o755 });
+  if (WIN) fs.writeFileSync(path.join(bin, 'whisper-cli.cmd'), fs.readFileSync(path.join(bin, 'whisper-cli.cmd'), 'utf8').replace('claude.js', 'whisper-cli.js'));
+  const whisperModel = path.join(home, 'ggml-fake.bin');
+  fs.writeFileSync(whisperModel, 'not a real model');
+  const micWav = path.join(home, 'mic.wav');
+  {
+    const rate = 48000;
+    const parts = [[0.8, 0], [1.4, 0.35], [3.3, 0]]; // seconds, loudness
+    const total = parts.reduce((n, [sec]) => n + Math.round(sec * rate), 0);
+    const wav = Buffer.alloc(44 + total * 2);
+    wav.write('RIFF', 0, 'latin1');
+    wav.writeUInt32LE(36 + total * 2, 4);
+    wav.write('WAVEfmt ', 8, 'latin1');
+    wav.writeUInt32LE(16, 16);
+    wav.writeUInt16LE(1, 20);
+    wav.writeUInt16LE(1, 22);
+    wav.writeUInt32LE(rate, 24);
+    wav.writeUInt32LE(rate * 2, 28);
+    wav.writeUInt16LE(2, 32);
+    wav.writeUInt16LE(16, 34);
+    wav.write('data', 36, 'latin1');
+    wav.writeUInt32LE(total * 2, 40);
+    let at = 44;
+    let seed = 7;
+    for (const [sec, amp] of parts) {
+      for (let i = 0; i < Math.round(sec * rate); i++, at += 2) {
+        // Speech-like: voiced tones, syllable rhythm, a little noise.
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        const t = i / rate;
+        const voice = Math.sin(2 * Math.PI * 180 * t) + 0.6 * Math.sin(2 * Math.PI * 520 * t) + 0.4 * Math.sin(2 * Math.PI * 1400 * t);
+        const syllable = 0.6 + 0.4 * Math.sin(2 * Math.PI * 4 * t);
+        const v = amp * syllable * (voice / 2 + (seed / 0x7fffffff - 0.5) * 0.3);
+        wav.writeInt16LE(Math.round(Math.max(-1, Math.min(1, v)) * 32767), at);
+      }
+    }
+    fs.writeFileSync(micWav, wav);
+  }
+
   // App environment: isolated home folder and PATH (Windows: profile and AppData).
   const notifyLog = path.join(home, 'notifications.jsonl');
   const notifications = () => (fs.existsSync(notifyLog) ? fs.readFileSync(notifyLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
@@ -92,8 +137,10 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     trad: 'Translate into English: {input}',
     sum: { prompt: 'Summarize these notes', description: 'Summary with Haiku', model: 'haiku' },
   };
-  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'en', commands: userCommands }), { mode: 0o600 });
-  const args = [ROOT];
+  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'en', commands: userCommands, listen: { whisperModel } }), { mode: 0o600 });
+  // The microphone is Chromium's fake device, fed by the recording above.
+  // (the audio service must be allowed to read that file: its sandbox is off for the test)
+  const args = ['--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${micWav}`, '--disable-features=AudioServiceSandbox', ROOT];
   if (process.env.ASKA_E2E_NO_SANDBOX === '1') args.unshift('--no-sandbox');
   const app = await electron.launch({ executablePath: require(path.join(ROOT, 'node_modules', 'electron')), args, env, cwd: ROOT });
   const page = await app.firstWindow();
@@ -707,7 +754,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
 
     // French UI: "language" in the config, picked up by "aska --reload" and the next show.
     // Same for the shortcuts: history moved to Ctrl+J, model menu to Alt+Shift+M.
-    fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }), { mode: 0o600 });
+    fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' }, listen: { whisperModel } }), { mode: 0o600 });
     await app.evaluate(({ app }) => app.emit('second-instance', {}, ['--reload']));
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
@@ -755,6 +802,140 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await waitVisible(true);
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
     assert.equal(await page.locator('.tab').count(), tabsBefore + 1);
+
+    // ---------- documents and links of a conversation ----------
+    // (the window is in French at this point: the checks do not depend on the language)
+    const brief = path.join(home, 'brief.md');
+    fs.writeFileSync(brief, 'Launch date: 14 March.\n');
+    await send('/new');
+    await send('/agent claude');
+    assert.equal(await page.textContent('#sources-count'), '');
+    // The main process revalidates what the window sends.
+    const badSources = await page.evaluate(async () => [
+      (await window.aska.addSources(['file:///etc/passwd', 'ftp://example.com/a'])).errors.length,
+      (await window.aska.addSources('brief.md')).errors.length,
+      (await window.aska.addSources([42])).errors.length,
+      (await window.aska.removeSource(42)).conversation.sources.length,
+    ]);
+    assert.deepEqual(badSources, [2, 1, 1, 0]);
+    await send('/add ' + brief);
+    await page.waitForFunction(() => document.querySelector('#sources-count').textContent === '1');
+    assert.equal(await page.inputValue('#input'), '');
+    // The panel lists them, with what was read.
+    await page.keyboard.press('Control+d');
+    await page.waitForSelector('#src-menu:not([hidden])');
+    await page.waitForFunction(() => /^22 /.test((document.querySelector('.src-item .src-sub') || {}).textContent || ''));
+    assert.match(await page.textContent('.src-item .src-name'), /brief\.md$/);
+    await page.keyboard.type('ftp://example.com/a');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#src-note.err');
+    assert.equal(await page.locator('.src-item').count(), 1);
+    await page.waitForTimeout(250);
+    await shot('12-sources-light');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#src-menu', { state: 'hidden' });
+    assert.equal(await visible(), true);
+    // Their text goes before the request.
+    await send('When do we launch?');
+    await settled('running');
+    await settled('done');
+    let docCall = calls().at(-1);
+    assert.match(docCall.stdin, /<documents>\n<document index="1" source="[^"]*brief\.md">\nLaunch date: 14 March\.\n<\/document>\n<\/documents>/);
+    assert.ok(docCall.stdin.endsWith('Request from the user:\nWhen do we launch?'));
+    assert.ok(!docCall.args.includes('--resume'));
+    assert.match(await page.locator('.turn .meta').last().textContent(), / · 1 document · /);
+    // The resumed session already has them: they are not sent twice.
+    await send('And who decides?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(docCall.args.includes('--resume'));
+    assert.equal(docCall.stdin, 'And who decides?');
+    // A document that changed is sent again.
+    fs.writeFileSync(brief, 'Launch date: 21 March, decided by the board.\n');
+    await send('Any change?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(docCall.args.includes('--resume'));
+    assert.match(docCall.stdin, /Launch date: 21 March, decided by the board\./);
+    // Removed (Del on the selected line): the session that knows it is not resumed.
+    await page.click('#sources');
+    await page.waitForSelector('.src-item');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Delete');
+    await page.waitForFunction(() => document.querySelector('#sources-count').textContent === '');
+    await page.keyboard.press('Escape');
+    await send('Still there?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(!docCall.args.includes('--resume'));
+    assert.ok(!docCall.stdin.includes('<documents>'));
+    assert.match(docCall.stdin, /<history>[\s\S]*New request from the user:\nStill there\?$/);
+
+    // ---------- listening to the microphone ----------
+    await send('/new');
+    await send('/agent claude');
+    // Nothing is recorded, and no audio is accepted, until the user starts listening.
+    const micBefore = await page.evaluate(async () => [
+      await navigator.mediaDevices.getUserMedia({ audio: true }).then(() => 'granted', (e) => e.name),
+      (await window.aska.listenAudio(new Uint8Array(32000))).error !== undefined,
+      (await window.aska.listenStart('../../x')).error !== undefined,
+    ]);
+    assert.deepEqual(micBefore, ['NotAllowedError', true, true]);
+    const sttBefore = sttCalls().length;
+    const heardFrom = await turns();
+    await page.click('#listen-btn');
+    await page.waitForSelector('#listen-btn[aria-pressed="true"]');
+    await page.waitForSelector('#heard:not([hidden])');
+    // Listening keeps the chat in view, pinned or not.
+    assert.equal(await page.evaluate(async () => (await window.aska.getState()).listen.tabId === (await window.aska.getState()).conversation.id), true);
+    // Only the microphone is granted, and only what is checked reaches the transcriber.
+    const micDuring = await page.evaluate(async () => [
+      await navigator.mediaDevices.getUserMedia({ video: true }).then(() => 'granted', (e) => e.name),
+      await navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(() => 'granted', (e) => e.name),
+      (await window.aska.listenAudio(new Uint8Array(101))).error !== undefined,
+      (await window.aska.listenAudio('RIFF')).error !== undefined,
+    ]);
+    assert.deepEqual(micDuring, ['NotAllowedError', 'NotAllowedError', true, true]);
+    // What is said is transcribed, shown, and since it is a question, answered.
+    await page.waitForSelector('#heard-lines p.ask', { timeout: 30000 });
+    assert.equal(await page.textContent('#heard-lines p.ask'), 'When do we launch?');
+    await page.waitForFunction((n) => document.querySelectorAll('.turn[data-status="ok"]').length > n, heardFrom, { timeout: 30000 });
+    await page.waitForTimeout(250);
+    await shot('13-listen-light');
+    const said = sttCalls().slice(sttBefore);
+    assert.deepEqual(said[0].args.slice(0, 7), ['-m', whisperModel, '-l', 'auto', '-nt', '-np', '-f']);
+    assert.equal(said[0].riff, true);
+    assert.equal(said[0].rate, 16000);
+    assert.ok(said[0].seconds > 1 && said[0].seconds < 5, `utterance of ${said[0].seconds} s`);
+    assert.ok(!said[0].env.includes('SECRET_TOKEN'), 'the transcriber gets the filtered environment');
+    const heardCall = calls().filter((c) => /this was just said/.test(c.stdin)).at(-1);
+    assert.match(heardCall.stdin, /<transcript>\n\[\d\d:\d\d\] When do we launch\?/);
+    assert.match(heardCall.stdin, /this was just said:\n"When do we launch\?"/);
+    assert.ok(heardCall.args.includes('plan'), 'read-only, whatever the mode of the tab');
+    assert.match(await page.locator('.turn .q').nth(heardFrom).textContent(), /^When do we launch\?$/);
+    assert.match(await page.locator('.turn .meta').nth(heardFrom).textContent(), /entendu|heard/);
+    // The main process refuses to answer what is heard in a mode that can write.
+    const heardEdit = await page.evaluate(async () => {
+      const tabId = (await window.aska.getState()).conversation.id;
+      return window.aska.run({ tabId, agentId: 'claude', mode: 'edit', prompt: 'x', heard: true, trust: 'once' });
+    });
+    assert.ok(heardEdit.error);
+    // Stop: the microphone is released, and the recordings are gone.
+    await page.keyboard.press('Control+Shift+L');
+    await page.waitForSelector('#listen-btn[aria-pressed="false"]');
+    await page.waitForSelector('#heard', { state: 'hidden' });
+    assert.equal(await page.evaluate(async () => (await window.aska.getState()).listen.tabId), null);
+    await page.waitForFunction(() => !document.querySelector('.turn.live'), null, { timeout: 30000 });
+    await page.waitForTimeout(600);
+    assert.deepEqual(fs.readdirSync(P.listenDir), []);
+    assert.equal(await page.evaluate(() => navigator.mediaDevices.getUserMedia({ audio: true }).then(() => 'granted', (e) => e.name)), 'NotAllowedError');
+    // What was heard stays with the conversation: a typed request gets it as context.
+    const heardConv = JSON.parse(fs.readFileSync(path.join(P.conversations, (await page.evaluate(async () => (await window.aska.getState()).conversation.id)) + '.json'), 'utf8'));
+    assert.equal(heardConv.heard[0].text, 'When do we launch?');
+    assert.equal(heardConv.turns.at(-1).heard, true);
 
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.

@@ -30,6 +30,8 @@ driven by their official CLIs. Linux, macOS and Windows.
 - 🛡️ **Read-only by default**: the agent changes nothing until you switch modes, and never without your approval for the folder.
 - 📌 **Out of the way or always there**: a click outside hides the chat; pinned, it stays on top where you put it. Minimized to a pill, it shows you how the agent is doing.
 - 🔔 **Notified as soon as the AI answers**: a system notification (agent and start of the answer) when the chat is hidden or minimized; one click brings you back to the conversation.
+- 🎙️ **Listens to a meeting**: Aska transcribes the microphone on your machine and answers in text what is being asked, so you can respond on the spot (`Ctrl+Shift+L`, or `/listen`).
+- 📎 **Your documents as context**: attach files and links to a conversation, their text goes to the agent with your requests (`Ctrl+D`, or `/add`).
 - ⌨️ **`/` commands**: `/model`, `/mode`, `/cd`, `/codex …` from the field, and your own prompts as commands (`/trad bonjour`).
 - 🌗 **Light or dark**, following your system theme.
 - 🌐 **English or French**: the interface follows your system language (`"language"` in the config to force one).
@@ -172,6 +174,8 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Ctrl+1` … `Ctrl+9` | go to tab 1 to 8, `Ctrl+9`: the last one |
 | `Ctrl+H` | history: type to search, `Enter` to open, `Del` twice to delete |
 | `Ctrl+O` | working folder (right-click the folder: back to the scratch space) |
+| `Ctrl+D` | [documents and links](#documents-and-links) given to the agent in this conversation |
+| `Ctrl+Shift+L` | [listen](#listening-to-a-meeting) to the microphone and answer what is asked / stop |
 | `↑` / `↓` | recall a message already sent |
 | `Ctrl+Shift+C` | copy the last answer |
 | `Ctrl+R` | after denied actions: run the request again in the next mode (the button of the last answer) |
@@ -205,6 +209,9 @@ Type `/` in the field: a list of commands opens above it (`↑` `↓` to choose,
 | `/mode read` · `edit` · `auto` | change the permission mode |
 | `/model sonnet` | pick the model (`/model default`: the CLI's own; `/model` alone opens the picker) |
 | `/cd ~/project` | change the working folder (`~` and relative paths accepted; `/cd` alone opens the picker) |
+| `/add ~/notes/brief.md`, `/add https://…` | give a [document or a link](#documents-and-links) to the agent (`/add` alone opens the file picker) |
+| `/sources` | documents and links of the conversation |
+| `/listen` | [listen](#listening-to-a-meeting) to the microphone and answer what is asked (again: stop) |
 | `/retry` | send the last request of the conversation again |
 | `/copy`, `/history`, `/settings`, `/pin`, `/mini` | same as their shortcuts |
 
@@ -256,6 +263,48 @@ requests at most, 8 tabs).
 - **Follow-ups**: with Claude, Aska resumes the CLI session (`--resume`), which keeps the whole context, tools included. With the other agents, or if you switch agents mid-thread, the previous exchanges are injected back into the request (most recent first, up to about 24,000 characters).
 - **Switching agents along the way**: so Codex can carry on a discussion started with Claude.
 - **History**: each conversation is saved as a private file (200 at most) and reopens in its original working folder. `"savePrompts": false` disables all saving.
+
+### Documents and links
+
+A conversation can carry **documents and links**: a brief, meeting notes, a spec, a page of your wiki. Aska reads them itself and sends their text to the agent before your request, so the answers take them into account. It works with every agent and in read-only mode, since the agent needs no tool to get them.
+
+- `Ctrl+D` or the 📎 button opens the list: paste a link or a file path and press `Enter`, or press `Enter` on the empty field to choose files. `Del` removes the selected one. From the field, `/add ~/notes/brief.md` or `/add https://…` does the same.
+- **Files**: any text file (Markdown, code, CSV, JSON, HTML…). PDFs are read through `pdftotext` when it is installed (`poppler-utils` on Linux, `brew install poppler` on macOS). For any other format, the agent only gets the path, to read it with its own tools if it can.
+- **Links**: `http(s)` pages, fetched by Aska without cookies, as text (HTML is reduced to its text). A page is fetched again after ten minutes, or with the ↻ button.
+- Documents belong to the conversation: they are saved with it, and each tab has its own. They are read again when they change.
+- 20 documents at most. Their text is sent with each request (once per session with Claude, which keeps it), within a budget: about 240,000 characters when the request goes through stdin (Claude, Codex), 40,000 when it is passed as an argument (Copilot, Cursor; 8,000 on Windows). Beyond it, the longest documents are truncated, and the agent is told.
+
+What you attach is sent to the agent's provider, like the text of your requests. Files in `~/.ssh`, `~/.gnupg`, `~/.aws` and similar folders are refused.
+
+### Listening to a meeting
+
+`Ctrl+Shift+L`, the 🎙 button or `/listen` makes Aska **listen to the microphone**. What is said is transcribed on your machine and shown above the field; when it sounds like a question, the agent answers it in text, in a few lines you can say out loud. The same shortcut stops it.
+
+- **Answers on the spot**: a question heard ("When do we launch?", "Quel est le budget ?") is sent to the agent of the tab, with what was said before and the [documents and links](#documents-and-links) of the conversation. `Enter` on the empty field asks for an answer to what was just said, question or not. With `"answer": "manual"`, the agent only answers when you press `Enter`.
+- **You can still type**: your own requests in that tab get the transcript as context ("summarize what was decided", "what did they say about the budget?").
+- **Read-only**: what is heard is always answered in read-only mode, whatever the mode of the tab. A voice in the room cannot make the agent write or run anything.
+- **Stays in view**: while it listens, the chat does not hide on an outside click. One question at a time: a question heard while the agent answers waits for it, and only the most recent one is kept.
+- The transcript is saved with the conversation (the last 400 utterances), like the rest of it; `"savePrompts": false` keeps nothing. The recordings themselves are deleted as soon as they are transcribed.
+- It is the microphone that is heard: in a call, the others are heard through your speakers, not through headphones.
+
+**Setting it up.** Aska calls no speech service: it runs a transcriber installed on your machine, [whisper.cpp](https://github.com/ggml-org/whisper.cpp) by default.
+
+```sh
+brew install whisper-cpp        # macOS; elsewhere, see the whisper.cpp README
+mkdir -p ~/models && curl -L -o ~/models/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+Then, in the [configuration](#configuration), `"listen": { "whisperModel": "~/models/ggml-small.bin" }` and `aska --reload`. `ggml-base.bin` is faster and less accurate, `ggml-medium.bin` the opposite.
+
+| `listen` option | Effect |
+| --- | --- |
+| `whisperModel` | path of the whisper.cpp model file; its program (`whisper-cli`) is looked up in the `PATH` |
+| `command` | another transcriber, as a list of arguments: `["my-stt", "--lang", "{lang}", "{file}"]`. `{file}` is the recording (WAV, 16 kHz, mono), and the program prints the text. Replaces `whisperModel`. |
+| `language` | `"auto"` (default) or a language code (`"fr"`, `"en"`…): naming it is faster and more reliable on short sentences |
+| `answer` | `"questions"` (default): the agent answers what sounds like a question · `"manual"`: only on `Enter` |
+
+For quick answers, pick a fast model for the agent (`/model haiku` with Claude): the time to answer is the transcription (about a second with `ggml-small` on a recent machine) plus the agent's own.
 
 ## Models
 
@@ -330,6 +379,27 @@ In short: **no shell** ever sees the text of your requests, the agent only recei
 - Writing is refused in `/`, your whole `~`, system folders and sensitive
   folders (`~/.ssh`, `~/.config`, `~/.gnupg`...).
 
+**Documents and links**
+- Read by Aska itself, never by a shell: a file must exist and be a regular file,
+  and files in folders of secrets (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`...) are refused.
+- Links are `http(s)` only, fetched without cookies or credentials, with a time
+  limit and a size cap; only text content is kept.
+- Their text is placed in a delimited block that tells the agent it is reference
+  material, not instructions. As with any content an agent reads, a hostile page
+  can still try to influence the answer: only attach what you trust.
+- The audit log lists what was sent along with each request.
+
+**Listening**
+- The microphone is the only web permission ever granted, to Aska's own window
+  only, and only while you have it listening; the camera and everything else stay refused.
+- Sound never leaves the machine: each utterance is written to a private file
+  (`~/.local/state/aska/listen`, `600`), handed to the local transcriber, and deleted.
+  The text is then sent to the agent, like a request you would type.
+- The transcriber is resolved and run like an agent: absolute path, ownership
+  checks, no shell, filtered environment.
+- What is heard is answered in read-only mode only (enforced by the main process),
+  and the transcript is given to the agent as context, not as instructions.
+
 **Application**
 - Sandboxed UI, without Node (`contextIsolation`, `sandbox`), strict CSP,
   no remote resources, navigation and new windows blocked.
@@ -388,6 +458,7 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
   "envPassthrough": [],
   "language": "auto",
   "keybindings": { "history": "Ctrl+J", "togglePin": false },
+  "listen": { "whisperModel": "~/models/ggml-small.bin", "language": "auto", "answer": "questions" },
   "commands": {
     "trad": "Translate into English: {input}",
     "review": { "prompt": "Review the uncommitted changes of this folder.", "description": "Review the diff", "agent": "claude", "mode": "read", "model": "opus" }
@@ -419,6 +490,8 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 | `nextTab` / `prevTab` | `Ctrl+Tab`, `Ctrl+PageDown` / `Ctrl+Shift+Tab`, `Ctrl+PageUp` |
 | `history` | `Ctrl+H` |
 | `pickDir` | `Ctrl+O` |
+| `sources` | `Ctrl+D` |
+| `listen` | `Ctrl+Shift+L` |
 | `modelMenu` | `Ctrl+Shift+M` |
 | `copyAnswer` | `Ctrl+Shift+C` |
 | `rerun` | `Ctrl+R` |
@@ -459,6 +532,8 @@ Start with `aska --help`: the "Agents" section says which CLI is used, or why it
   profile (`/etc/apparmor.d/aska`, asks for your sudo password) that allows this
   sandbox for Aska's Electron binary only. If you move the Aska folder,
   run the command again. Do not run Aska with `--no-sandbox`.
+
+- **Listening hears nothing, or "Microphone access refused".** On macOS, allow the microphone in System Settings → Privacy & Security → Microphone, for Aska's entry (Electron, or the terminal `aska` was started from), then `aska --restart`. If the list of what was heard stays empty while people speak, check the input device of the system, and that `whisper-cli -m <model> -f <a .wav file>` works in a terminal.
 
 - **"GitHub Copilot CLI was not found"**: the `copilot` command found is the
   launcher installed by VS Code, not the CLI. Install the real CLI
