@@ -6,8 +6,14 @@
 // Independent of Electron; `run(args)` is injected for the tests.
 
 const SCHEMA = 'org.gnome.settings-daemon.plugins.media-keys';
-const KEY = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/aska/';
-const ENTRY = `${SCHEMA}.custom-keybinding:${KEY}`;
+const BASE = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/';
+// Aska's entries: show / hide, and ask about the selected text.
+const ENTRIES = {
+  toggle: { key: `${BASE}aska/`, name: 'Aska', flag: '--toggle' },
+  selection: { key: `${BASE}aska-selection/`, name: 'Aska (selection)', flag: '--selection' },
+};
+const KEY = ENTRIES.toggle.key;
+const entryPath = (e) => `${SCHEMA}.custom-keybinding:${e.key}`;
 
 /**
  * The system gsettings (root-owned, not writable by others), first. Another
@@ -63,12 +69,12 @@ const parseList = (s) => [...String(s).matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m)
 const formatList = (list) => `[${list.map(quote).join(', ')}]`;
 
 /** Current Aska entry: { binding: accelerator or false, command } (binding false if absent). */
-async function readShortcut(run) {
+async function readShortcut(run, entry = ENTRIES.toggle) {
   const list = parseList(await run(['get', SCHEMA, 'custom-keybindings']));
-  if (!list.includes(KEY)) return { binding: false, command: '' };
+  if (!list.includes(entry.key)) return { binding: false, command: '' };
   return {
-    binding: fromGnome(unquote(await run(['get', ENTRY, 'binding']))),
-    command: unquote(await run(['get', ENTRY, 'command'])),
+    binding: fromGnome(unquote(await run(['get', entryPath(entry), 'binding']))),
+    command: unquote(await run(['get', entryPath(entry), 'command'])),
   };
 }
 
@@ -77,23 +83,24 @@ async function readShortcut(run) {
  * without touching the other entries. The command of an existing entry is
  * kept; `command` is used for a new one. `accel` false empties the binding.
  */
-async function writeShortcut(run, accel, command) {
+async function writeShortcut(run, accel, command, entry = ENTRIES.toggle) {
   const list = parseList(await run(['get', SCHEMA, 'custom-keybindings']));
+  const at = entryPath(entry);
   let cmd = '';
-  if (list.includes(KEY)) cmd = unquote(await run(['get', ENTRY, 'command']));
-  else await run(['set', SCHEMA, 'custom-keybindings', formatList([...list, KEY])]);
-  await run(['set', ENTRY, 'name', quote('Aska')]);
-  await run(['set', ENTRY, 'command', quote(cmd || command)]);
-  await run(['set', ENTRY, 'binding', quote(toGnome(accel))]);
+  if (list.includes(entry.key)) cmd = unquote(await run(['get', at, 'command']));
+  else await run(['set', SCHEMA, 'custom-keybindings', formatList([...list, entry.key])]);
+  await run(['set', at, 'name', quote(entry.name)]);
+  await run(['set', at, 'command', quote(cmd || command)]);
+  await run(['set', at, 'binding', quote(toGnome(accel))]);
 }
 
 /** Command for a new entry: the "aska" launcher if installed, else Electron directly. */
-function toggleCommand({ env = process.env, home = require('os').homedir(), exists = require('fs').existsSync, execPath = process.execPath, appPath = '' } = {}) {
+function toggleCommand({ env = process.env, home = require('os').homedir(), exists = require('fs').existsSync, execPath = process.execPath, appPath = '', flag = '--toggle' } = {}) {
   const path = require('path').posix; // GNOME: Linux paths, whatever runs the tests
   const q = (p) => (/[\s"'\\]/.test(p) ? `"${p.replace(/(["\\$`])/g, '\\$1')}"` : p);
   const launcher = path.join(env.XDG_BIN_HOME && path.isAbsolute(env.XDG_BIN_HOME) ? env.XDG_BIN_HOME : path.join(home, '.local', 'bin'), 'aska');
-  if (exists(launcher)) return `${q(launcher)} --toggle`;
-  return `${q(execPath)} ${q(appPath)} --toggle`;
+  if (exists(launcher)) return `${q(launcher)} ${flag}`;
+  return `${q(execPath)} ${q(appPath)} ${flag}`;
 }
 
-module.exports = { SCHEMA, KEY, systemGsettings, isGnomeSession, toGnome, fromGnome, parseList, readShortcut, writeShortcut, toggleCommand };
+module.exports = { SCHEMA, KEY, ENTRIES, systemGsettings, isGnomeSession, toGnome, fromGnome, parseList, readShortcut, writeShortcut, toggleCommand };

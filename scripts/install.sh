@@ -2,7 +2,8 @@
 # Installs Aska for the current user (no sudo):
 #   launcher ~/.local/bin/aska, menu entry, background autostart.
 # Options:
-#   --gnome-shortcut   registers Ctrl+Alt+Space -> "aska --toggle" in GNOME (useful on Wayland)
+#   --gnome-shortcut   registers Ctrl+Alt+Space -> "aska --toggle" and
+#                      Ctrl+Alt+Shift+Space -> "aska --selection" in GNOME (useful on Wayland)
 #   --no-autostart     does not start Aska when you log in
 #   --sandbox-fix      (Ubuntu 24.04+) installs the sandbox AppArmor profile without asking
 #   --no-sandbox-fix   leaves the system untouched: the command to run is only printed
@@ -102,10 +103,11 @@ fi
 ( umask 077; mkdir -p "$CONF/aska" )
 chmod 700 "$CONF/aska"
 if [ ! -e "$CONF/aska/config.json" ]; then
-  if [ "$GNOME" = 1 ]; then SHORTCUT=false; else SHORTCUT='"Control+Alt+Space"'; fi
+  if [ "$GNOME" = 1 ]; then SHORTCUT=false; SELECTION=false; else SHORTCUT='"Control+Alt+Space"'; SELECTION='"Control+Alt+Shift+Space"'; fi
   ( umask 077; cat > "$CONF/aska/config.json" <<JSON
 {
   "shortcut": $SHORTCUT,
+  "selectionShortcut": $SELECTION,
   "defaultAgent": "claude",
   "defaultMode": "read",
   "allowAutoMode": false
@@ -122,19 +124,24 @@ if [ "$GNOME" = 1 ]; then
   [ -x /usr/bin/gsettings ] && GSETTINGS=/usr/bin/gsettings
   if [ -n "$GSETTINGS" ]; then
     SCHEMA=org.gnome.settings-daemon.plugins.media-keys
-    KEY=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/aska/
-    LIST="$("$GSETTINGS" get $SCHEMA custom-keybindings)"
-    case "$LIST" in
-      *"$KEY"*) ;;
-      "@as []"|"[]") "$GSETTINGS" set $SCHEMA custom-keybindings "['$KEY']" ;;
-      *) "$GSETTINGS" set $SCHEMA custom-keybindings "${LIST%]}, '$KEY']" ;;
-    esac
-    "$GSETTINGS" set "$SCHEMA.custom-keybinding:$KEY" name 'Aska'
-    "$GSETTINGS" set "$SCHEMA.custom-keybinding:$KEY" command "$BIN/aska --toggle"
-    "$GSETTINGS" set "$SCHEMA.custom-keybinding:$KEY" binding '<Control><Alt>space'
-    echo "GNOME shortcut registered: Ctrl+Alt+Space"
+    # gnome_entry <path> <name> <command> <binding>: added to the list if missing, other entries untouched.
+    gnome_entry() {
+      KEY=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/$1/
+      LIST="$("$GSETTINGS" get $SCHEMA custom-keybindings)"
+      case "$LIST" in
+        *"$KEY"*) ;;
+        "@as []"|"[]") "$GSETTINGS" set $SCHEMA custom-keybindings "['$KEY']" ;;
+        *) "$GSETTINGS" set $SCHEMA custom-keybindings "${LIST%]}, '$KEY']" ;;
+      esac
+      "$GSETTINGS" set "$SCHEMA.custom-keybinding:$KEY" name "$2"
+      "$GSETTINGS" set "$SCHEMA.custom-keybinding:$KEY" command "$3"
+      "$GSETTINGS" set "$SCHEMA.custom-keybinding:$KEY" binding "$4"
+    }
+    gnome_entry aska 'Aska' "$BIN/aska --toggle" '<Control><Alt>space'
+    gnome_entry aska-selection 'Aska (selection)' "$BIN/aska --selection" '<Control><Alt><Shift>space'
+    echo "GNOME shortcuts registered: Ctrl+Alt+Space (show / hide), Ctrl+Alt+Shift+Space (ask about the selection)"
   else
-    echo "gsettings not found: bind \"$BIN/aska --toggle\" to a shortcut in your keyboard settings." >&2
+    echo "gsettings not found: bind \"$BIN/aska --toggle\" and \"$BIN/aska --selection\" to shortcuts in your keyboard settings." >&2
   fi
 fi
 

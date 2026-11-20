@@ -575,7 +575,7 @@ test('aska --help: options, shortcuts, detected agents and files; --version', ()
   for (const k of Object.keys(env)) if (/^XDG_/.test(k)) delete env[k];
   const cli = path.join(__dirname, '..', 'src', 'cli.js');
   const out = execFileSync(process.execPath, [cli, '--help'], { env, encoding: 'utf8' });
-  for (const expected of ['Usage: aska [option]', '--toggle', '--hidden', '--reload', '--quit', 'Ctrl+Alt+Space', 'Read-only', 'Files']) {
+  for (const expected of ['Usage: aska [option]', '--toggle', '--selection', '--hidden', '--reload', '--quit', 'Ctrl+Alt+Space', 'Ctrl+Alt+Shift+Space Global shortcut: ask about the selected text', 'Read-only', 'Files']) {
     assert.ok(out.includes(expected), `"${expected}" missing from the help`);
   }
   assert.match(out, new RegExp(`✓ Claude\\s+${fs.realpathSync(path.join(bin, exe('claude'))).replace(/[\\.]/g, '\\$&')}`));
@@ -585,7 +585,7 @@ test('aska --help: options, shortcuts, detected agents and files; --version', ()
   assert.ok(!/\x1b\[/.test(out), 'no colors outside a terminal');
   assert.match(execFileSync(process.execPath, [cli, '--version'], { env, encoding: 'utf8' }), /^aska \d+\.\d+\.\d+\n$/);
   const fr = execFileSync(process.execPath, [cli, '--help'], { env: { ...env, LC_ALL: 'fr_FR.UTF-8' }, encoding: 'utf8' });
-  for (const expected of ['Usage : aska [option]', 'Ctrl+Alt+Espace', 'Lecture seule', 'Fichiers', 'introuvable dans le PATH']) {
+  for (const expected of ['Usage : aska [option]', 'Ctrl+Alt+Espace', 'Ctrl+Alt+Maj+Espace', 'Lecture seule', 'Fichiers', 'introuvable dans le PATH']) {
     assert.ok(fr.includes(expected), `"${expected}" missing from the French help`);
   }
   assert.ok(!fr.includes('—'), 'no em dash in the help');
@@ -1116,6 +1116,11 @@ test('settings: validation of the values sent by the window', () => {
   );
   assert.deepEqual(ok.errors, {});
   assert.deepEqual(ok.values, { language: 'fr', defaultAgent: 'codex', defaultMode: 'edit', timeoutSec: 120, tray: false, notify: 'never', shortcut: 'Control+Alt+A', keybindings: { history: ['Ctrl+J'] } });
+  // The selection shortcut: same rules, and never the same as show / hide.
+  assert.deepEqual(validateSettings({ shortcut: 'Control+Alt+Space', selectionShortcut: 'shift+ctrl+alt+space' }).values, { shortcut: 'Control+Alt+Space', selectionShortcut: 'Control+Alt+Shift+Space' });
+  assert.match(validateSettings({ shortcut: 'Control+Alt+A', selectionShortcut: 'Ctrl+Alt+A' }).errors.selectionShortcut, /show \/ hide/);
+  assert.equal(validateSettings({ shortcut: false, selectionShortcut: false }).errors.selectionShortcut, undefined, 'both off');
+  assert.ok(validateSettings({ selectionShortcut: 'Shift+S' }).errors.selectionShortcut);
   assert.ok(!('agents' in ok.values) && !('allowAutoMode' in ok.values), 'keys outside the panel are dropped');
 
   const bad = validateSettings(
@@ -1221,6 +1226,20 @@ test('GNOME shortcut: conversions and gsettings calls', async () => {
   // Command for a new entry: the launcher if installed, else Electron, quoted when needed.
   assert.equal(gnome.toggleCommand({ env: {}, home: '/home/me', exists: () => true }), '/home/me/.local/bin/aska --toggle');
   assert.equal(gnome.toggleCommand({ env: {}, home: '/h', exists: () => false, execPath: '/opt/my apps/electron', appPath: '/src/aska' }), '"/opt/my apps/electron" /src/aska --toggle');
+
+  // The selection entry: its own path, name and command, next to the toggle one.
+  const sel = gnome.ENTRIES.selection;
+  assert.equal(gnome.toggleCommand({ env: {}, home: '/home/me', exists: () => true, flag: sel.flag }), '/home/me/.local/bin/aska --selection');
+  const h = fake({});
+  await gnome.writeShortcut(h.run, 'Control+Alt+A', '/b/aska --toggle');
+  await gnome.writeShortcut(h.run, 'Control+Alt+Shift+Space', '/b/aska --selection', sel);
+  assert.deepEqual(gnome.parseList(h.db[LIST]), [gnome.KEY, sel.key]);
+  const S = `${gnome.SCHEMA}.custom-keybinding:${sel.key}`;
+  assert.equal(h.db[`${S} name`], "'Aska (selection)'");
+  assert.equal(h.db[`${S} command`], "'/b/aska --selection'");
+  assert.equal(h.db[`${S} binding`], "'<Control><Alt><Shift>space'");
+  assert.deepEqual(await gnome.readShortcut(h.run, sel), { binding: 'Control+Alt+Shift+Space', command: '/b/aska --selection' });
+  assert.deepEqual(await gnome.readShortcut(h.run), { binding: 'Control+Alt+A', command: '/b/aska --toggle' }, 'toggle entry untouched');
 });
 
 // ---------- POSIX ACLs ----------
@@ -1384,4 +1403,41 @@ test('commands of the config: parsed, suggested and filled in', () => {
   assert.equal(commands.expand('Translate: {input}', ''), 'Translate:');
   assert.equal(commands.expand('Review the diff  ', 'focus on tests'), 'Review the diff\n\nfocus on tests');
   assert.equal(commands.expand('Review the diff', ''), 'Review the diff');
+});
+
+// ---------- ask about the selection ----------
+
+test('selection: primary selection first, then the clipboard; cleaned and quoted', async () => {
+  const { readSelection, cleanSelection, quoteSelection, MAX_CHARS } = require('../src/main/selection');
+  // Electron's clipboard: readText() returns a promise; Linux adds clipboard.selection.
+  const board = (selection, clipboard) => ({ readText: async () => clipboard, selection: { readText: async () => selection } });
+  assert.deepEqual(await readSelection(board('selected', 'copied'), 'linux'), { text: 'selected', truncated: false, source: 'selection' });
+  assert.deepEqual(await readSelection(board('  \n ', 'copied'), 'linux'), { text: 'copied', truncated: false, source: 'clipboard' });
+  // No primary selection on macOS and Windows: the clipboard only.
+  assert.equal((await readSelection(board('selected', 'copied'), 'darwin')).source, 'clipboard');
+  assert.equal((await readSelection({ readText: async () => 'copied' }, 'linux')).text, 'copied', 'no selection board');
+  assert.deepEqual(await readSelection(board('', ''), 'linux'), { text: '', truncated: false, source: null });
+  const failing = { readText: async () => { throw new Error('no X'); }, selection: { readText: () => Promise.reject(new Error('no X')) } };
+  assert.equal((await readSelection(failing, 'linux')).source, null);
+  // Lines kept; Windows line ends, control characters and terminal colors dropped.
+  assert.deepEqual(cleanSelection('\n\nline 1  \r\n\x1b[31mred\x1b[0m\tok\x00\x07\n\n'), { text: 'line 1\nred\tok', truncated: false });
+  const big = cleanSelection('x'.repeat(MAX_CHARS + 5));
+  assert.equal(big.text.length, MAX_CHARS);
+  assert.equal(big.truncated, true);
+  assert.equal(quoteSelection('first\n\n  indented'), '> first\n>\n>   indented');
+});
+
+test('selection: shortcut in the config, off with false', () => {
+  const d = tmp();
+  const file = path.join(d, 'config.json');
+  assert.equal(loadConfig(path.join(d, 'absent.json')).config.selectionShortcut, 'Control+Alt+Shift+Space');
+  fs.writeFileSync(file, JSON.stringify({ selectionShortcut: 'Control+Alt+Q' }), { mode: 0o600 });
+  assert.equal(loadConfig(file).config.selectionShortcut, 'Control+Alt+Q');
+  fs.writeFileSync(file, JSON.stringify({ selectionShortcut: false }), { mode: 0o600 });
+  assert.equal(loadConfig(file).config.selectionShortcut, null);
+  fs.writeFileSync(file, JSON.stringify({ selectionShortcut: 'rm -rf; x' }), { mode: 0o600 });
+  assert.equal(loadConfig(file).config.selectionShortcut, 'Control+Alt+Shift+Space', 'invalid: default kept');
+  // The settings panel only keeps what differs from the default.
+  assert.deepEqual(settings.mergeConfig({}, { selectionShortcut: 'Control+Alt+Shift+Space' }), {});
+  assert.deepEqual(settings.mergeConfig({}, { selectionShortcut: false }), { selectionShortcut: false });
 });
