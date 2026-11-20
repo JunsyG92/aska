@@ -18,6 +18,7 @@ const DEFAULT_KEYBINDINGS = {
   prevTab: ['Ctrl+Shift+Tab', 'Ctrl+PageUp'],
   history: ['Ctrl+H'],
   pickDir: ['Ctrl+O'],
+  sources: ['Ctrl+D'], // documents and links of the conversation
   modelMenu: ['Ctrl+Shift+M'],
   copyAnswer: ['Ctrl+Shift+C'],
   rerun: ['Ctrl+R'], // run again in a wider mode, after denied actions

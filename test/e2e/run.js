@@ -756,6 +756,77 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
     assert.equal(await page.locator('.tab').count(), tabsBefore + 1);
 
+    // ---------- documents and links of a conversation ----------
+    // (the window is in French at this point: the checks do not depend on the language)
+    const brief = path.join(home, 'brief.md');
+    fs.writeFileSync(brief, 'Launch date: 14 March.\n');
+    await send('/new');
+    await send('/agent claude');
+    assert.equal(await page.textContent('#sources-count'), '');
+    // The main process revalidates what the window sends.
+    const badSources = await page.evaluate(async () => [
+      (await window.aska.addSources(['file:///etc/passwd', 'ftp://example.com/a'])).errors.length,
+      (await window.aska.addSources('brief.md')).errors.length,
+      (await window.aska.addSources([42])).errors.length,
+      (await window.aska.removeSource(42)).conversation.sources.length,
+    ]);
+    assert.deepEqual(badSources, [2, 1, 1, 0]);
+    await send('/add ' + brief);
+    await page.waitForFunction(() => document.querySelector('#sources-count').textContent === '1');
+    assert.equal(await page.inputValue('#input'), '');
+    // The panel lists them, with what was read.
+    await page.keyboard.press('Control+d');
+    await page.waitForSelector('#src-menu:not([hidden])');
+    await page.waitForFunction(() => /^22 /.test((document.querySelector('.src-item .src-sub') || {}).textContent || ''));
+    assert.match(await page.textContent('.src-item .src-name'), /brief\.md$/);
+    await page.keyboard.type('ftp://example.com/a');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#src-note.err');
+    assert.equal(await page.locator('.src-item').count(), 1);
+    await page.waitForTimeout(250);
+    await shot('12-sources-light');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#src-menu', { state: 'hidden' });
+    assert.equal(await visible(), true);
+    // Their text goes before the request.
+    await send('When do we launch?');
+    await settled('running');
+    await settled('done');
+    let docCall = calls().at(-1);
+    assert.match(docCall.stdin, /<documents>\n<document index="1" source="[^"]*brief\.md">\nLaunch date: 14 March\.\n<\/document>\n<\/documents>/);
+    assert.ok(docCall.stdin.endsWith('Request from the user:\nWhen do we launch?'));
+    assert.ok(!docCall.args.includes('--resume'));
+    assert.match(await page.locator('.turn .meta').last().textContent(), / · 1 document · /);
+    // The resumed session already has them: they are not sent twice.
+    await send('And who decides?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(docCall.args.includes('--resume'));
+    assert.equal(docCall.stdin, 'And who decides?');
+    // A document that changed is sent again.
+    fs.writeFileSync(brief, 'Launch date: 21 March, decided by the board.\n');
+    await send('Any change?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(docCall.args.includes('--resume'));
+    assert.match(docCall.stdin, /Launch date: 21 March, decided by the board\./);
+    // Removed (Del on the selected line): the session that knows it is not resumed.
+    await page.click('#sources');
+    await page.waitForSelector('.src-item');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Delete');
+    await page.waitForFunction(() => document.querySelector('#sources-count').textContent === '');
+    await page.keyboard.press('Escape');
+    await send('Still there?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(!docCall.args.includes('--resume'));
+    assert.ok(!docCall.stdin.includes('<documents>'));
+    assert.match(docCall.stdin, /<history>[\s\S]*New request from the user:\nStill there\?$/);
+
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
     const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));
