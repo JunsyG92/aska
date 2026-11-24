@@ -45,6 +45,7 @@ module.exports = {
   app: {
     scratch: 'Scratch space',
     shortcutUnavailable: 'Shortcut {shortcut} unavailable: bind the command "aska --toggle" in your desktop\'s keyboard shortcuts',
+    selectionShortcutUnavailable: 'Shortcut {shortcut} (ask about the selection) unavailable: bind the command "aska --selection" in your desktop\'s keyboard shortcuts',
     pickDirTitle: "Agent's working folder",
     shortcutDescription: 'Ask an AI agent to do something (Claude, Codex, Copilot, Cursor)',
   },
@@ -75,6 +76,7 @@ module.exports = {
       timeout: 'Between {min} and {max} seconds',
       globalShortcut: 'Use Ctrl, Alt or Super with a letter, a digit, F1 to F24 or Space',
       gnome: 'GNOME shortcut not saved: {error}',
+      sameShortcut: 'Already used to show / hide Aska',
       write: 'Could not save the settings: {error}',
     },
   },
@@ -161,6 +163,7 @@ module.exports = {
     usage: '{label}: aska [option]',
     options: 'Options',
     toggle: 'Show or hide the window, starting Aska if needed (default)',
+    selection: 'Show the window with the selected text quoted in the field',
     hidden: 'Start in the background, without showing the window',
     reload: 'Reload the config (agents, shortcut, models…)',
     restart: 'Restart Aska (run it after an update)',
@@ -171,6 +174,7 @@ module.exports = {
     none: 'none',
     space: 'Space',
     globalShortcut: 'Global shortcut: show / hide',
+    selectionShortcut: 'Global shortcut: ask about the selected text',
     keys: {
       enter: 'Enter',
       tab: 'Tab  /  Shift+Tab',
@@ -233,7 +237,7 @@ module.exports = {
       sections: {
         general: 'General',
         window: 'Window',
-        globalShortcut: 'Global shortcut',
+        globalShortcut: 'Global shortcuts',
         notifications: 'Notifications',
         history: 'History',
         keys: 'Shortcuts in the window',
@@ -250,6 +254,9 @@ module.exports = {
       shortcut: 'Show / hide Aska',
       gnomeHint: 'Saved in the GNOME keyboard shortcuts (entry "Aska"). A combination GNOME already uses, like the current one, cannot be recorded here: pick a free one.',
       shortcutHint: 'Works anywhere on the desktop. On Wayland, if it does nothing, bind "aska --toggle" in your desktop keyboard settings.',
+      selectionShortcut: 'Ask about the selected text',
+      selectionHint: 'Opens Aska with the text selected in another window quoted in the field, ready for your question (on Linux, no need to copy it). On Wayland, if it does nothing, bind "aska --selection".',
+      selectionGnomeHint: 'Saved in the GNOME keyboard shortcuts (entry "Aska (selection)"): opens Aska with the selected text quoted in the field.',
       notify: 'Notify when an answer arrives',
       notifyOptions: {
         hidden: 'When the chat is hidden or collapsed',
@@ -359,6 +366,11 @@ module.exports = {
       cancel: 'Cancel',
     },
     status: { done: 'Done', cancelled: 'Cancelled', failed: 'Failed', copied: 'Answer copied' },
+    selection: {
+      empty: 'No selected text: select some (or copy it), then press the shortcut again',
+      fromClipboard: 'Quoted from the clipboard (no text selected)',
+      truncated: 'Selection cut at {max} characters',
+    },
     commands: {
       label: 'Commands',
       note: 'Type // to send a message that starts with /',
