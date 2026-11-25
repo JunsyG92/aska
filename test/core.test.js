@@ -276,6 +276,27 @@ test('context fed back in: previous turns, budget respected', () => {
   const big = Array.from({ length: 30 }, (_, i) => ({ agent: 'a', prompt: `Q${i}`, answer: 'x'.repeat(3000) }));
   const q = buildContextPrompt(big, 'end', 10000);
   assert.ok(q.length < 11000 && q.includes('Q29') && !q.includes('Q0\n'));
+  assert.equal(buildContextPrompt(big, 'end', 0), 'end'); // no room left: the request alone
+});
+
+test('history cut down to fit the command line, error if the request alone is too long', () => {
+  const { fitInvocation } = require('../src/main/agents');
+  const turns = Array.from({ length: 30 }, (_, i) => ({ agent: 'a', prompt: `Q${i}`, answer: 'é'.repeat(3000) }));
+  const agents = resolveAgents({}).agents;
+  const build = (prompt) => (maxChars) => buildInvocation(agents.copilot, 'read', buildContextPrompt(turns, prompt, maxChars), {});
+  // Limit: 20,000 characters for the prompt argument.
+  const excess = (inv) => Math.max(0, inv.argv[inv.argv.length - 1].length - 20000);
+  const seen = [];
+  const inv = fitInvocation((n) => { seen.push(n); return build('end')(n); }, excess, 24000);
+  const sent = inv.argv[inv.argv.length - 1];
+  assert.ok(sent.length <= 20000 && sent.includes('Q29') && sent.endsWith('end'));
+  assert.ok(seen.length <= 3, `rebuilt ${seen.length} times`);
+  // Fits at once: built a single time, with the whole budget.
+  let calls = 0;
+  fitInvocation((n) => { calls++; return build('end')(n); }, () => 0, 24000);
+  assert.equal(calls, 1);
+  // Even without history the request is too long.
+  assert.throws(() => fitInvocation(build('x'.repeat(30000)), excess, 24000), /too long/);
 });
 
 test('conversations: private storage, list, reopen, delete', () => {
@@ -464,6 +485,38 @@ test('Windows: another .cmd goes through cmd.exe only with safe arguments', () =
   }
   // On Linux, none of this: the binary is run as is.
   assert.deepEqual(resolveLaunch('/usr/bin/tool', { platform: 'linux' }), { command: '/usr/bin/tool', prefix: [], viaCmd: false });
+});
+
+test('command-line limits: Windows quoting, Linux per argument, macOS in total', () => {
+  const { quotedLength, commandLineExcess } = require('../src/main/launch');
+  // Quoting as done by libuv for CreateProcess.
+  assert.equal(quotedLength(''), 2);
+  assert.equal(quotedLength('plain'), 5);
+  assert.equal(quotedLength('a\\b'), 3); // nothing to quote
+  assert.equal(quotedLength('a b'), 5); // "a b"
+  assert.equal(quotedLength('a"b'), 6); // "a\"b"
+  assert.equal(quotedLength('a b\\'), 7); // "a b\\"
+  assert.equal(quotedLength('x \\"y'), 9); // "x \\\"y"
+  assert.equal(quotedLength('a\\b c'), 7); // a backslash in the middle stays single
+  // Windows: 32,767 units in all, NUL included (checked against the real limit on 2026-11-25).
+  const exe = 'C:\\node.exe'; // 11 units
+  const fits = 'x'.repeat(32767 - 11 - 1 - 1); // exe, space, argument, NUL
+  assert.equal(commandLineExcess(exe, [fits], { platform: 'win32' }), 0);
+  assert.equal(commandLineExcess(exe, [fits + 'x'], { platform: 'win32' }), 1);
+  assert.equal(commandLineExcess(exe, ['"'.repeat(16000)], { platform: 'win32' }), 0);
+  assert.ok(commandLineExcess(exe, ['"'.repeat(17000)], { platform: 'win32' }) > 0); // each " counts twice
+  // Through cmd.exe: 8,191.
+  assert.equal(commandLineExcess('cmd.exe', ['x'.repeat(8000)], { platform: 'win32', verbatim: true }), 0);
+  assert.ok(commandLineExcess('cmd.exe', ['x'.repeat(8200)], { platform: 'win32', verbatim: true }) > 0);
+  // Linux: 131,071 bytes per argument (checked on 2026-11-25); é takes 2 bytes.
+  assert.equal(commandLineExcess('/bin/x', ['x'.repeat(131071)], { platform: 'linux' }), 0);
+  assert.equal(commandLineExcess('/bin/x', ['x'.repeat(131072)], { platform: 'linux' }), 1);
+  assert.equal(commandLineExcess('/bin/x', ['é'.repeat(65535)], { platform: 'linux' }), 0);
+  assert.equal(commandLineExcess('/bin/x', ['é'.repeat(65536)], { platform: 'linux' }), 1);
+  assert.equal(commandLineExcess('/bin/x', ['x'.repeat(100000), 'y'.repeat(100000)], { platform: 'linux' }), 0);
+  // macOS: no limit per argument, 1 MiB with the environment.
+  assert.equal(commandLineExcess('/bin/x', ['x'.repeat(500000)], { platform: 'darwin' }), 0);
+  assert.ok(commandLineExcess('/bin/x', ['x'.repeat(500000)], { platform: 'darwin', env: { BIG: 'y'.repeat(600000) } }) > 0);
 });
 
 test('system tray icon: state, tooltip and menu', () => {

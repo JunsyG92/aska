@@ -5,14 +5,14 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('./agents');
-const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
+const { MODES, MODE_ORDER, resolveAgents, buildInvocation, fitInvocation, isModel } = require('./agents');
+const { ConversationStore, buildContextPrompt, HISTORY_CHARS, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
 const sec = require('./security');
 const { runAgent } = require('./runner');
-const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
+const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
 const { buildId, runningInstance } = require('./build');
 const { createTray } = require('./tray');
 const { readSelection, quoteSelection, MAX_CHARS: MAX_SELECTION } = require('./selection');
@@ -618,7 +618,6 @@ function startRun(req) {
   // thread in its session (same agent, same folder), otherwise the context is fed back in.
   const sess = conv.sessions[agent.id];
   const resume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length ? sess.id : null;
-  const fullPrompt = resume ? prompt : buildContextPrompt(conv.turns, prompt);
   // A "/" command of the config may name a model for this request only (null: the CLI's default).
   let model = modelFor(agent);
   if (req.model !== undefined && agent.modelFlag) {
@@ -626,9 +625,25 @@ function startRun(req) {
     model = req.model;
   }
 
+  // The history fed back is cut down if the command would exceed the system's
+  // limit (prompt passed as an argument: Copilot, Cursor).
+  const env = agentEnv(agent);
+  const excess = (i) => {
+    let cmd;
+    try {
+      cmd = buildCommand(agent.launch, i.argv);
+    } catch {
+      return 0; // refused by cmd.exe: launchAgent reports it
+    }
+    return commandLineExcess(cmd.command, cmd.args, { verbatim: cmd.verbatim, env });
+  };
   let inv;
   try {
-    inv = buildInvocation(agent, mode, fullPrompt, { model, resume, trusted: true });
+    inv = fitInvocation(
+      (maxChars) => buildInvocation(agent, mode, resume ? prompt : buildContextPrompt(conv.turns, prompt, maxChars), { model, resume, trusted: true }),
+      excess,
+      HISTORY_CHARS
+    );
   } catch (e) {
     return { error: e.message };
   }
