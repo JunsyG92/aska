@@ -128,6 +128,26 @@ module.exports = {
     argsRejected: 'Agent « {id} » : arguments refusés ({args}), les permissions passent par les modes',
   },
 
+  bots: {
+    invalidId: 'Bot ignoré : nom de dossier invalide « {id} » (lettres minuscules, chiffres, « - » et « _ », en commençant par une lettre)',
+    tooMany: 'Bots : seuls les {max} premiers sont chargés',
+    missingJson: 'Bot « {id} » ignoré : bot.json est absent',
+    notAnObject: 'Bot « {id} » ignoré : bot.json doit contenir un objet',
+    fileError: 'Bot « {id} » : {error}',
+    unknownAgent: 'Bot « {id} » ignoré : agent « {agent} » inconnu ou désactivé',
+    badField: 'Bot « {id} » : "{field}" ignoré (valeur invalide)',
+    autoNotAllowed: 'Bot « {id} » : maxMode "auto" demande "allowAutoMode": true, plafonné à "edit"',
+    autoAtStart: 'Bot « {id} » : mode "auto" refusé au démarrage, remplacé par "edit"',
+    modeAboveMax: 'Bot « {id} » : mode "{mode}" au-dessus de maxMode "{max}", ramené à "{max}"',
+    noMode: "Bot « {id} » ignoré : {agent} ne propose aucun mode jusqu'à \"{mode}\"",
+    badCwd: 'Bot « {id} » : dossier ignoré ({error})',
+    missingSoul: 'Bot « {id} » ignoré : SOUL.md est absent',
+    invalidText: 'Bot « {id} » : {file} contient un caractère invalide',
+    soulTooLong: 'Bot « {id} » ignoré : SOUL.md fait {length} caractères, {max} au maximum',
+    soulLong: 'Bot « {id} » : SOUL.md fait {length} caractères, envoyés à chaque demande (restez sous {max})',
+    memoryCut: 'Bot « {id} » : MEMORY.md dépasse {max} caractères, seules les entrées les plus récentes sont envoyées',
+  },
+
   security: {
     otherOwner: '{path} appartient à un autre utilisateur',
     worldWritable: '{path} est modifiable par tous les utilisateurs',
@@ -143,6 +163,8 @@ module.exports = {
     fileNotOwned: "{file} n'appartient pas à l'utilisateur courant",
     fileWritable: "{file} est modifiable par d'autres utilisateurs (chmod 600 requis)",
     invalidJson: '{file} : JSON invalide ({error})',
+    notAFile: "{file} n'est pas un fichier",
+    fileTooBig: '{file} est trop gros ({max} Ko au maximum)',
   },
 
   launch: {

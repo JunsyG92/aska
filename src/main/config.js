@@ -32,6 +32,8 @@ function paths(env = process.env, home = os.homedir(), platform = process.platfo
     audit: path.join(stateDir, 'history.jsonl'),
     conversations: path.join(stateDir, 'conversations'),
     workspace: path.join(dataDir, 'workspace'),
+    // Bots: same place on every system, outside the config, easy to find and to copy.
+    bots: path.join(home, '.aska', 'bots'),
   };
 }
 
