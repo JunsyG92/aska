@@ -10,6 +10,7 @@ const { ConversationStore, buildContextPrompt, HISTORY_CHARS, MAX_ANSWER } = req
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
+const { loadBots } = require('./bots');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
@@ -36,6 +37,7 @@ app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal');
 let win = null;
 let cfg = null;
 let agents = {};
+let bots = {}; // custom bots (~/.aska/bots), read at startup and on reload
 let warnings = [];
 let trust = null;
 let cwd = null; // folder of the active tab (and of new tabs)
@@ -108,6 +110,10 @@ function loadEverything() {
       } else agent.launch = l;
     }
   }
+  // After the agents: a bot's agent must exist.
+  const b = loadBots(P.bots, { agents, allowAutoMode: cfg.allowAutoMode });
+  bots = b.bots;
+  warnings.push(...b.warnings);
   trust = new sec.TrustStore(P.trust);
   sec.ensurePrivateDir(P.workspace);
   if (!cwd) {
@@ -276,6 +282,8 @@ function publicState() {
     defaultMode: cfg.defaultMode,
     allowAutoMode: cfg.allowAutoMode,
     commands: Object.values(cfg.commands || {}),
+    // Public fields only: the personality stays in the main process.
+    bots: Object.values(bots).map((b) => ({ id: b.id, label: b.label, description: b.description, color: b.color, agent: b.agent, mode: b.mode, maxMode: b.maxMode, avatar: b.avatar })),
     cwd: tilde(cwd),
     cwdIsScratch: cwd === P.workspace,
     shortcut: shortcutOk ? cfg.shortcut : null,

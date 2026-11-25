@@ -130,6 +130,26 @@ module.exports = {
     argsRejected: 'Agent "{id}": arguments rejected ({args}), permissions go through the modes',
   },
 
+  bots: {
+    invalidId: 'Bot ignored: invalid folder name "{id}" (lowercase letters, digits, "-" and "_", starting with a letter)',
+    tooMany: 'Bots: only the first {max} are loaded',
+    missingJson: 'Bot "{id}" ignored: bot.json is missing',
+    notAnObject: 'Bot "{id}" ignored: bot.json must contain an object',
+    fileError: 'Bot "{id}": {error}',
+    unknownAgent: 'Bot "{id}" ignored: unknown or disabled agent "{agent}"',
+    badField: 'Bot "{id}": "{field}" ignored (invalid value)',
+    autoNotAllowed: 'Bot "{id}": maxMode "auto" requires "allowAutoMode": true, capped at "edit"',
+    autoAtStart: 'Bot "{id}": mode "auto" rejected at startup, replaced with "edit"',
+    modeAboveMax: 'Bot "{id}": mode "{mode}" above maxMode "{max}", lowered to "{max}"',
+    noMode: 'Bot "{id}" ignored: {agent} offers no mode up to "{mode}"',
+    badCwd: 'Bot "{id}": folder ignored ({error})',
+    missingSoul: 'Bot "{id}" ignored: SOUL.md is missing',
+    invalidText: 'Bot "{id}": {file} contains an invalid character',
+    soulTooLong: 'Bot "{id}" ignored: SOUL.md is {length} characters long, {max} at most',
+    soulLong: 'Bot "{id}": SOUL.md is {length} characters long, sent with every request (keep it under {max})',
+    memoryCut: 'Bot "{id}": MEMORY.md is longer than {max} characters, only the most recent entries are sent',
+  },
+
   security: {
     otherOwner: '{path} belongs to another user',
     worldWritable: '{path} is writable by all users',
@@ -145,6 +165,8 @@ module.exports = {
     fileNotOwned: '{file} does not belong to the current user',
     fileWritable: '{file} is writable by other users (chmod 600 required)',
     invalidJson: '{file}: invalid JSON ({error})',
+    notAFile: '{file} is not a file',
+    fileTooBig: '{file} is too big ({max} KB at most)',
   },
 
   launch: {

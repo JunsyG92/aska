@@ -162,7 +162,8 @@ function checkWorkdir(dir, mode, home = os.homedir(), ownDirs = []) {
       return { error: t('security.systemRefused', { path: real }) };
     }
     const first = inHome ? path.relative(realHome, real).split(path.sep)[0] : '';
-    if (inHome && /^(\.(ssh|gnupg|config|local|aws|azure|kube|docker)|appdata)$/i.test(first)) {
+    // .aska: the bots' settings and personalities (a bot must not rewrite its own maxMode).
+    if (inHome && /^(\.(ssh|gnupg|config|local|aws|azure|kube|docker|aska)|appdata)$/i.test(first)) {
       return { error: t('security.sensitiveRefused', { path: `~${path.sep}${path.relative(realHome, real)}` }) };
     }
   }
@@ -180,7 +181,6 @@ function writePrivate(file, data) {
   fs.renameSync(tmp, file);
 }
 
-/** Reads a JSON file only if it belongs to the user and only they can write it. */
 // ---------- POSIX ACLs ----------
 // Some systems (domain-joined machines, home folders managed by a policy) put
 // an ACL on every file that names its owner with rwx. The ACL mask then shows up
@@ -229,7 +229,12 @@ function othersCanWriteAcl(fd, ownerUid) {
   return w === null ? true : w;
 }
 
-function readOwnedJson(file) {
+/**
+ * Reads a text file only if it belongs to the user and only they can write it.
+ * { text } | { missing: true } | { error }. The UTF-8 BOM is stripped (Windows
+ * PowerShell 5.1 and Notepad add one); a file over maxBytes is refused.
+ */
+function readOwnedText(file, maxBytes = Infinity) {
   // The checks and the read go through the same descriptor: the file cannot be
   // swapped between the two (symbolic links are followed, as before).
   let fd;
@@ -240,19 +245,27 @@ function readOwnedJson(file) {
   }
   try {
     const st = fs.fstatSync(fd);
+    if (!st.isFile()) return { error: t('security.notAFile', { file }) };
     if (POSIX && st.uid !== uid()) return { error: t('security.fileNotOwned', { file }) };
     // Group or other write bit: refused, unless the real ACL shows that only the owner can write.
     if (POSIX && st.mode & 0o022 && othersCanWriteAcl(fd, st.uid)) {
       return { error: t('security.fileWritable', { file }) };
     }
-    try {
-      // UTF-8 BOM stripped: Windows PowerShell 5.1 and Notepad add one.
-      return { data: JSON.parse(fs.readFileSync(fd, 'utf8').replace(/^\uFEFF/, '')) };
-    } catch (e) {
-      return { error: t('security.invalidJson', { file, error: e.message }) };
-    }
+    if (st.size > maxBytes) return { error: t('security.fileTooBig', { file, max: Math.round(maxBytes / 1024) }) };
+    return { text: fs.readFileSync(fd, 'utf8').replace(/^\uFEFF/, '') };
   } finally {
     fs.closeSync(fd);
+  }
+}
+
+/** Reads a JSON file only if it belongs to the user and only they can write it. */
+function readOwnedJson(file) {
+  const r = readOwnedText(file);
+  if (r.text === undefined) return r;
+  try {
+    return { data: JSON.parse(r.text) };
+  } catch (e) {
+    return { error: t('security.invalidJson', { file, error: e.message }) };
   }
 }
 
@@ -306,6 +319,6 @@ function readRecentPrompts(file, limit = 50) {
 }
 
 module.exports = {
-  resolveBinary, buildEnv, checkWorkdir, readOwnedJson, writePrivate, ensurePrivateDir, aclWritableByOthers,
+  resolveBinary, buildEnv, checkWorkdir, readOwnedJson, readOwnedText, writePrivate, ensurePrivateDir, aclWritableByOthers,
   TrustStore, appendAudit, readRecentPrompts, BASE_ENV, setEnvVar, within, posixSystemDirs,
 };
