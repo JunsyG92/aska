@@ -155,6 +155,8 @@ class ConversationStore {
   }
 }
 
+const HISTORY_CHARS = 24000; // history fed back into a request, at most
+
 const clip = (s, n) => (s.length > n ? s.slice(0, n) + '\n[… truncated]' : s);
 
 /**
@@ -162,7 +164,8 @@ const clip = (s, n) => (s.length > n ? s.slice(0, n) + '\n[… truncated]' : s);
  * the context is fed back into the request: the previous turns, from newest to
  * oldest, as long as the budget allows.
  */
-function buildContextPrompt(turns, prompt, maxChars = 24000) {
+function buildContextPrompt(turns, prompt, maxChars = HISTORY_CHARS) {
+  if (maxChars <= 0) return prompt; // no room left for the history (see fitInvocation)
   const blocks = [];
   let used = 0;
   for (let i = turns.length - 1; i >= 0; i--) {
@@ -186,4 +189,4 @@ function buildContextPrompt(turns, prompt, maxChars = 24000) {
   ].join('\n');
 }
 
-module.exports = { ConversationStore, buildContextPrompt, plainText, validId, titleOf, MAX_ANSWER, ensurePrivateDir };
+module.exports = { ConversationStore, buildContextPrompt, HISTORY_CHARS, plainText, validId, titleOf, MAX_ANSWER, ensurePrivateDir };

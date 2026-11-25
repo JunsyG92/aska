@@ -19,6 +19,7 @@ module.exports = {
     autoDisabled: 'Autonomous mode is disabled (set "allowAutoMode": true in the config to enable it)',
     invalidPrompt: 'Invalid prompt',
     emptyPrompt: 'Empty prompt',
+    promptTooLong: 'This request is too long to be passed to this agent on the command line: shorten it, or use an agent that reads it from standard input (Claude, Codex)',
     invalidModel: 'Invalid model name',
     invalidSession: 'Invalid session id',
     modeNotOffered: '{agent} does not offer the "{mode}" mode',

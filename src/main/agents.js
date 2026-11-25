@@ -240,4 +240,24 @@ function buildInvocation(agent, mode, prompt, { model, resume, trusted } = {}) {
   return { argv, stdin, logArgv };
 }
 
-module.exports = { MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, isDangerousArg, isModel };
+/**
+ * Builds the invocation with as much history as the system's command line can
+ * take (a CLI that receives the prompt as an argument can exceed it).
+ * build(maxChars) returns an invocation whose history fits in maxChars characters
+ * (0: no history); excess(inv) says how far it goes beyond the limit (0: it fits).
+ * The oldest turns go first; if even the request alone is too long, an error.
+ */
+function fitInvocation(build, excess, maxChars) {
+  let budget = maxChars;
+  for (;;) {
+    const inv = build(budget);
+    const over = excess(inv);
+    if (!over) return inv;
+    if (budget <= 0) throw new Error(t('errors.promptTooLong'));
+    // One history character takes at least one unit of the limit: removing
+    // `over` of them (and a margin) is enough, unless whole turns stand in the way.
+    budget = Math.max(0, budget - over - 500);
+  }
+}
+
+module.exports = { MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, fitInvocation, isDangerousArg, isModel };

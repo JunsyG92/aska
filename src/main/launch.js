@@ -96,6 +96,62 @@ function buildCommand(launch, argv) {
   return { command: comspec, args: ['/d', '/s', '/c', `""${launch.command}" ${args.join(' ')}"`], verbatim: true };
 }
 
+// ---------- command-line length ----------
+// Each system limits what a program can receive (measured on 2026-11-25):
+// - Windows: the whole command line once quoted (CreateProcess), 32,767 UTF-16
+//   units with the final NUL; through cmd.exe, 8,191.
+// - Linux: each argument 128 KiB in bytes, NUL included (MAX_ARG_STRLEN), and all
+//   arguments plus the environment a quarter of the stack (usually 2 MiB).
+// - macOS: arguments plus environment, 1 MiB (ARG_MAX).
+// A prompt passed as an argument (Copilot, Cursor) can reach these limits.
+
+const WIN_MAX = 32767;
+const CMD_MAX = 8191;
+const LINUX_ARG_MAX = 128 * 1024;
+const TOTAL_MAX = 1024 * 1024; // macOS; also kept as a safe total on Linux
+
+/** Length of an argument once quoted by libuv (quote_cmd_arg) for CreateProcess. */
+function quotedLength(arg) {
+  if (!arg.length) return 2; // ""
+  if (!/[ \t"]/.test(arg)) return arg.length;
+  if (!/["\\]/.test(arg)) return arg.length + 2;
+  // Each " is escaped, and so are the backslashes right before a " or the closing quote.
+  let n = arg.length + 2;
+  let beforeQuote = true; // read from the end: the closing quote comes first
+  for (let i = arg.length - 1; i >= 0; i--) {
+    const c = arg[i];
+    if (c === '"') {
+      n++;
+      beforeQuote = true;
+    } else if (c === '\\' && beforeQuote) n++;
+    else beforeQuote = false;
+  }
+  return n;
+}
+
+const bytes = (s) => Buffer.byteLength(s, 'utf8') + 1; // with the final NUL
+
+/**
+ * How far a command goes beyond the system limit (0: it can be started).
+ * Unit: UTF-16 units on Windows, bytes elsewhere. `env` counts on macOS and Linux.
+ */
+function commandLineExcess(command, args, { platform = process.platform, verbatim = false, env = null } = {}) {
+  if (platform === 'win32') {
+    if (verbatim) return Math.max(0, [command, ...args].join(' ').length + 1 - CMD_MAX);
+    const len = [command, ...args].reduce((n, a) => n + quotedLength(a) + 1, 0); // spaces, then the NUL
+    return Math.max(0, len - WIN_MAX);
+  }
+  let excess = 0;
+  let total = bytes(command);
+  for (const a of args) {
+    const b = bytes(a);
+    total += b + 8; // + the pointer to it
+    if (platform === 'linux') excess = Math.max(excess, b - LINUX_ARG_MAX);
+  }
+  for (const [k, v] of Object.entries(env || {})) total += bytes(`${k}=${v}`) + 8;
+  return Math.max(excess, total - TOTAL_MAX);
+}
+
 /**
  * Extended PATH: a graphical session does not always have the terminal's PATH,
  * so the usual locations of user-installed CLIs are added.
@@ -128,4 +184,4 @@ function extendedPath({ env = process.env, home = require('os').homedir(), platf
   return parts.join(p.delimiter);
 }
 
-module.exports = { resolveLaunch, buildCommand, parseNpmShim, findOnPath, extendedPath, WIN };
+module.exports = { resolveLaunch, buildCommand, parseNpmShim, findOnPath, extendedPath, quotedLength, commandLineExcess, WIN };
