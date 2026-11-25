@@ -5,12 +5,12 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, buildInvocation, fitInvocation, isModel } = require('./agents');
-const { ConversationStore, buildContextPrompt, HISTORY_CHARS, MAX_ANSWER } = require('./conversations');
+const { MODES, MODE_ORDER, resolveAgents, isModel } = require('./agents');
+const { ConversationStore, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
-const { loadBots } = require('./bots');
+const { loadBots, systemText, fingerprint, invocationFor } = require('./bots');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
@@ -234,6 +234,8 @@ function publicTurn(t) {
     agentId: t.agent,
     label: t.label || t.agent,
     color: a ? a.color : '#888888',
+    bot: typeof t.bot === 'string' ? t.bot : null,
+    botLabel: typeof t.botLabel === 'string' ? t.botLabel : null,
     model: t.model || null,
     mode: t.mode,
     prompt: t.prompt,
@@ -606,6 +608,15 @@ function startRun(req) {
     return { error: t('errors.autoDisabled') };
   }
   if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 100000) return { error: t('errors.invalidPrompt') };
+  // Bot chosen in the window: its personality, and a mode ceiling checked here, not only in the UI.
+  let bot = null;
+  if (req.botId !== undefined && req.botId !== null) {
+    bot = typeof req.botId === 'string' && Object.hasOwn(bots, req.botId) ? bots[req.botId] : null;
+    if (!bot) return { error: t('errors.unknownBot') };
+    if (MODE_ORDER.indexOf(mode) > MODE_ORDER.indexOf(bot.maxMode)) {
+      return { error: t('errors.botMaxMode', { bot: bot.label, mode: MODES[mode].label }) };
+    }
+  }
 
   const tabCwd = typeof conv.cwd === 'string' && !sec.checkWorkdir(conv.cwd, 'read').error ? conv.cwd : P.workspace;
   const dir = sec.checkWorkdir(tabCwd, mode, os.homedir(), [fsRealWorkspace()]);
@@ -624,10 +635,14 @@ function startRun(req) {
 
   // Follow-up in a conversation: native resume if the CLI already has the whole
   // thread in its session (same agent, same folder), otherwise the context is fed back in.
-  const sess = conv.sessions[agent.id];
+  // A CLI session keeps the system prompt of its first request (Claude: system
+  // prompt snapshot), so it is only resumed with the same bot and the same text.
+  const persona = bot ? systemText(bot) : '';
+  const sessionKey = bot ? `${agent.id}:${bot.id}:${fingerprint(persona)}` : agent.id;
+  const sess = Object.hasOwn(conv.sessions, sessionKey) ? conv.sessions[sessionKey] : null;
   const resume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length ? sess.id : null;
-  // A "/" command of the config may name a model for this request only (null: the CLI's default).
-  let model = modelFor(agent);
+  // Model: the request's ("/" command), else the bot's (on its own agent), else the one picked for the agent.
+  let model = bot && bot.agent === agent.id && bot.model !== undefined ? bot.model : modelFor(agent);
   if (req.model !== undefined && agent.modelFlag) {
     if (req.model !== null && !isModel(req.model)) return { error: t('errors.invalidModel') };
     model = req.model;
@@ -645,19 +660,25 @@ function startRun(req) {
     }
     return commandLineExcess(cmd.command, cmd.args, { verbatim: cmd.verbatim, env });
   };
+  const canPass = (args) => {
+    try {
+      buildCommand(agent.launch, args);
+      return true;
+    } catch {
+      return false; // cmd.exe launcher: no argument with spaces
+    }
+  };
   let inv;
   try {
-    inv = fitInvocation(
-      (maxChars) => buildInvocation(agent, mode, resume ? prompt : buildContextPrompt(conv.turns, prompt, maxChars), { model, resume, trusted: true }),
-      excess,
-      HISTORY_CHARS
-    );
+    inv = invocationFor({ agent, mode, prompt, turns: conv.turns, bot, model, resume, excess, canPass });
   } catch (e) {
     return { error: e.message };
   }
 
   const thread = conv;
   const turn = { agent: agent.id, label: agent.label, model, mode, prompt, answer: '', status: 'running', ts: new Date().toISOString() };
+  if (bot) Object.assign(turn, { bot: bot.id, botLabel: bot.label });
+  const who = bot ? bot.label : agent.label;
   thread.turns.push(turn);
   thread.cwd = dir.path;
   let sessionId = null;
@@ -688,7 +709,7 @@ function startRun(req) {
       if (ev.type !== 'session') send({ id, tabId: tab.id, ...ev });
     }
   );
-  tab.run = { id, handle: handleRun, label: agent.label };
+  tab.run = { id, handle: handleRun, label: who };
   pushTabs();
 
   handleRun.done.then((res) => {
@@ -716,12 +737,13 @@ function startRun(req) {
       };
     }
     // The CLI session only "covers" the thread if this turn succeeded.
-    if (ok && sessionId && agent.resumeFlag) thread.sessions[agent.id] = { id: sessionId, cwd: dir.path, upTo: thread.turns.length };
-    else if (!ok) delete thread.sessions[agent.id];
+    if (ok && sessionId && agent.resumeFlag) thread.sessions[sessionKey] = { id: sessionId, cwd: dir.path, upTo: thread.turns.length };
+    else if (!ok) delete thread.sessions[sessionKey];
     store.save(thread);
     sec.appendAudit(P.audit, {
       ts: startedAt,
       agent: agent.id,
+      bot: bot ? bot.id : undefined,
       mode,
       cwd: dir.path,
       bin: agent.binPath,
@@ -749,7 +771,7 @@ function startRun(req) {
     const seen = { visible: !!win && win.isVisible() && !hideTimer, focused: !!win && win.isFocused(), mini, status: turn.status };
     if (shouldNotify(cfg.notify, seen)) {
       const content = notificationContent({
-        agentLabel: agent.label,
+        agentLabel: who,
         status: turn.status,
         answer: turn.answer,
         notice: turn.notice,

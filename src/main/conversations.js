@@ -42,7 +42,7 @@ function summaryOf(c) {
     title: c.title || titleOf(c.turns[0].prompt),
     updatedAt: c.updatedAt,
     turns: c.turns.length,
-    agents: [...new Set(c.turns.map((t) => t.label || t.agent))],
+    agents: [...new Set(c.turns.map((t) => t.botLabel || t.label || t.agent))],
     agentIds: [...new Set(c.turns.map((t) => t.agent))],
     cwd: typeof c.cwd === 'string' ? c.cwd : null,
     preview: previewOf(c.turns),
@@ -162,22 +162,24 @@ const clip = (s, n) => (s.length > n ? s.slice(0, n) + '\n[… truncated]' : s);
 /**
  * For a CLI without session resume (or when switching agents mid-conversation),
  * the context is fed back into the request: the previous turns, from newest to
- * oldest, as long as the budget allows.
+ * oldest, as long as the budget allows. preamble (a bot's personality, for a
+ * CLI that cannot take it as a system prompt) goes first, before the history.
  */
-function buildContextPrompt(turns, prompt, maxChars = HISTORY_CHARS) {
-  if (maxChars <= 0) return prompt; // no room left for the history (see fitInvocation)
+function buildContextPrompt(turns, prompt, maxChars = HISTORY_CHARS, preamble = '') {
+  const withPreamble = (text) => (preamble ? `${preamble}\n\n${text}` : text);
+  if (maxChars <= 0) return withPreamble(prompt); // no room left for the history (see fitInvocation)
   const blocks = [];
   let used = 0;
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i];
     const answer = t.answer.trim() ? clip(t.answer.trim(), 6000) : '(no answer: request interrupted or failed)';
-    const block = `[User]\n${clip(t.prompt, 4000)}\n\n[Assistant: ${t.label || t.agent}]\n${answer}`;
+    const block = `[User]\n${clip(t.prompt, 4000)}\n\n[Assistant: ${t.botLabel || t.label || t.agent}]\n${answer}`;
     if (used + block.length > maxChars && blocks.length) break;
     blocks.unshift(block);
     used += block.length;
   }
-  if (!blocks.length) return prompt;
-  return [
+  if (!blocks.length) return withPreamble(prompt);
+  return withPreamble([
     'Here is the history of the current conversation, from oldest to newest. It is context only: do not answer it again.',
     '',
     '<history>',
@@ -186,7 +188,7 @@ function buildContextPrompt(turns, prompt, maxChars = HISTORY_CHARS) {
     '',
     'New request from the user:',
     prompt,
-  ].join('\n');
+  ].join('\n'));
 }
 
 module.exports = { ConversationStore, buildContextPrompt, HISTORY_CHARS, plainText, validId, titleOf, MAX_ANSWER, ensurePrivateDir };

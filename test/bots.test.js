@@ -224,3 +224,83 @@ test('readOwnedText: BOM, size limit, folder', () => {
   fs.writeFileSync(path.join(d, 'a.json'), '\uFEFF{"ok":true}', { mode: 0o600 });
   assert.deepEqual(sec.readOwnedJson(path.join(d, 'a.json')), { data: { ok: true } });
 });
+
+// ---------- personality injection (ticket 03) ----------
+
+const { buildInvocation } = require('../src/main/agents');
+const { buildContextPrompt } = require('../src/main/conversations');
+const { systemText, botBlock, fingerprint, invocationFor } = require('../src/main/bots');
+
+const BOT = { id: 'trad', label: 'Translator', agent: 'claude', soul: 'You translate into English.', memory: '' };
+const TURNS = [{ prompt: 'Bonjour', answer: 'Hello', agent: 'claude', label: 'Claude', bot: 'trad', botLabel: 'Translator' }];
+
+test('personality: system prompt option for Claude, never in the audit log', () => {
+  const inv = buildInvocation(AGENTS.claude, 'read', 'hi', { system: 'Be brief.', model: 'haiku' });
+  const at = inv.argv.indexOf('--append-system-prompt');
+  assert.ok(at > 0);
+  assert.equal(inv.argv[at + 1], 'Be brief.');
+  assert.equal(inv.stdin, 'hi');
+  assert.equal(inv.logArgv[at + 1], '<system>');
+  assert.ok(!inv.logArgv.includes('Be brief.'));
+  // Codex has no such option: refused rather than silently dropped.
+  assert.throws(() => buildInvocation(AGENTS.codex, 'read', 'hi', { system: 'x' }), /Invalid prompt/);
+  assert.throws(() => buildInvocation(AGENTS.claude, 'read', 'hi', { system: 'a\0b' }), /Invalid prompt/);
+});
+
+test('personality: a custom agent may declare its option, never a dangerous one', () => {
+  const base = { bin: '/x', modes: { read: [] } };
+  const { agents } = resolveAgents({ a: { ...base, systemFlag: '--system' }, b: { ...base, systemFlag: '--dangerously-skip-permissions' }, c: { ...base, systemFlag: 'rm' } });
+  assert.equal(agents.a.systemFlag, '--system');
+  assert.equal(agents.b.systemFlag, undefined);
+  assert.equal(agents.c.systemFlag, undefined);
+});
+
+test('personality: text, block and fingerprint', () => {
+  assert.match(systemText(BOT), /^You are "Translator"[\s\S]*You translate into English\.$/);
+  assert.ok(!systemText(BOT).includes('remember'), 'no memory: no memory section');
+  const withMemory = { ...BOT, memory: '- prefers British spelling' };
+  assert.match(systemText(withMemory), /You translate into English\.\n\nWhat the user asked you to remember[\s\S]*- prefers British spelling$/);
+  assert.match(botBlock({ ...BOT, label: 'A"<b>' }), /^<bot name="Ab">\n[\s\S]*\n<\/bot>$/);
+  assert.equal(fingerprint('x'), fingerprint('x'));
+  assert.notEqual(fingerprint(systemText(BOT)), fingerprint(systemText(withMemory)), 'memory changes the fingerprint');
+  assert.notEqual(fingerprint(systemText(BOT)), fingerprint(systemText({ ...BOT, soul: 'Other.' })), 'SOUL changes the fingerprint');
+  assert.match(fingerprint('x'), /^[0-9a-f]{16}$/);
+});
+
+test('personality: order is bot, then history, then request; turns labelled with the bot', () => {
+  const p = buildContextPrompt(TURNS, 'Merci', 24000, '<bot name="T">x</bot>');
+  assert.match(p, /^<bot name="T">x<\/bot>\n\nHere is the history[\s\S]*\[Assistant: Translator\]\nHello[\s\S]*<\/history>[\s\S]*New request from the user:\nMerci$/);
+  assert.equal(buildContextPrompt(TURNS, 'Merci', 0, 'P'), 'P\n\nMerci', 'no room for history: personality and request');
+  assert.equal(buildContextPrompt([], 'Merci', 24000, 'P'), 'P\n\nMerci');
+  assert.equal(buildContextPrompt([], 'Merci'), 'Merci', 'no bot: unchanged');
+});
+
+test('personality: system prompt when possible, else before the prompt', () => {
+  const req = { mode: 'read', prompt: 'Merci', turns: TURNS, bot: BOT };
+  // Claude: system prompt; the history stays in the prompt.
+  let inv = invocationFor({ ...req, agent: AGENTS.claude });
+  assert.ok(inv.argv.includes('--append-system-prompt'));
+  assert.ok(!inv.stdin.includes('<bot'));
+  assert.match(inv.stdin, /<history>[\s\S]*Merci$/);
+  // Codex, Copilot, Cursor: block before the history.
+  for (const id of ['codex', 'copilot', 'cursor']) {
+    inv = invocationFor({ ...req, agent: AGENTS[id] });
+    const text = inv.stdin || inv.argv.find((a) => a.includes('Merci'));
+    assert.match(text, /^<bot name="Translator">\nYou are "Translator"[\s\S]*<\/bot>\n\nHere is the history[\s\S]*Merci$/, id);
+    assert.ok(!inv.argv.includes('--append-system-prompt'), id);
+  }
+  // cmd.exe launcher (no argument with spaces): before the prompt.
+  inv = invocationFor({ ...req, agent: AGENTS.claude, canPass: () => false });
+  assert.ok(!inv.argv.includes('--append-system-prompt'));
+  assert.match(inv.stdin, /^<bot name="Translator">/);
+  // Personality too long for the command line: before the prompt (stdin has no limit).
+  inv = invocationFor({ ...req, agent: AGENTS.claude, excess: (i) => (i.argv.includes('--append-system-prompt') ? 10 : 0) });
+  assert.ok(!inv.argv.includes('--append-system-prompt'));
+  assert.match(inv.stdin, /^<bot name="Translator">/);
+  // Resumed session: it already has the personality and the history.
+  inv = invocationFor({ ...req, agent: AGENTS.claude, resume: 'abcdef12-3456' });
+  assert.equal(inv.stdin, 'Merci');
+  assert.ok(inv.argv.includes('--resume'));
+  // No bot: exactly as before.
+  assert.deepEqual(invocationFor({ ...req, bot: null, agent: AGENTS.codex }), buildInvocation(AGENTS.codex, 'read', buildContextPrompt(TURNS, 'Merci'), { trusted: true }));
+});

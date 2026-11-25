@@ -4,11 +4,13 @@
 // A bot is a preset (agent, model, modes, folder) plus a personality; it never
 // goes beyond what the agent and the config allow.
 
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readOwnedJson, readOwnedText, checkWorkdir } = require('./security');
-const { MODE_ORDER, isModel } = require('./agents');
+const { MODE_ORDER, isModel, buildInvocation, fitInvocation } = require('./agents');
+const { buildContextPrompt, HISTORY_CHARS } = require('./conversations');
 const { t } = require('../i18n');
 
 const ID_RE = /^[a-z][a-z0-9_-]{0,31}$/; // same rule as the agents
@@ -189,4 +191,47 @@ function loadBots(dir, { agents = {}, allowAutoMode = false, home = os.homedir()
   return { bots, warnings };
 }
 
-module.exports = { loadBots, recentEntries, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
+/**
+ * What a bot adds to each request: its personality, then its memory. The same
+ * text goes into the system prompt (agent with systemFlag) or before the prompt.
+ */
+function systemText(bot) {
+  const parts = [`You are "${bot.label}", an assistant set up by the user. Follow these instructions:`, '', bot.soul];
+  if (bot.memory) parts.push('', 'What the user asked you to remember (oldest first):', '', bot.memory);
+  return parts.join('\n');
+}
+
+/** Agent without systemFlag: the personality as a block, before the history and the request. */
+function botBlock(bot) {
+  return `<bot name="${bot.label.replace(/[<>"&]/g, '')}">\n${systemText(bot)}\n</bot>`;
+}
+
+/**
+ * Builds a request's invocation, with the bot's personality if there is one.
+ * It goes into the system prompt when the CLI has an option for it (systemFlag);
+ * otherwise (no option, cmd.exe launcher, command line too long) as a block
+ * before the history and the request. A resumed session already has it.
+ * excess(inv): how far the command goes beyond the system's limit (see fitInvocation);
+ * canPass(args): whether these arguments can be passed at all.
+ */
+function invocationFor({ agent, mode, prompt, turns, bot = null, model, resume = null, excess = () => 0, canPass = () => true }) {
+  const persona = bot ? systemText(bot) : '';
+  const build = (asSystem) => (maxChars) => {
+    const preamble = persona && !asSystem && !resume ? botBlock(bot) : '';
+    const text = resume ? prompt : buildContextPrompt(turns, prompt, maxChars, preamble);
+    return buildInvocation(agent, mode, text, { model, resume, trusted: true, system: asSystem ? persona : undefined });
+  };
+  if (persona && agent.systemFlag && canPass([agent.systemFlag, persona])) {
+    try {
+      return fitInvocation(build(true), excess, HISTORY_CHARS);
+    } catch { /* does not fit on the command line: before the prompt instead */ }
+  }
+  return fitInvocation(build(false), excess, HISTORY_CHARS);
+}
+
+/** Short fingerprint of the injected text: a CLI session is only resumed with the same text. */
+function fingerprint(text) {
+  return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+module.exports = { loadBots, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
