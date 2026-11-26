@@ -8,6 +8,16 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { t } = require('../../i18n');
 
+// The one spelling of a path: links followed and, on Windows, short names
+// ("RUNNER~1") expanded, as git writes them. Paths are compared with it.
+function realPath(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
 const BRANCH_RE = /^aska\/[a-z0-9][a-z0-9._-]{0,40}\/[0-9]{1,3}$/;
 
 /** Runs git; { ok, out, err }. Never prompts (no credentials asked on a terminal). */
@@ -25,7 +35,7 @@ function git(gitBin, args, cwd) {
 /** Top folder of the repository holding dir, or null. */
 function repoRoot(gitBin, dir) {
   const r = git(gitBin, ['rev-parse', '--show-toplevel'], dir);
-  return r.ok && r.out ? path.resolve(r.out) : null;
+  return r.ok && r.out ? realPath(r.out) : null;
 }
 
 /** Repositories found in root: itself, or its folders (two levels at most). */
@@ -68,7 +78,7 @@ function addWorktree(gitBin, { repo, dir, branch, base = 'HEAD' }) {
   fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
   const r = git(gitBin, ['worktree', 'add', '-b', branch, dir, head.out], top);
   if (!r.ok) return { error: t('tasks.worktreeFailed', { repo, error: r.err.slice(-300) }) };
-  return { dir: fs.realpathSync(dir), branch, base: head.out };
+  return { dir: realPath(dir), branch, base: head.out };
 }
 
 /**
@@ -95,4 +105,4 @@ function summary(gitBin, { dir, base }) {
   };
 }
 
-module.exports = { git, repoRoot, findRepos, addWorktree, removeWorktree, summary, BRANCH_RE };
+module.exports = { realPath, git, repoRoot, findRepos, addWorktree, removeWorktree, summary, BRANCH_RE };

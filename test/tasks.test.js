@@ -20,7 +20,8 @@ i18n.setLanguage('en');
 const GIT = 'git';
 const POSIX = process.platform !== 'win32';
 const hasGit = !spawnSync(GIT, ['--version']).error;
-const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aska-tasks-')));
+// Long, real paths (the CI's temporary folder is a Windows short name: RUNNER~1).
+const tmp = () => fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'aska-tasks-')));
 
 /** A repository with one commit, in dir. */
 function makeRepo(dir) {

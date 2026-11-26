@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { checkWorkdir, within } = require('../security');
 const { MODE_ORDER } = require('../agents');
-const { repoRoot } = require('./worktree');
+const { repoRoot, realPath } = require('./worktree');
 const { t } = require('../../i18n');
 
 const MAX_SUBTASKS = 20;
@@ -34,13 +34,13 @@ function checkTask(input, { bots, agents, allowAutoMode = false, gitBin, home })
     if (!s || typeof s !== 'object' || typeof s.repo !== 'string' || !path.isAbsolute(s.repo)) return { error: t('tasks.badRepo', { n }) };
     let real;
     try {
-      real = fs.realpathSync(s.repo);
+      real = fs.realpathSync.native(s.repo);
     } catch {
       return { error: t('tasks.badRepo', { n }) };
     }
     // A repository of the chosen folder, by its top folder.
     const top = repoRoot(gitBin, real);
-    if (!top || !within(fs.realpathSync(top), root.path)) return { error: t('tasks.repoOutside', { n, repo: s.repo }) };
+    if (!top || !within(top, realPath(root.path))) return { error: t('tasks.repoOutside', { n, repo: s.repo }) };
     const bot = typeof s.botId === 'string' && Object.hasOwn(bots, s.botId) ? bots[s.botId] : null;
     if (!bot) return { error: t('tasks.badBot', { n }) };
     const agent = agents[bot.agent];
@@ -51,9 +51,9 @@ function checkTask(input, { bots, agents, allowAutoMode = false, gitBin, home })
     const mode = s.mode === undefined ? (MODE_ORDER.indexOf(bot.maxMode) >= 1 ? 'edit' : 'read') : s.mode;
     const ok = MODE_ORDER.includes(mode) && MODE_ORDER.indexOf(mode) <= MODE_ORDER.indexOf(bot.maxMode) && agent.modes[mode] && (mode !== 'auto' || allowAutoMode);
     if (!ok) return { error: t('tasks.badMode', { n, bot: bot.label, max: bot.maxMode }) };
-    subtasks.push({ repo: fs.realpathSync(top), botId: bot.id, prompt, mode, allow: [...bot.allow] });
+    subtasks.push({ repo: top, botId: bot.id, prompt, mode, allow: [...bot.allow] });
   }
-  return { goal, root: root.path, subtasks };
+  return { goal, root: realPath(root.path), subtasks };
 }
 
 module.exports = { checkTask, MAX_SUBTASKS };
