@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('aska', {
   onWillHide: on('aska:will-hide'),
   onNewConversation: on('aska:new-conversation'),
   onOpenSettings: on('aska:open-settings'),
+  onSelection: on('aska:selection'),
   onUnread: on('aska:unread'),
   onTabs: on('aska:tabs'),
 });

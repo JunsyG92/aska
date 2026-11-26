@@ -137,7 +137,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     trad: 'Translate into English: {input}',
     sum: { prompt: 'Summarize these notes', description: 'Summary with Haiku', model: 'haiku' },
   };
-  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'en', commands: userCommands, listen: { whisperModel } }), { mode: 0o600 });
+  // No global shortcut: the test never grabs keys on the machine that runs it.
+  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, selectionShortcut: false, language: 'en', commands: userCommands, listen: { whisperModel } }), { mode: 0o600 });
   // The microphone is Chromium's fake device, fed by the recording above.
   // (the audio service must be allowed to read that file: its sandbox is off for the test)
   const args = ['--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${micWav}`, '--disable-features=AudioServiceSandbox', ROOT];
@@ -607,6 +608,46 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(st.activeTab, st.tabs[0]);
     assert.deepEqual(await tabTitles(), ['Summarize main.js (deny)']);
 
+    // ---------- ask about the selection (what the global shortcut runs: aska --selection) ----------
+    const askSelection = () => app.evaluate(({ app }) => app.emit('second-instance', {}, ['--selection']));
+    // Linux: the primary selection (highlighted text); macOS and Windows: the clipboard only.
+    const setBoards = (selection, copied) =>
+      app.evaluate(async ({ clipboard }, [sel, cp]) => {
+        await clipboard.writeText(cp);
+        if (clipboard.selection) await clipboard.selection.writeText(sel);
+      }, [selection, copied]);
+    const linux = process.platform === 'linux';
+    const turnsSel = await turns();
+    await page.fill('#input', 'my draft');
+    await setBoards('const a = 1;\nconst b = 2;', 'copied text');
+    await askSelection();
+    await page.waitForFunction(() => document.querySelector('#input').value.startsWith('> '));
+    if (linux) {
+      assert.equal(await page.inputValue('#input'), '> const a = 1;\n> const b = 2;\n\nmy draft', 'quoted, before the draft');
+      assert.equal(await page.textContent('#status'), '');
+    } else {
+      assert.equal(await page.inputValue('#input'), '> copied text\n\nmy draft');
+      assert.equal(await page.textContent('#status'), 'Quoted from the clipboard (no text selected)');
+    }
+    await page.waitForTimeout(250);
+    await shot('13-selection-light');
+    assert.equal(await turns(), turnsSel, 'nothing is sent');
+    if (linux) {
+      // Nothing highlighted: the clipboard, and the status says so.
+      await setBoards('', 'copied text');
+      await page.fill('#input', '');
+      await askSelection();
+      await page.waitForFunction(() => document.querySelector('#input').value === '> copied text\n\n');
+      assert.equal(await page.textContent('#status'), 'Quoted from the clipboard (no text selected)');
+    }
+    // Nothing at all: the field is left as is.
+    await setBoards('', '');
+    await page.fill('#input', 'kept');
+    await askSelection();
+    await page.waitForFunction(() => /No selected text/.test(document.querySelector('#status').textContent));
+    assert.equal(await page.inputValue('#input'), 'kept');
+    await page.fill('#input', '');
+
     // ---------- "/" commands, run by the window ----------
     const cmdNames = () => page.locator('#cmd-list .cmd-name').allTextContents();
     const modelBefore = await page.textContent('#model-name');
@@ -754,7 +795,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
 
     // French UI: "language" in the config, picked up by "aska --reload" and the next show.
     // Same for the shortcuts: history moved to Ctrl+J, model menu to Alt+Shift+M.
-    fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' }, listen: { whisperModel } }), { mode: 0o600 });
+    fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' }, listen: { whisperModel } }), { mode: 0o600 });
     await app.evaluate(({ app }) => app.emit('second-instance', {}, ['--reload']));
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
@@ -938,7 +979,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(heardConv.turns.at(-1).heard, true);
 
     // ---------- settings panel ----------
-    // Config at this point: { shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
+    // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
     const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));
     const configBefore = readConfig();
     const row = (action) => page.locator(`.set-row[data-action="${action}"]`);

@@ -39,6 +39,7 @@ function paths(env = process.env, home = os.homedir(), platform = process.platfo
 
 const DEFAULTS = {
   shortcut: 'Control+Alt+Space',
+  selectionShortcut: 'Control+Alt+Shift+Space', // asks about the text selected elsewhere
   defaultAgent: 'claude',
   defaultMode: 'read',
   allowAutoMode: false,
@@ -152,6 +153,8 @@ function loadConfig(file, { systemLangs = null } = {}) {
 
   if (typeof u.shortcut === 'string' && /^[\w+ ]{1,40}$/.test(u.shortcut)) cfg.shortcut = u.shortcut;
   else if (u.shortcut === false) cfg.shortcut = null;
+  if (typeof u.selectionShortcut === 'string' && /^[\w+ ]{1,40}$/.test(u.selectionShortcut)) cfg.selectionShortcut = u.selectionShortcut;
+  else if (u.selectionShortcut === false) cfg.selectionShortcut = null;
   if (typeof u.defaultAgent === 'string') cfg.defaultAgent = u.defaultAgent;
   if (MODE_ORDER.includes(u.defaultMode)) {
     // Never start directly in autonomous mode.

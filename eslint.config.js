@@ -31,7 +31,7 @@ module.exports = [
   },
   {
     // ANSI sequences are intended here: we check that they are filtered.
-    files: ['src/main/runner.js', 'src/cli.js', 'test/**/*.js'],
+    files: ['src/main/runner.js', 'src/main/selection.js', 'src/cli.js', 'test/**/*.js'],
     rules: { 'no-control-regex': 'off' },
   },
   {
