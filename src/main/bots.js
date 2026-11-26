@@ -312,11 +312,18 @@ const GIF = (b) => b.toString('latin1', 0, 4) === 'GIF8';
  */
 function importAvatar(botDir, file, { nativeImage }) {
   let buf;
+  let fd;
   try {
-    if (fs.statSync(file).size > IMAGE_MAX) return { error: t('bots.avatarTooBig', { max: IMAGE_MAX / 1024 }) };
-    buf = fs.readFileSync(file);
+    // Size checked and content read through the same descriptor.
+    fd = fs.openSync(file, 'r');
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return { error: t('bots.avatarNotImage') };
+    if (st.size > IMAGE_MAX) return { error: t('bots.avatarTooBig', { max: IMAGE_MAX / 1024 }) };
+    buf = fs.readFileSync(fd);
   } catch (e) {
     return { error: e.message };
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
   const raster = buf.subarray(0, 4).equals(PNG_SIG) || buf.subarray(0, 3).equals(JPEG_SIG) || WEBP(buf) || GIF(buf);
   try {
