@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { readOwnedJson, readOwnedText, checkWorkdir, writePrivate, ensurePrivateDir } = require('./security');
+const { readOwnedJson, readOwnedText, readOwnedFile, checkWorkdir, writePrivate, ensurePrivateDir } = require('./security');
 const { MODE_ORDER, isModel, buildInvocation, fitInvocation } = require('./agents');
 const { avatarColor, SHAPES, EMBLEMS } = require('../renderer/avatar');
 const { buildContextPrompt, HISTORY_CHARS } = require('./conversations');
@@ -131,6 +131,8 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
   }
   // No color in bot.json: the neon of its avatar.
   if (!bot.color) bot.color = avatarColor(bot.label, bot.avatar.variant || 0);
+  // Picture added by hand (avatar.png or avatar.svg), read once here: replaces the generated robot.
+  bot.image = avatarImage(dir, warn);
 
   // SOUL.md: required; too long refuses the bot (never cut silently).
   const s = readOwnedText(path.join(dir, 'SOUL.md'), FILE_MAX);
@@ -191,6 +193,112 @@ function loadBots(dir, { agents = {}, allowAutoMode = false, home = os.homedir()
     if (r.bot) bots[id] = r.bot;
   }
   return { bots, warnings };
+}
+
+// ---------- avatar added by hand (avatar.png or avatar.svg in the bot's folder) ----------
+
+const SVG_MAX = 64 * 1024;
+const IMAGE_MAX = 10 * 1024 * 1024; // source picture before resizing
+const PNG_MAX = 512 * 1024; // avatar.png once resized (128 px)
+const AVATAR_PX = 128;
+
+/**
+ * Cleans an SVG chosen by the user. It is only ever shown as <img src="data:">,
+ * where an SVG runs no script and loads nothing; this is a second line of
+ * defense: scripts, event handlers, foreign content, external links and
+ * resources, entity declarations and animations of links are removed.
+ * Returns { svg } or { error }.
+ */
+function sanitizeSvg(text) {
+  if (typeof text !== 'string' || Buffer.byteLength(text) > SVG_MAX) return { error: t('bots.avatarTooBig', { max: SVG_MAX / 1024 }) };
+  if (text.includes('\0')) return { error: t('bots.avatarNotImage') };
+  let s = text.replace(/^\uFEFF/, '');
+  for (let i = 0, before = ''; i < 6 && s !== before; i++) {
+    before = s;
+    s = s
+      .replace(/<\?[\s\S]*?\?>/g, '') // XML declaration and processing instructions
+      .replace(/<!DOCTYPE[^[>]*(\[[\s\S]*?\])?\s*>/gi, '') // DOCTYPE and its entities
+      .replace(/<!ENTITY[\s\S]*?>/gi, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<(script|foreignObject|iframe|object|embed|audio|video|handler|listener)\b[\s\S]*?<\/\1\s*>/gi, '')
+      .replace(/<(script|foreignObject|iframe|object|embed|audio|video|handler|listener|set)\b[^>]*>/gi, '')
+      .replace(/<\/(script|foreignObject|iframe|object|embed|audio|video|handler|listener|set)\s*>/gi, '')
+      .replace(/<animate\w*\b[^>]*attributeName\s*=\s*["']?(?:xlink:)?href[\s\S]*?(\/>|<\/animate\w*\s*>)/gi, '')
+      // event handlers: onload=, onclick=…
+      .replace(/\s+on[\w-]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      // links and resources: only to the document itself (#id)
+      .replace(/\s+(?:xlink:)?href\s*=\s*("(?!#)[^"]*"|'(?!#)[^']*'|(?!["'#])[^\s>]+)/gi, '')
+      .replace(/url\((?![\s'"]*#)[^)]*\)/gi, 'none')
+      .replace(/@import[^;]*;?/gi, '')
+      .replace(/javascript:/gi, '');
+  }
+  s = s.trim();
+  if (!/^<svg[\s>]/i.test(s) || !/<\/svg\s*>$/i.test(s)) return { error: t('bots.avatarNotImage') };
+  return { svg: s };
+}
+
+/** Image added by hand, as a data URL, or null (the generated avatar). */
+function avatarImage(dir, warn) {
+  const png = readOwnedFile(path.join(dir, 'avatar.png'), PNG_MAX);
+  if (png.data) return 'data:image/png;base64,' + png.data.toString('base64');
+  if (png.error) warn('fileError', { error: png.error });
+  const svg = readOwnedFile(path.join(dir, 'avatar.svg'), SVG_MAX);
+  if (svg.error) warn('fileError', { error: svg.error });
+  if (!svg.data) return null;
+  const clean = sanitizeSvg(svg.data.toString('utf8'));
+  if (clean.error) {
+    warn('fileError', { error: clean.error });
+    return null;
+  }
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(clean.svg);
+}
+
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+const JPEG_SIG = Buffer.from([0xff, 0xd8, 0xff]);
+const WEBP = (b) => b.length > 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP';
+const GIF = (b) => b.toString('latin1', 0, 4) === 'GIF8';
+
+/**
+ * Imports a picture chosen by the user as the bot's avatar. The kind comes from
+ * the content, not the extension. A PNG, JPEG, WebP or GIF is cropped to a
+ * square and resized to 128 px by nativeImage (Electron), saved as avatar.png;
+ * an SVG is cleaned (sanitizeSvg) and saved as avatar.svg. The other one is removed.
+ * Returns {} or { error }.
+ */
+function importAvatar(botDir, file, { nativeImage }) {
+  let buf;
+  try {
+    if (fs.statSync(file).size > IMAGE_MAX) return { error: t('bots.avatarTooBig', { max: IMAGE_MAX / 1024 }) };
+    buf = fs.readFileSync(file);
+  } catch (e) {
+    return { error: e.message };
+  }
+  const raster = buf.subarray(0, 4).equals(PNG_SIG) || buf.subarray(0, 3).equals(JPEG_SIG) || WEBP(buf) || GIF(buf);
+  try {
+    if (raster) {
+      let img = nativeImage.createFromBuffer(buf);
+      if (img.isEmpty()) return { error: t('bots.avatarNotImage') };
+      const { width, height } = img.getSize();
+      const side = Math.min(width, height);
+      img = img.crop({ x: Math.floor((width - side) / 2), y: Math.floor((height - side) / 2), width: side, height: side });
+      if (side > AVATAR_PX) img = img.resize({ width: AVATAR_PX, height: AVATAR_PX, quality: 'best' });
+      writePrivate(path.join(botDir, 'avatar.png'), img.toPNG());
+      fs.rmSync(path.join(botDir, 'avatar.svg'), { force: true });
+      return {};
+    }
+    const clean = sanitizeSvg(buf.toString('utf8'));
+    if (clean.error) return clean;
+    writePrivate(path.join(botDir, 'avatar.svg'), clean.svg);
+    fs.rmSync(path.join(botDir, 'avatar.png'), { force: true });
+    return {};
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+/** Back to the generated avatar. */
+function clearAvatar(botDir) {
+  for (const f of ['avatar.png', 'avatar.svg']) fs.rmSync(path.join(botDir, f), { force: true });
 }
 
 const EXAMPLES = path.join(__dirname, '..', '..', 'assets', 'bots');
@@ -271,4 +379,4 @@ function fingerprint(text) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-module.exports = { loadBots, seedBots, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
+module.exports = { loadBots, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
