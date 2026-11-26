@@ -228,7 +228,7 @@ Select some text anywhere (a page, an error in a terminal, a mail), then press `
 
 A bot is an agent with a personality: a name, instructions, and settings of its own. Type `@` in the field to list them, `@trad hello` to switch the tab to the bot and send the rest (`@trad` alone just switches). Each tab keeps its own bot, shown by its avatar before the agent, in the answers and on the tab; `@` then `Enter`, or **No bot** in the list, goes back to the agent alone. `/agent` changes the agent and keeps the bot. `@@text` sends `@text` as is, and `@` is only read at the start of a message.
 
-At the first launch, Aska copies five example bots, in the interface's language and for your default agent: translator, proofreader, explainer, commit message and code reviewer. They are yours: edit them, delete them or turn them off. Aska never copies them again, so an update never touches them.
+At the first launch, Aska copies five example bots, in the interface's language and for your default agent: translator, proofreader, explainer, commit message and code reviewer. They are yours: edit them, delete them or turn them off, in the **Bots** tab of the settings (name, avatar or a picture of your own, color, model, starting mode, personality) or in their files. Aska never copies them again, so an update never touches them.
 
 Each bot is a folder in `~/.aska/bots/<id>/` (`%USERPROFILE%\.aska\bots\<id>\` on Windows); the folder name is what you type after `@`:
 
@@ -257,7 +257,7 @@ Each bot is a folder in `~/.aska/bots/<id>/` (`%USERPROFILE%\.aska\bots\<id>\` o
 | `label`, `description` | name shown (24 characters) and description in the `@` list |
 | `model` | model used on its own agent (a model picked by hand holds for the tab only) |
 | `mode`, `maxMode` | starting mode and ceiling, `read` by default; `auto` needs `"allowAutoMode": true` and is never the starting mode |
-| `cwd` | working folder (absolute path), checked as any folder |
+| `cwd` | working folder (absolute path): picking the bot with `@` moves the tab there, as `/cd` does; checked as any folder |
 | `color` | `#rrggbb`; by default the color of its avatar |
 | `avatar` | `variant` (another robot for the same name), `shape` and `emblem` (`auto`, `none` or a name; `auto` guesses it from the bot's name) |
 | `enabled` | `false` turns the bot off |
@@ -270,7 +270,7 @@ Each bot is a folder in `~/.aska/bots/<id>/` (`%USERPROFILE%\.aska\bots\<id>\` o
 
 ## Settings
 
-`Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in two tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcuts (show / hide, ask about the selection), the shortcuts inside the window (press the keys to record one), and the fixed keys. **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
+`Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in three tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcuts (show / hide, ask about the selection), the shortcuts inside the window (press the keys to record one), and the fixed keys. **Bots**: create, edit, turn off and delete the [bots](#bots). **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
 
 - On GNOME, the global shortcuts are the "Aska" (`aska --toggle`) and "Aska (selection)" (`aska --selection`) entries of the GNOME custom keyboard shortcuts: the settings change them there, since an application cannot grab a global shortcut under Wayland.
 - Agents, their programs and arguments, `envPassthrough` and the autonomous mode stay in `config.json`, edited by hand: they decide which programs run, so the window cannot change them.

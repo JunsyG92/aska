@@ -1042,6 +1042,25 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.keyboard.press('Escape');
     await page.waitForSelector('#settings', { state: 'hidden' });
 
+    // ---------- a bot with its own folder: picking it moves the tab there ----------
+    const botProject = path.join(home, 'botproject');
+    fs.mkdirSync(botProject);
+    const projBot = path.join(P.bots, 'projet');
+    fs.mkdirSync(projBot);
+    fs.writeFileSync(path.join(projBot, 'bot.json'), JSON.stringify({ agent: 'claude', label: 'Projet', cwd: botProject }), { mode: 0o600 });
+    fs.writeFileSync(path.join(projBot, 'SOUL.md'), 'You work on the project.', { mode: 0o600 });
+    await app.evaluate(({ app }) => app.emit('second-instance', {}, ['--reload'])); // like "aska --reload"
+    await page.waitForFunction(() => window.aska.getState().then((s) => s.bots.some((b) => b.id === 'projet')));
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('aska:new-conversation'));
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
+    await page.waitForTimeout(200);
+    await send('@projet');
+    await page.waitForFunction(() => document.getElementById('bot-name').textContent === 'Projet');
+    assert.equal(await page.textContent('#cwd-name'), '~' + path.sep + 'botproject');
+    await send('Où suis-je ?');
+    await settled('done');
+    assert.ok(samePath(calls().at(-1).cwd, fs.realpathSync(botProject)), `working folder: ${calls().at(-1).cwd}`);
+
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
     const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));

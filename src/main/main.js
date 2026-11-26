@@ -294,7 +294,7 @@ function publicState() {
     allowAutoMode: cfg.allowAutoMode,
     commands: Object.values(cfg.commands || {}),
     // Public fields only: the personality stays in the main process.
-    bots: Object.values(bots).map((b) => ({ id: b.id, label: b.label, description: b.description, color: b.color, agent: b.agent, model: b.model, mode: b.mode, maxMode: b.maxMode, avatar: b.avatar, image: b.image })),
+    bots: Object.values(bots).map((b) => ({ id: b.id, label: b.label, description: b.description, color: b.color, agent: b.agent, model: b.model, mode: b.mode, maxMode: b.maxMode, avatar: b.avatar, image: b.image, cwd: b.cwd })),
     cwd: tilde(cwd),
     cwdIsScratch: cwd === P.workspace,
     shortcut: shortcutOk ? cfg.shortcut : null,
