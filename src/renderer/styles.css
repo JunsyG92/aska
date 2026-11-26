@@ -828,7 +828,50 @@ kbd {
 .set-select { max-width: 260px; }
 .set-number { width: 80px; text-align: right; font-variant-numeric: tabular-nums; }
 .set-inline { display: inline-flex; align-items: center; gap: 6px; }
+.set-inline.wrap { flex-wrap: wrap; justify-content: flex-end; }
 .set-unit { color: var(--muted); font-size: 13px; }
+
+/* Bots tab: the bots as chips, then the form of the selected one. */
+.set-bots { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+.set-bot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: transparent;
+  color: var(--text);
+  font: 13px/1 var(--font);
+  cursor: pointer;
+}
+.set-bot.active { background: var(--surface-2); border-color: var(--muted); }
+.set-bot.dirty .set-bot-name::after { content: ' •'; color: var(--muted); }
+.set-bot.has-error { border-color: var(--err); }
+.set-bot:focus-visible { outline: 2px solid var(--agent); outline-offset: 1px; }
+.set-bot-av { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
+.set-bot-id { color: var(--faint); font: 12px/1 var(--mono); }
+.set-bot-avatar { display: flex; align-items: center; gap: 12px; }
+.set-bot-avatar .set-inline.wrap { justify-content: flex-start; }
+.set-bot-preview { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; flex: none; }
+.set-input, .set-textarea {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: 13px/1.4 var(--font);
+}
+.set-input { width: 260px; max-width: 100%; height: 28px; padding: 0 8px; }
+.set-textarea { width: 100%; min-height: 120px; padding: 8px; resize: vertical; font-family: var(--mono); font-size: 12.5px; }
+.set-color { width: 34px; height: 26px; padding: 0 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
+.set-color:disabled { opacity: 0.45; }
+.set-stack { display: grid; gap: 4px; }
+.set-count { font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.set-count[data-kind='warn'] { color: var(--auto); }
+.set-count[data-kind='err'] { color: var(--err); }
+.set-row.wide { grid-template-columns: minmax(0, 1fr); }
+.set-input:focus-visible, .set-textarea:focus-visible, .set-color:focus-visible { outline: 2px solid var(--agent); outline-offset: 1px; }
 
 .set-switch {
   appearance: none;

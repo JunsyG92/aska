@@ -67,6 +67,7 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
     label: typeof u.label === 'string' && u.label.trim() ? u.label.trim().slice(0, 24) : id,
     description: typeof u.description === 'string' ? u.description.trim().slice(0, 120) : '',
     color: COLOR_RE.test(u.color || '') ? u.color : null, // none: the avatar's (below)
+    ownColor: COLOR_RE.test(u.color || ''), // set in bot.json (the settings show it)
     model: undefined,
     mode: 'read',
     maxMode: 'read',
@@ -155,6 +156,84 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
     }
   }
   return { bot };
+}
+
+/**
+ * Saves the fields the settings edit: label, description, color, model, mode,
+ * avatar and the personality (SOUL.md). bot.json is rewritten with every other
+ * field kept as it is (agent, cwd, maxMode, enabled, later fields…): those stay
+ * in the files. Checked with the rules of loadBots; nothing is written if a
+ * value is refused. values: only the fields that changed.
+ * Returns {} or { errors: { field: message } }.
+ */
+function saveBot(dir, values, { agents = {}, allowAutoMode = false } = {}) {
+  const v = values && typeof values === 'object' ? values : {};
+  const j = readOwnedJson(path.join(dir, 'bot.json'));
+  if (j.error || !j.data || typeof j.data !== 'object' || Array.isArray(j.data)) return { errors: { _: j.error || t('bots.edit.unreadable') } };
+  const raw = { ...j.data };
+  const errors = {};
+  if ('label' in v) {
+    const s = typeof v.label === 'string' ? v.label.trim() : '';
+    if (!s || s.length > 24) errors.label = t('bots.edit.label', { max: 24 });
+    else raw.label = s;
+  }
+  if ('description' in v) {
+    const s = typeof v.description === 'string' ? v.description.trim() : null;
+    if (s === null || s.length > 120) errors.description = t('bots.edit.description', { max: 120 });
+    else if (s) raw.description = s;
+    else delete raw.description;
+  }
+  if ('color' in v) {
+    if (v.color === '' || v.color === null) delete raw.color; // the avatar's
+    else if (typeof v.color === 'string' && COLOR_RE.test(v.color)) raw.color = v.color.toLowerCase();
+    else errors.color = t('bots.edit.color');
+  }
+  if ('model' in v) {
+    if (v.model === '' || v.model === null) delete raw.model; // the agent's
+    else if (isModel(v.model)) raw.model = v.model;
+    else errors.model = t('bots.edit.model');
+  }
+  if ('mode' in v) {
+    // The ceiling stays in the file, read as loadBots reads it.
+    const max = MODE_ORDER.includes(raw.maxMode) && (raw.maxMode !== 'auto' || allowAutoMode) ? raw.maxMode : raw.maxMode === 'auto' ? 'edit' : 'read';
+    const agent = Object.hasOwn(agents, raw.agent) ? agents[raw.agent] : null;
+    if (!MODE_ORDER.includes(v.mode) || v.mode === 'auto' || rank(v.mode) > rank(max) || (agent && !agent.modes[v.mode])) {
+      errors.mode = t('bots.edit.mode', { max });
+    } else raw.mode = v.mode;
+  }
+  if ('avatar' in v) {
+    const a = v.avatar;
+    const ok =
+      a && typeof a === 'object' && !Array.isArray(a) &&
+      (a.variant === undefined || (Number.isInteger(a.variant) && a.variant >= 0 && a.variant < 10000)) &&
+      (a.shape === undefined || a.shape === 'auto' || SHAPES.includes(a.shape)) &&
+      (a.emblem === undefined || a.emblem === 'auto' || a.emblem === 'none' || EMBLEMS.includes(a.emblem));
+    if (!ok) errors.avatar = t('bots.edit.avatar');
+    else {
+      // Defaults are left out: the file stays short.
+      const clean = {};
+      if (a.variant) clean.variant = a.variant;
+      if (a.shape && a.shape !== 'auto') clean.shape = a.shape;
+      if (a.emblem && a.emblem !== 'auto') clean.emblem = a.emblem;
+      if (Object.keys(clean).length) raw.avatar = clean;
+      else delete raw.avatar;
+    }
+  }
+  let soul;
+  if ('soul' in v) {
+    soul = typeof v.soul === 'string' ? v.soul.trim() : null;
+    if (soul === null || soul.includes('\0')) errors.soul = t('bots.edit.soulInvalid');
+    else if (!soul) errors.soul = t('bots.edit.soulEmpty');
+    else if (soul.length > SOUL_MAX) errors.soul = t('bots.edit.soulTooLong', { length: soul.length, max: SOUL_MAX });
+  }
+  if (Object.keys(errors).length) return { errors };
+  try {
+    writePrivate(path.join(dir, 'bot.json'), JSON.stringify(raw, null, 2) + '\n');
+    if (soul !== undefined) writePrivate(path.join(dir, 'SOUL.md'), soul + '\n');
+  } catch (e) {
+    return { errors: { _: e.message } };
+  }
+  return {};
 }
 
 /**
@@ -436,4 +515,4 @@ function fingerprint(text) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-module.exports = { loadBots, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
+module.exports = { loadBots, saveBot, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };

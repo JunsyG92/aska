@@ -10,7 +10,7 @@ const { ConversationStore, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
-const { loadBots, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
+const { loadBots, saveBot, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
@@ -1010,12 +1010,52 @@ function registerIpc() {
     reloadBots();
     return error ? { ...publicState(), error } : publicState();
   });
+  handle('aska:bots-list', () => ({ bots: botsList(), folder: tilde(P.bots) }));
+  // Saves what the settings changed (see saveBot: the fields kept in the files stay).
+  handle('aska:bot-save', (req) => {
+    const id = req && typeof req.id === 'string' ? req.id : null;
+    const bot = id && Object.hasOwn(bots, id) ? bots[id] : null;
+    if (!bot) return { errors: { _: t('errors.unknownBot') } };
+    const r = saveBot(bot.dir, req.values, { agents, allowAutoMode: cfg.allowAutoMode });
+    if (r.errors) return r;
+    reloadBots();
+    return { bots: botsList(), state: publicState() };
+  });
+  handle('aska:bot-open-folder', (id) => {
+    const bot = typeof id === 'string' && Object.hasOwn(bots, id) ? bots[id] : null;
+    if (bot) shell.openPath(bot.dir);
+  });
   handle('aska:bot-avatar-clear', (id) => {
     const bot = typeof id === 'string' && Object.hasOwn(bots, id) ? bots[id] : null;
     if (!bot) return { ...publicState(), error: t('errors.unknownBot') };
     clearAvatar(bot.dir);
     reloadBots();
     return publicState();
+  });
+}
+
+// The settings' Bots tab: every editable field, the personality included (it
+// only leaves the main process here, when the settings ask for it).
+function botsList() {
+  return Object.values(bots).map((b) => {
+    const a = agents[b.agent];
+    return {
+      id: b.id,
+      label: b.label,
+      description: b.description,
+      color: b.ownColor ? b.color : '',
+      model: typeof b.model === 'string' ? b.model : '',
+      mode: b.mode,
+      maxMode: b.maxMode,
+      agent: b.agent,
+      agentLabel: a ? a.label : b.agent,
+      models: a ? [...new Set([...(a.models || []), ...(extraModels[a.id] || [])])] : [],
+      modes: MODE_ORDER.filter((m) => a && a.modes[m] && m !== 'auto'),
+      avatar: b.avatar,
+      image: b.image,
+      soul: b.soul,
+      cwd: b.cwd ? tilde(b.cwd) : null,
+    };
   });
 }
 
