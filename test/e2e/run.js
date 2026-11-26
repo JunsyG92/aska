@@ -952,6 +952,55 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.ok(!fs.existsSync(savedPng));
     assert.match((await page.evaluate(() => window.aska.pickBotAvatar('nope'))).error, /Bot inconnu/);
 
+    // ---------- settings, Bots tab: edit a bot (French UI) ----------
+    const botJson = () => JSON.parse(fs.readFileSync(path.join(P.bots, 'trad', 'bot.json'), 'utf8'));
+    const botSoul = () => fs.readFileSync(path.join(P.bots, 'trad', 'SOUL.md'), 'utf8');
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    await page.click('.set-tab[data-page="bots"]');
+    await page.waitForSelector('.set-bot.active[data-bot="trad"]');
+    assert.equal(await page.locator('.set-bot').count(), 1);
+    assert.equal(await page.inputValue('[data-focus-key="bot-label"]'), 'Translator');
+    assert.equal(await page.inputValue('[data-focus-key="bot-soul"]'), 'You translate into English.');
+    // The bot is read-only: "edit" cannot be picked; "Reset all" is not offered here.
+    assert.equal(await page.locator('.set-section select option[value="edit"]').first().isDisabled(), true);
+    assert.equal(await page.isHidden('.set-btn.outline'), true);
+    assert.match(await page.textContent('.set-body'), /Claude · jusqu’à Lecture seule · dossier : celui de l’onglet/);
+    const previewBefore = await page.getAttribute('.set-bot-preview', 'src');
+    await page.fill('[data-focus-key="bot-label"]', 'Traducteur 2');
+    await page.click('.set-btn.small:has-text("Autre variante")');
+    assert.notEqual(await page.getAttribute('.set-bot-preview', 'src'), previewBefore, 'another robot');
+    assert.match(await page.textContent('.set-bot.active'), /Traducteur 2@trad/);
+    assert.equal(await page.locator('.set-bot.active.dirty').count(), 1, 'marked as changed');
+    // Personality: a warning from 4,000 characters, refused beyond 8,000 (nothing written).
+    await page.fill('[data-focus-key="bot-soul"]', 'x'.repeat(4001));
+    assert.equal(await page.getAttribute('.set-count', 'data-kind'), 'warn');
+    await page.fill('[data-focus-key="bot-soul"]', 'x'.repeat(8001));
+    assert.equal(await page.getAttribute('.set-count', 'data-kind'), 'err');
+    await page.click('.set-btn.primary');
+    await page.waitForSelector('.set-row .set-error');
+    assert.match(await page.textContent('.set-row .set-error'), /8001 caractères : 8000 au maximum/);
+    assert.equal(botJson().label, 'Translator', 'nothing written');
+    await page.fill('[data-focus-key="bot-soul"]', 'Tu traduis en anglais, sans commentaire.');
+    await page.waitForTimeout(200);
+    await shot('14-settings-bots-soul-light');
+    await page.evaluate(() => { document.querySelector('.set-body').scrollTop = 0; });
+    await page.waitForTimeout(150);
+    await shot('14-settings-bots-light');
+    await page.click('.set-btn.primary');
+    await page.waitForFunction(() => document.querySelector('.set-message').dataset.kind === 'ok');
+    assert.match(await page.textContent('.set-message'), /Bot enregistré/);
+    const edited = botJson();
+    assert.equal(edited.label, 'Traducteur 2');
+    assert.deepEqual(edited.avatar, { variant: 1 });
+    assert.equal(edited.agent, 'claude', 'fields of the files kept');
+    assert.equal(edited.model, 'haiku');
+    assert.equal(botSoul(), 'Tu traduis en anglais, sans commentaire.\n');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
+    // The window follows at once: the chip carries the new name.
+    assert.equal(await page.textContent('#bot-name'), 'Traducteur 2');
+
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
     const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));

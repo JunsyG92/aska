@@ -538,3 +538,62 @@ test('avatar added by hand: SVG imported, loaded as a data URL, cleared', () => 
   b = load(root).bots.pic;
   assert.equal(b.image, null, 'back to the generated robot');
 });
+
+// ---------- settings: editing a bot (ticket 08a) ----------
+
+const { saveBot } = require('../src/main/bots');
+
+test('saveBot: edited fields written, fields kept in the files untouched', () => {
+  const root = tmp();
+  const proj = path.join(root, 'proj');
+  fs.mkdirSync(proj);
+  const dir = makeBot(root, 'trad', {
+    agent: 'claude', label: 'Old', color: '#112233', model: 'haiku', mode: 'read', maxMode: 'edit', cwd: proj,
+    enabled: true, shortcut: 'Control+Alt+T', somethingNew: { a: 1 }, avatar: { variant: 3 },
+  }, 'Old soul.');
+  const opts = { agents: AGENTS };
+  assert.deepEqual(saveBot(dir, {
+    label: '  Translator ', description: 'Into English', color: '', model: '', mode: 'edit',
+    avatar: { variant: 0, shape: 'dome', emblem: 'auto' }, soul: '  New soul.\n',
+  }, opts), {});
+  const raw = JSON.parse(fs.readFileSync(path.join(dir, 'bot.json'), 'utf8'));
+  assert.deepEqual(raw, {
+    agent: 'claude', label: 'Translator', mode: 'edit', maxMode: 'edit', cwd: proj, enabled: true,
+    shortcut: 'Control+Alt+T', somethingNew: { a: 1 }, avatar: { shape: 'dome' }, description: 'Into English',
+  }, 'color and model back to the defaults, avatar defaults left out, the rest kept');
+  assert.equal(fs.readFileSync(path.join(dir, 'SOUL.md'), 'utf8'), 'New soul.\n');
+  if (POSIX) assert.equal(fs.statSync(path.join(dir, 'bot.json')).mode & 0o777, 0o600);
+  const b = load(root).bots.trad;
+  assert.equal(b.label, 'Translator');
+  assert.equal(b.mode, 'edit');
+  assert.equal(b.ownColor, false);
+  assert.equal(b.model, undefined);
+  // Only the given fields change.
+  assert.deepEqual(saveBot(dir, { color: '#ABCDEF', model: 'sonnet' }, opts), {});
+  const again = JSON.parse(fs.readFileSync(path.join(dir, 'bot.json'), 'utf8'));
+  assert.equal(again.color, '#abcdef');
+  assert.equal(again.model, 'sonnet');
+  assert.equal(again.label, 'Translator');
+  assert.equal(fs.readFileSync(path.join(dir, 'SOUL.md'), 'utf8'), 'New soul.\n', 'SOUL.md untouched');
+});
+
+test('saveBot: refused values, and then nothing is written', () => {
+  const root = tmp();
+  const dir = makeBot(root, 'ro', { agent: 'claude', maxMode: 'read' }, 'Soul.');
+  const cur = makeBot(root, 'cur', { agent: 'cursor', maxMode: 'edit' }, 'Soul.');
+  const before = fs.readFileSync(path.join(dir, 'bot.json'), 'utf8');
+  const r = saveBot(dir, {
+    label: '', description: 'x'.repeat(121), color: 'blue', model: '--dangerously-skip-permissions', mode: 'edit',
+    avatar: { shape: 'nope' }, soul: 'x'.repeat(8001),
+  }, { agents: AGENTS });
+  assert.deepEqual(Object.keys(r.errors).sort(), ['avatar', 'color', 'description', 'label', 'mode', 'model', 'soul']);
+  assert.match(r.errors.mode, /up to "read"/);
+  assert.match(r.errors.soul, /8001 characters: 8000 at most/);
+  assert.equal(fs.readFileSync(path.join(dir, 'bot.json'), 'utf8'), before, 'nothing written');
+  assert.equal(fs.readFileSync(path.join(dir, 'SOUL.md'), 'utf8'), 'Soul.');
+  assert.match(saveBot(dir, { soul: '   ' }, { agents: AGENTS }).errors.soul, /cannot be empty/);
+  assert.match(saveBot(dir, { mode: 'auto' }, { agents: AGENTS, allowAutoMode: true }).errors.mode, /never "auto"/);
+  assert.ok(saveBot(cur, { mode: 'edit' }, { agents: AGENTS }).errors.mode, 'Cursor has no edit mode');
+  fs.writeFileSync(path.join(dir, 'bot.json'), '{ broken', { mode: 0o600 });
+  assert.match(saveBot(dir, { label: 'x' }, { agents: AGENTS }).errors._, /invalid JSON/);
+});
