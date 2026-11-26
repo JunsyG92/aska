@@ -683,7 +683,7 @@ const { cleanAllow } = require('../src/main/bots');
 test('allowed commands: plain words only, never a shell, a deletion or a push', () => {
   assert.deepEqual(cleanAllow(['git add', ' git   commit ', 'npm test', 'make build', 'pytest', 'git add']), { allow: ['git add', 'git commit', 'npm test', 'make build', 'pytest'], refused: [] });
   const bad = ['git', 'git push', 'git reset', 'git config', 'rm', 'sudo apt', 'bash', 'powershell', 'curl', 'node', 'npm publish', 'npm',
-    'git commit; rm -rf /', 'git commit && x', 'git $(id)', 'git add -A', 'Git commit', 'a b c', '', 42];
+    'git commit; rm -rf /', 'git commit && x', 'git $(id)', 'Git commit', '', 42];
   for (const c of bad) assert.deepEqual(cleanAllow([c]).allow, [], String(c));
   assert.equal(cleanAllow(bad).refused.length, bad.length);
   assert.equal(cleanAllow(Array.from({ length: 20 }, (_, i) => `make t${i}`)).allow.length, 10, 'ten at most');
@@ -759,4 +759,33 @@ test('draft: the description is data, the answer is checked as any bot', () => {
   for (const bad of ['no json here', '{ broken', JSON.stringify({ label: 'x' }), JSON.stringify({ soul: 'y' }), '']) {
     assert.match(parseDraft(bad).error, /could not be read as a bot/, bad);
   }
+});
+
+// ---------- ticket 10: exact prefixes, fixed refusals ----------
+
+const { ALWAYS_DENIED } = require('../src/main/agents');
+
+test('allowed commands: an exact prefix of 1 to 6 words, a workflow always by its name', () => {
+  const ok = ['gh workflow run deploy-qa.yml', 'gh workflow run deploy-qa.yml -f env=qa', 'gh run watch', 'gh pr create', 'git add -A', 'npm run build', 'make release VERSION=1.2.3', 'a b c'];
+  assert.deepEqual(cleanAllow(ok), { allow: ok, refused: [] });
+  const bad = [
+    'gh workflow', 'gh workflow run', 'gh workflow list', 'gh workflow disable deploy.yml', 'gh run', 'gh pr', 'gh api repos/x', 'gh auth token', 'gh secret set X',
+    'gh repo delete x', 'gh release delete v1', 'gh pr close 1 --delete-branch delete',
+    'git -c core.pager=x log', 'npm -g x', 'a b c d e f g', 'git commit -m $(id)', 'git commit -m `id`', 'gh workflow run x.yml; rm -rf /',
+    'gh workflow run "x.yml"', "git commit -m 'x'", 'git push origin main',
+  ];
+  for (const c of bad) assert.deepEqual(cleanAllow([c]).allow, [], c);
+});
+
+test('allowed commands: forced pushes and deletions denied to Claude, whatever is allowed', () => {
+  const inv = buildInvocation(AGENTS.claude, 'edit', 'x', { allow: ['git commit'] });
+  const at = inv.argv.indexOf('--disallowedTools');
+  assert.ok(at > inv.argv.indexOf('--allowedTools'), 'next to the allowed commands');
+  const rules = inv.argv[at + 1].split(',');
+  for (const r of ['Bash(git push --force*)', 'Bash(git push * --force*)', 'Bash(git push * --delete*)', 'Bash(git push * :*)', 'Bash(gh repo delete*)', 'Bash(gh api*)']) {
+    assert.ok(rules.includes(r), r);
+  }
+  assert.equal(rules.length, ALWAYS_DENIED.length);
+  assert.ok(!buildInvocation(AGENTS.claude, 'edit', 'x').argv.includes('--disallowedTools'), 'nothing allowed: nothing to deny');
+  assert.ok(!buildInvocation(AGENTS.claude, 'read', 'x', { allow: ['git commit'] }).argv.includes('--disallowedTools'));
 });

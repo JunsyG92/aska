@@ -152,7 +152,7 @@ module.exports = {
     soulTooLong: 'Bot "{id}" ignored: SOUL.md is {length} characters long, {max} at most',
     soulLong: 'Bot "{id}": SOUL.md is {length} characters long, sent with every request (keep it under {max})',
     memoryCut: 'Bot "{id}": MEMORY.md is longer than {max} characters, only the most recent entries are sent',
-    allowRefused: "Bot \"{id}\": commands refused in \"allow\" ({commands}): one or two plain words, no shell, nothing that deletes, reaches the network or rewrites git history",
+    allowRefused: "Bot \"{id}\": commands refused in \"allow\" ({commands}): an exact prefix of 1 to 6 words, no shell syntax, nothing that deletes, reaches the network or rewrites git history",
     draft: {
       invalid: "Describe the bot in 1 to {max} characters",
       busy: "A proposal is already being written",
@@ -166,7 +166,7 @@ module.exports = {
     edit: {
       unreadable: "bot.json cannot be read",
       maxMode: "A mode among read, edit, and auto only with \"allowAutoMode\": true",
-      allow: "Refused: {commands}. One or two plain words (\"git commit\", \"npm test\"); never a shell, rm, sudo, curl, git push…",
+      allow: "Refused: {commands}. An exact prefix of 1 to 6 words (\"git commit\", \"gh workflow run deploy-qa.yml\"); never a shell, rm, sudo, curl, git push, a workflow without its name…",
       enabled: "On or off",
       duplicate: "Another bot is already called \"{label}\"",
       label: "A name of 1 to {max} characters",
@@ -314,7 +314,7 @@ module.exports = {
         maxModeHint: "What the bot may do at most, even when asked: read only; edit files in the folder (after your approval of the folder); or run commands as well.",
         allow: "Allowed commands",
         allowPlaceholder: "git add, git commit",
-        allowHint: "Commands the bot may run without asking, in a writing mode, separated by commas. Claude only for now; the other agents ignore them.",
+        allowHint: "Commands the bot may run without asking, in a writing mode, separated by commas. Each one is an exact prefix: \"gh workflow run deploy-qa.yml\" allows that workflow only. Forced pushes and deletions stay denied. Claude only for now; the other agents ignore them.",
         allowOff: "Read-only bot: commands are only allowed from the Edit mode up.",
         newBot: "New bot",
         newName: "Name of the new bot",

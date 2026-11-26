@@ -150,7 +150,7 @@ module.exports = {
     soulTooLong: 'Bot « {id} » ignoré : SOUL.md fait {length} caractères, {max} au maximum',
     soulLong: 'Bot « {id} » : SOUL.md fait {length} caractères, envoyés à chaque demande (restez sous {max})',
     memoryCut: 'Bot « {id} » : MEMORY.md dépasse {max} caractères, seules les entrées les plus récentes sont envoyées',
-    allowRefused: "Bot « {id} » : commandes refusées dans \"allow\" ({commands}) : un ou deux mots simples, pas de shell, rien qui supprime, accède au réseau ou réécrit l’historique git",
+    allowRefused: "Bot « {id} » : commandes refusées dans \"allow\" ({commands}) : un préfixe exact de 1 à 6 mots, sans syntaxe de shell, rien qui supprime, accède au réseau ou réécrit l’historique git",
     draft: {
       invalid: "Décrivez le bot en 1 à {max} caractères",
       busy: "Une proposition est déjà en cours d’écriture",
@@ -164,7 +164,7 @@ module.exports = {
     edit: {
       unreadable: "bot.json est illisible",
       maxMode: "Un mode parmi read, edit, et auto seulement avec \"allowAutoMode\": true",
-      allow: "Refusées : {commands}. Un ou deux mots simples (« git commit », « npm test ») ; jamais un shell, rm, sudo, curl, git push…",
+      allow: "Refusées : {commands}. Un préfixe exact de 1 à 6 mots (« git commit », « gh workflow run deploy-qa.yml ») ; jamais un shell, rm, sudo, curl, git push, un workflow sans son nom…",
       enabled: "Activé ou non",
       duplicate: "Un autre bot s’appelle déjà « {label} »",
       label: "Un nom de 1 à {max} caractères",
@@ -312,7 +312,7 @@ module.exports = {
         maxModeHint: "Ce que le bot peut faire au plus, même si on le lui demande : lire seulement ; modifier les fichiers du dossier (après votre accord pour ce dossier) ; ou lancer aussi des commandes.",
         allow: "Commandes autorisées",
         allowPlaceholder: "git add, git commit",
-        allowHint: "Commandes que le bot peut lancer sans demander, dans un mode d’écriture, séparées par des virgules. Claude seulement pour l’instant ; les autres agents les ignorent.",
+        allowHint: "Commandes que le bot peut lancer sans demander, dans un mode d’écriture, séparées par des virgules. Chacune est un préfixe exact : « gh workflow run deploy-qa.yml » n’autorise que ce workflow. Les push forcés et les suppressions restent refusés. Claude seulement pour l’instant ; les autres agents les ignorent.",
         allowOff: "Bot en lecture seule : les commandes ne sont autorisées qu’à partir du mode Édition.",
         newBot: "Nouveau bot",
         newName: "Nom du nouveau bot",
