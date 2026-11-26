@@ -970,6 +970,20 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.fill('[data-focus-key="bot-label"]', 'Traducteur 2');
     await page.click('.set-btn.small:has-text("Autre variante")');
     assert.notEqual(await page.getAttribute('.set-bot-preview', 'src'), previewBefore, 'another robot');
+    // Model: every model of the agent stays offered, whatever is picked.
+    assert.deepEqual(await page.locator('select[data-focus-key="bot-model"] option').allTextContents(), ['Modèle de Claude', 'opus', 'sonnet', 'haiku', 'claude-custom-9', 'fable'], 'also the names typed in the window');
+    assert.equal(await page.inputValue('select[data-focus-key="bot-model"]'), 'haiku');
+    // Color: picking one tints the robot; back to the avatar's for the rest of the test.
+    const previewAuto = await page.getAttribute('.set-bot-preview', 'src');
+    await page.locator('.set-section .set-switch').nth(1).click(); // "Avatar's color" off
+    await page.evaluate(() => {
+      const c = document.querySelector('.set-color');
+      c.value = '#ff0000';
+      c.dispatchEvent(new Event('input'));
+    });
+    assert.match(decodeURIComponent(await page.getAttribute('.set-bot-preview', 'src')), /hsl\(0 100% 62%\)/, 'red robot');
+    await page.locator('.set-section .set-switch').nth(1).click(); // back on
+    assert.equal(await page.getAttribute('.set-bot-preview', 'src'), previewAuto);
     assert.match(await page.textContent('.set-bot.active'), /Traducteur 2@trad/);
     assert.equal(await page.locator('.set-bot.active.dirty').count(), 1, 'marked as changed');
     // Personality: a warning from 4,000 characters, refused beyond 8,000 (nothing written).
