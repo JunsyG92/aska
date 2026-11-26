@@ -2,5 +2,9 @@
   "label": "Commit message",
   "description": "Suggests a commit message (Conventional Commits) for the changes",
   "mode": "read",
-  "maxMode": "read"
+  "maxMode": "edit",
+  "allow": [
+    "git add",
+    "git commit"
+  ]
 }

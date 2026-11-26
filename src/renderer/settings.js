@@ -117,6 +117,8 @@
           color: b.color,
           model: b.model,
           mode: b.mode,
+          maxMode: b.maxMode,
+          allow: (b.allow || []).join(', '),
           soul: b.soul,
           avatar: { variant: b.avatar.variant || 0, shape: b.avatar.shape || 'auto', emblem: b.avatar.emblem || 'auto' },
         };
@@ -129,6 +131,8 @@
     const orig = botFields(b);
     const patch = {};
     for (const [k, v] of Object.entries(botDrafts[b.id])) if (JSON.stringify(v) !== JSON.stringify(orig[k])) patch[k] = v;
+    // Allowed commands: typed as a comma list, saved as a list.
+    if ('allow' in patch) patch.allow = patch.allow.split(',').map((c) => c.trim()).filter(Boolean);
     return patch;
   }
   const botPatches = () => botList().map((b) => [b.id, botChanged(b)]).filter(([, p]) => Object.keys(p).length);
@@ -360,12 +364,28 @@
     );
     modelBox.dataset.focusKey = 'bot-model';
 
-    // Mode: up to the bot's maxMode, among the agent's modes; never auto at startup.
+    // Maximum mode: set here by the user (a bot can never change it). Lowering
+    // it brings the starting mode down with it.
+    const maxSelect = select(
+      b.maxModes.map((m) => ({ value: m, label: opts.modeLabel(m) })),
+      d.maxMode,
+      (v) => {
+        d.maxMode = v;
+        if (RANK.indexOf(d.mode) > RANK.indexOf(v)) d.mode = v === 'auto' ? 'edit' : v;
+        render();
+      }
+    );
+    maxSelect.dataset.focusKey = 'bot-max-mode';
+    // Starting mode: up to the maximum, among the agent's modes; never auto at startup.
     const modeSelect = select(
-      ['read', 'edit'].map((m) => ({ value: m, label: opts.modeLabel(m), disabled: !b.modes.includes(m) || RANK.indexOf(m) > RANK.indexOf(b.maxMode) })),
+      ['read', 'edit'].map((m) => ({ value: m, label: opts.modeLabel(m), disabled: !b.modes.includes(m) || RANK.indexOf(m) > RANK.indexOf(d.maxMode) })),
       d.mode,
       (v) => { d.mode = v; }
     );
+    modeSelect.dataset.focusKey = 'bot-mode';
+    // Commands allowed without asking, in a writing mode (Claude only for now).
+    const allowInput = textInput(d.allow, (v) => { d.allow = v; }, { focusKey: 'bot-allow', placeholder: t('settings.bots.allowPlaceholder') });
+    const allowHint = d.maxMode === 'read' ? t('settings.bots.allowOff') : t('settings.bots.allowHint');
 
     // Personality, with its length: a warning from 4,000 characters, refused beyond 8,000.
     const soul = el('textarea', 'set-textarea');
@@ -391,7 +411,7 @@
     // What stays in the files: the agent, the ceiling, the folder.
     const filesBox = el('div', 'set-inline wrap');
     filesBox.append(
-      el('span', 'set-unit', t('settings.bots.files', { agent: b.agentLabel, max: opts.modeLabel(b.maxMode), cwd: b.cwd || t('settings.bots.tabFolder') })),
+      el('span', 'set-unit', t('settings.bots.files', { agent: b.agentLabel, cwd: b.cwd || t('settings.bots.tabFolder') })),
       button(t('settings.bots.openFolder'), () => opts.api.openBotFolder(b.id))
     );
 
@@ -405,7 +425,9 @@
         field(t('settings.bots.description'), description, { error: errs.description }),
         field(t('settings.bots.color'), colorBox, { error: errs.color }),
         field(t('settings.bots.model'), modelBox, { error: errs.model }),
-        field(t('settings.bots.mode'), modeSelect, { hint: t('settings.bots.modeHint', { max: opts.modeLabel(b.maxMode) }), error: errs.mode }),
+        field(t('settings.bots.maxMode'), maxSelect, { hint: t('settings.bots.maxModeHint'), error: errs.maxMode }),
+        field(t('settings.bots.mode'), modeSelect, { hint: t('settings.bots.modeHint', { max: opts.modeLabel(d.maxMode) }), error: errs.mode }),
+        field(t('settings.bots.allow'), allowInput, { hint: allowHint, error: errs.allow }),
         wide(field(t('settings.bots.soul'), soulBox, { hint: t('settings.bots.soulHint'), error: errs.soul })),
         field(t('settings.bots.filesHint'), filesBox),
         field('', removeButton)

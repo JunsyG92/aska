@@ -430,8 +430,11 @@ test('example bots: copied once, valid, in the language of the interface', () =>
     assert.deepEqual(Object.keys(r.bots).sort(), [...ids].sort());
     for (const b of Object.values(r.bots)) {
       assert.equal(b.agent, 'codex', 'the default agent at copy time');
-      assert.equal(b.mode, 'read');
-      assert.equal(b.maxMode, 'read');
+      assert.equal(b.mode, 'read', 'all start read-only');
+      // The commit bot may write and commit when asked; the others only read.
+      assert.equal(b.maxMode, b.id === 'commit' ? 'edit' : 'read', b.id);
+      assert.deepEqual(b.allow, b.id === 'commit' ? ['git add', 'git commit'] : [], b.id);
+      assert.match(b.soul, /## (Sécurité|Safety)/, `${b.id}: safety rules`);
       assert.ok(b.soul.length > 200 && b.soul.length < 1500, `${b.id}: short personality`);
       assert.ok(b.description);
     }
@@ -671,4 +674,61 @@ test('avatars: a chosen color tints the robot, the drawing stays the same', () =
   assert.equal(AV.avatar('Correcteur', { color: own }).match(/hsl\((\d+) 100% 62%\)/)[1], AV.avatar('Correcteur').match(/hsl\((\d+) 100% 62%\)/)[1]);
   assert.equal(AV.avatar('Correcteur', { color: 'blue' }), AV.avatar('Correcteur'), 'not a #rrggbb: ignored');
   assert.notEqual(AV.avatarDataUrl('Correcteur', { color: '#ff0000' }), AV.avatarDataUrl('Correcteur', { color: '#0000ff' }), 'cached per color');
+});
+
+// ---------- maximum mode and allowed commands in the settings (2026-11-26) ----------
+
+const { cleanAllow } = require('../src/main/bots');
+
+test('allowed commands: plain words only, never a shell, a deletion or a push', () => {
+  assert.deepEqual(cleanAllow(['git add', ' git   commit ', 'npm test', 'make build', 'pytest', 'git add']), { allow: ['git add', 'git commit', 'npm test', 'make build', 'pytest'], refused: [] });
+  const bad = ['git', 'git push', 'git reset', 'git config', 'rm', 'sudo apt', 'bash', 'powershell', 'curl', 'node', 'npm publish', 'npm',
+    'git commit; rm -rf /', 'git commit && x', 'git $(id)', 'git add -A', 'Git commit', 'a b c', '', 42];
+  for (const c of bad) assert.deepEqual(cleanAllow([c]).allow, [], String(c));
+  assert.equal(cleanAllow(bad).refused.length, bad.length);
+  assert.equal(cleanAllow(Array.from({ length: 20 }, (_, i) => `make t${i}`)).allow.length, 10, 'ten at most');
+  assert.deepEqual(cleanAllow('git commit'), { allow: [], refused: [] }, 'not a list');
+});
+
+test('allowed commands: given to Claude in a writing mode only', () => {
+  const allow = ['git add', 'git commit'];
+  const edit = buildInvocation(AGENTS.claude, 'edit', 'commit', { allow });
+  const at = edit.argv.indexOf('--allowedTools');
+  assert.ok(at > 0);
+  assert.equal(edit.argv[at + 1], 'Bash(git add),Bash(git add *),Bash(git commit),Bash(git commit *)', 'one argument');
+  assert.ok(!buildInvocation(AGENTS.claude, 'read', 'x', { allow }).argv.includes('--allowedTools'), 'never in read-only mode');
+  assert.ok(!buildInvocation(AGENTS.claude, 'edit', 'x').argv.includes('--allowedTools'), 'none given');
+  // Copilot and Codex: not supported yet, nothing added (Copilot keeps its shell denied).
+  for (const id of ['codex', 'copilot']) {
+    const argv = buildInvocation(AGENTS[id], 'edit', 'x', { allow }).argv;
+    assert.ok(!argv.includes('--allowedTools') && !argv.some((a) => a.includes('git commit')), id);
+  }
+  assert.ok(buildInvocation(AGENTS.copilot, 'edit', 'x', { allow }).argv.join(' ').includes('--deny-tool shell'));
+  // Through a bot.
+  const inv = invocationFor({ agent: AGENTS.claude, mode: 'edit', prompt: 'x', turns: [], bot: { ...BOT, allow } });
+  assert.ok(inv.argv.includes('--allowedTools'));
+});
+
+test('bot.json "allow" and maxMode: loaded, checked, saved from the settings', () => {
+  const root = tmp();
+  const dir = makeBot(root, 'commit', { agent: 'claude', maxMode: 'edit', allow: ['git add', 'git push', 'git commit'] });
+  let r = load(root);
+  assert.deepEqual(r.bots.commit.allow, ['git add', 'git commit']);
+  assert.match(r.warnings.join('\n'), /"commit": commands refused in "allow" \(git push\)/);
+  // Settings: raise the ceiling, the starting mode follows when it is lowered.
+  assert.deepEqual(saveBot(dir, { maxMode: 'read' }, { agents: AGENTS }), {});
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'bot.json'), 'utf8')).maxMode, 'read');
+  assert.deepEqual(saveBot(dir, { maxMode: 'edit', mode: 'edit' }, { agents: AGENTS }), {});
+  assert.deepEqual(saveBot(dir, { maxMode: 'read' }, { agents: AGENTS }), {});
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'bot.json'), 'utf8')).mode, 'read', 'starting mode brought down');
+  assert.ok(saveBot(dir, { maxMode: 'auto' }, { agents: AGENTS }).errors.maxMode, 'auto needs allowAutoMode');
+  assert.deepEqual(saveBot(dir, { maxMode: 'auto' }, { agents: AGENTS, allowAutoMode: true }), {});
+  // Allowed commands: a refused one blocks the save, an empty list removes the key.
+  assert.match(saveBot(dir, { allow: ['git commit', 'rm'] }, { agents: AGENTS }).errors.allow, /Refused: rm/);
+  assert.deepEqual(saveBot(dir, { allow: ['git commit'] }, { agents: AGENTS }), {});
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'bot.json'), 'utf8')).allow, ['git commit']);
+  assert.deepEqual(saveBot(dir, { allow: [] }, { agents: AGENTS }), {});
+  assert.ok(!('allow' in JSON.parse(fs.readFileSync(path.join(dir, 'bot.json'), 'utf8'))));
+  r = load(root, { allowAutoMode: true });
+  assert.equal(r.bots.commit.maxMode, 'auto');
 });

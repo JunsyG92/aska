@@ -38,6 +38,12 @@ const BUILTIN = {
     // A bot's personality, added to the system prompt. On --resume, the CLI keeps
     // the text of the first request (system prompt snapshot): see sessionKey in main.js.
     systemFlag: '--append-system-prompt',
+    // Commands a bot may run without asking (bot.json "allow"), in a writing
+    // mode only: "git commit" allows "git commit" and "git commit …". One
+    // argument (comma list): the flag would take the next arguments otherwise.
+    // Tested with Claude Code 2.1.332 (-p, acceptEdits): the allowed command
+    // runs, any other command is denied without a prompt.
+    allowFlag: (cmds) => ['--allowedTools', cmds.flatMap((c) => [`Bash(${c})`, `Bash(${c} *)`]).join(',')],
     env: ['ANTHROPIC_*', 'CLAUDE_*'],
     install: 'npm i -g @anthropic-ai/claude-code',
   },
@@ -209,7 +215,7 @@ function resolveAgents(userAgents = {}) {
  * Builds argv (no shell). The prompt is either sent on stdin or passed as a
  * single argument; it is never interpreted by a shell.
  */
-function buildInvocation(agent, mode, prompt, { model, resume, trusted, system } = {}) {
+function buildInvocation(agent, mode, prompt, { model, resume, trusted, system, allow = [] } = {}) {
   const modeArgs = agent.modes[mode];
   if (!modeArgs) throw new Error(t('errors.modeNotOffered', { agent: agent.label, mode: MODES[mode]?.label || mode }));
   if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('errors.emptyPrompt'));
@@ -226,6 +232,9 @@ function buildInvocation(agent, mode, prompt, { model, resume, trusted, system }
   if (resume && agent.resumeFlag) argv.push(agent.resumeFlag, resume);
   // Personality: never written to the audit log (replaced with <system>).
   const systemAt = system ? argv.push(agent.systemFlag, system) - 1 : -1;
+  // Commands allowed to a bot: never in read-only mode, and only for a CLI that
+  // can allow commands one by one (checked by the bots' loader, see bots.js).
+  if (mode !== 'read' && agent.allowFlag && Array.isArray(allow) && allow.length) argv.push(...agent.allowFlag(allow));
   argv.push(...(agent.extraArgs || []));
 
   let stdin = null;

@@ -228,7 +228,7 @@ Select some text anywhere (a page, an error in a terminal, a mail), then press `
 
 A bot is an agent with a personality: a name, instructions, and settings of its own. Type `@` in the field to list them, `@trad hello` to switch the tab to the bot and send the rest (`@trad` alone just switches). Each tab keeps its own bot, shown by its avatar before the agent, in the answers and on the tab; `@` then `Enter`, or **No bot** in the list, goes back to the agent alone. `/agent` changes the agent and keeps the bot. `@@text` sends `@text` as is, and `@` is only read at the start of a message.
 
-At the first launch, Aska copies five example bots, in the interface's language and for your default agent: translator, proofreader, explainer, commit message and code reviewer. They are yours: edit them, delete them or turn them off, in the **Bots** tab of the settings (name, avatar or a picture of your own, color, model, starting mode, personality) or in their files. Aska never copies them again, so an update never touches them.
+At the first launch, Aska copies five example bots, in the interface's language and for your default agent: translator, proofreader, explainer, commit message and code reviewer. They start read-only; the commit one may also write and run `git add` and `git commit` when you switch it to Edit and ask it to commit. They are yours: edit them, delete them or turn them off, in the **Bots** tab of the settings (name, avatar or a picture of your own, color, model, maximum and starting mode, allowed commands, personality) or in their files. Aska never copies them again, so an update never touches them.
 
 Each bot is a folder in `~/.aska/bots/<id>/` (`%USERPROFILE%\.aska\bots\<id>\` on Windows); the folder name is what you type after `@`:
 
@@ -256,7 +256,8 @@ Each bot is a folder in `~/.aska/bots/<id>/` (`%USERPROFILE%\.aska\bots\<id>\` o
 | `agent` | agent it runs on (required; it must be installed and enabled) |
 | `label`, `description` | name shown (24 characters) and description in the `@` list |
 | `model` | model used on its own agent (a model picked by hand holds for the tab only) |
-| `mode`, `maxMode` | starting mode and ceiling, `read` by default; `auto` needs `"allowAutoMode": true` and is never the starting mode |
+| `mode`, `maxMode` | starting mode and ceiling, `read` by default; `auto` needs `"allowAutoMode": true` and is never the starting mode. A bot can never change its own ceiling (`~/.aska` is out of reach of every write mode) |
+| `allow` | commands the bot may run without asking, in a writing mode: `["git add", "git commit"]`. One or two plain words; never a shell, an interpreter, `rm`, `sudo`, `curl`, `git push`, `git reset`… Claude only for now (`--allowedTools`); the other agents ignore it |
 | `cwd` | working folder (absolute path): picking the bot with `@` moves the tab there, as `/cd` does; checked as any folder |
 | `color` | `#rrggbb`; by default the color of its avatar |
 | `avatar` | `variant` (another robot for the same name), `shape` and `emblem` (`auto`, `none` or a name; `auto` guesses it from the bot's name) |
