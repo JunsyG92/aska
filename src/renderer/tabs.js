@@ -10,6 +10,7 @@
     return n;
   };
 
+  const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let nav = null;
   let handlers = {};
 
@@ -50,8 +51,13 @@
         b.setAttribute('role', 'tab');
         b.setAttribute('aria-selected', String(tab.active));
         b.title = `${tab.bot ? `@${tab.bot.label} · ` : ''}${title}${i < 9 ? ` (Ctrl+${i + 1})` : ''}`;
-        // A bot: its initial on its color (before the generated avatars).
-        const dot = tab.bot ? el('span', 'tab-dot bot', tab.bot.label.slice(0, 1).toUpperCase()) : el('span', 'tab-dot');
+        // A bot: its avatar, animated while it works (unless motion is reduced).
+        let dot;
+        if (tab.bot && window.AskaAvatar) {
+          dot = el('img', 'tab-dot bot');
+          dot.alt = '';
+          dot.src = window.AskaAvatar.avatarDataUrl(tab.bot.label, { ...tab.bot.avatar, badge: false, animate: tab.running && !reducedMotion() });
+        } else dot = el('span', 'tab-dot');
         const color = tab.bot ? tab.bot.color : tab.color;
         if (color) dot.style.setProperty('--c', color);
         const close = el('span', 'tab-close', '×');
