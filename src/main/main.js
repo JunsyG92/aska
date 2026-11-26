@@ -1076,6 +1076,10 @@ function botsList() {
       agentLabel: a ? a.label : b.agent,
       models: a ? [...new Set([...(a.models || []), ...(extraModels[a.id] || [])])] : [],
       modes: MODE_ORDER.filter((m) => a && a.modes[m] && m !== 'auto'),
+      // Ceilings the settings offer: auto only when the config allows it.
+      maxModes: MODE_ORDER.filter((m) => a && a.modes[m] && (m !== 'auto' || cfg.allowAutoMode)),
+      allow: b.allow,
+      allowSupported: !!(a && a.allowFlag),
       avatar: b.avatar,
       image: b.image,
       soul: b.soul,

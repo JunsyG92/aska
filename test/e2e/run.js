@@ -963,9 +963,9 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await page.inputValue('[data-focus-key="bot-label"]'), 'Translator');
     assert.equal(await page.inputValue('[data-focus-key="bot-soul"]'), 'You translate into English.');
     // The bot is read-only: "edit" cannot be picked; "Reset all" is not offered here.
-    assert.equal(await page.locator('.set-section select option[value="edit"]').first().isDisabled(), true);
+    assert.equal(await page.locator('select[data-focus-key="bot-mode"] option[value="edit"]').isDisabled(), true);
     assert.equal(await page.isHidden('.set-btn.outline'), true);
-    assert.match(await page.textContent('.set-body'), /Claude · jusqu’à Lecture seule · dossier : celui de l’onglet/);
+    assert.match(await page.textContent('.set-body'), /Claude · dossier : celui de l’onglet/);
     const previewBefore = await page.getAttribute('.set-bot-preview', 'src');
     await page.fill('[data-focus-key="bot-label"]', 'Traducteur 2');
     await page.click('.set-btn.small:has-text("Autre variante")');
@@ -1053,6 +1053,30 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForFunction(() => /Bot supprimé/.test(document.querySelector('.set-message').textContent));
     assert.ok(!fs.existsSync(path.join(P.bots, 'relecteur')));
     assert.equal(await page.locator('.set-bot[data-bot="relecteur"]').count(), 0);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
+
+    // ---------- settings: maximum mode and allowed commands ----------
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    await page.click('.set-tab[data-page="bots"]');
+    await page.click('.set-bot[data-bot="trad"]');
+    await page.waitForSelector('select[data-focus-key="bot-max-mode"]');
+    assert.equal(await page.inputValue('select[data-focus-key="bot-max-mode"]'), 'read');
+    assert.match(await page.textContent('.set-body'), /Bot en lecture seule : les commandes ne sont autorisées/);
+    await page.selectOption('select[data-focus-key="bot-max-mode"]', 'edit');
+    assert.equal(await page.locator('select[data-focus-key="bot-mode"] option[value="edit"]').isDisabled(), false, 'edit can now be the starting mode');
+    assert.deepEqual(await page.locator('select[data-focus-key="bot-max-mode"] option').allTextContents(), ['Lecture seule', 'Édition'], 'no autonomous mode without allowAutoMode');
+    await page.fill('[data-focus-key="bot-allow"]', 'git add, rm');
+    await page.click('.set-btn.primary');
+    await page.waitForSelector('.set-row .set-error');
+    assert.match(await page.textContent('.set-row .set-error'), /Refusées : rm/);
+    assert.equal(botJson().maxMode, undefined, 'nothing written');
+    await page.fill('[data-focus-key="bot-allow"]', 'git add, git commit');
+    await saveSettings();
+    assert.equal(botJson().maxMode, 'edit');
+    assert.deepEqual(botJson().allow, ['git add', 'git commit']);
+    assert.equal(botJson().mode, undefined, 'the starting mode stays read-only');
     await page.keyboard.press('Escape');
     await page.waitForSelector('#settings', { state: 'hidden' });
 

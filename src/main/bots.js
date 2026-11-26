@@ -26,6 +26,36 @@ const MAX_BOTS = 50;
 
 const rank = (m) => MODE_ORDER.indexOf(m);
 
+// Commands a bot may run without asking (bot.json "allow"): one or two plain
+// words ("git commit", "npm test"), no shell syntax. Never: a shell or an
+// interpreter (it would run anything), anything that deletes, raises rights,
+// reaches the network, or rewrites or publishes git history.
+const ALLOW_RE = /^[a-z0-9][a-z0-9._-]*( [a-z0-9][a-z0-9._-]*)?$/;
+const NEVER_FIRST = new Set([
+  'rm', 'rmdir', 'del', 'sudo', 'su', 'doas', 'chmod', 'chown', 'dd', 'mkfs', 'shred', 'curl', 'wget', 'ssh', 'scp', 'rsync',
+  'sh', 'bash', 'zsh', 'fish', 'dash', 'cmd', 'powershell', 'pwsh', 'env', 'xargs', 'eval', 'exec', 'nohup', 'node', 'npx',
+  'python', 'python3', 'perl', 'ruby', 'php', 'deno', 'bun', 'osascript',
+]);
+const NEEDS_SUBCOMMAND = new Set(['git', 'npm', 'pnpm', 'yarn', 'docker', 'kubectl', 'gh', 'cargo', 'go', 'make']);
+const NEVER_GIT = new Set(['push', 'reset', 'clean', 'rebase', 'filter-branch', 'filter-repo', 'config', 'remote', 'gc', 'update-ref', 'reflog', 'replace']);
+const MAX_ALLOW = 10;
+
+/** { allow: the commands kept, refused: the others } (see above). */
+function cleanAllow(list) {
+  const allow = [];
+  const refused = [];
+  for (const raw of Array.isArray(list) ? list : []) {
+    const c = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
+    const [first, second] = c.split(' ');
+    const ok =
+      ALLOW_RE.test(c) && !NEVER_FIRST.has(first) && (second || !NEEDS_SUBCOMMAND.has(first)) &&
+      !(first === 'git' && NEVER_GIT.has(second)) && !(first === 'npm' && second === 'publish');
+    if (ok && !allow.includes(c) && allow.length < MAX_ALLOW) allow.push(c);
+    else if (!ok) refused.push(String(raw));
+  }
+  return { allow, refused };
+}
+
 /**
  * Keeps the most recent entries of MEMORY.md that fit in max characters.
  * Entries are lines, added at the end of the file: the end is kept, whole lines only.
@@ -76,6 +106,7 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
     mode: 'read',
     maxMode: 'read',
     cwd: null,
+    allow: [],
     avatar: {},
     soul: '',
     memory: '',
@@ -120,6 +151,13 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
       if (w.error) warn('badCwd', { error: w.error });
       else bot.cwd = w.path;
     }
+  }
+
+  // Commands allowed without asking (writing modes only, see buildInvocation).
+  if (u.allow !== undefined) {
+    const r = cleanAllow(u.allow);
+    bot.allow = r.allow;
+    if (!Array.isArray(u.allow) || r.refused.length) warn('allowRefused', { commands: r.refused.join(', ') || String(u.allow) });
   }
 
   if (u.avatar !== undefined) {
@@ -197,8 +235,24 @@ function saveBot(dir, values, { agents = {}, allowAutoMode = false } = {}) {
     else if (isModel(v.model)) raw.model = v.model;
     else errors.model = t('bots.edit.model');
   }
+  // The ceiling, set by the user in the settings (a bot can never change it:
+  // ~/.aska is out of reach of every write mode). auto only if the config allows it.
+  if ('maxMode' in v) {
+    if (!MODE_ORDER.includes(v.maxMode) || (v.maxMode === 'auto' && !allowAutoMode)) errors.maxMode = t('bots.edit.maxMode');
+    else {
+      raw.maxMode = v.maxMode;
+      // A starting mode above the new ceiling comes down with it (never auto at startup).
+      if (rank(raw.mode || 'read') > rank(v.maxMode)) raw.mode = v.maxMode === 'auto' ? 'edit' : v.maxMode;
+    }
+  }
+  if ('allow' in v) {
+    const r = cleanAllow(v.allow);
+    if (!Array.isArray(v.allow) || r.refused.length) errors.allow = t('bots.edit.allow', { commands: r.refused.join(', ') });
+    else if (r.allow.length) raw.allow = r.allow;
+    else delete raw.allow;
+  }
   if ('mode' in v) {
-    // The ceiling stays in the file, read as loadBots reads it.
+    // The ceiling, read as loadBots reads it.
     const max = MODE_ORDER.includes(raw.maxMode) && (raw.maxMode !== 'auto' || allowAutoMode) ? raw.maxMode : raw.maxMode === 'auto' ? 'edit' : 'read';
     const agent = Object.hasOwn(agents, raw.agent) ? agents[raw.agent] : null;
     if (!MODE_ORDER.includes(v.mode) || v.mode === 'auto' || rank(v.mode) > rank(max) || (agent && !agent.modes[v.mode])) {
@@ -573,7 +627,7 @@ function invocationFor({ agent, mode, prompt, turns, bot = null, model, resume =
   const build = (asSystem) => (maxChars) => {
     const preamble = persona && !asSystem && !resume ? botBlock(bot) : '';
     const text = resume ? prompt : buildContextPrompt(turns, prompt, maxChars, preamble);
-    return buildInvocation(agent, mode, text, { model, resume, trusted: true, system: asSystem ? persona : undefined });
+    return buildInvocation(agent, mode, text, { model, resume, trusted: true, system: asSystem ? persona : undefined, allow: bot ? bot.allow : [] });
   };
   if (persona && agent.systemFlag && canPass([agent.systemFlag, persona])) {
     try {
@@ -588,4 +642,4 @@ function fingerprint(text) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-module.exports = { loadBots, saveBot, createBot, deleteBot, idFromLabel, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
+module.exports = { cleanAllow, loadBots, saveBot, createBot, deleteBot, idFromLabel, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
