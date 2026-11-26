@@ -175,18 +175,10 @@ body { padding: 14px; }
 .bot-chip:focus-visible { outline: 2px solid var(--bot); outline-offset: 1px; }
 .bot-chip.swap .bot-name { animation: swap 0.28s cubic-bezier(0.2, 1.1, 0.3, 1); }
 .bot-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bot-initial {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--bot);
-  color: #fff;
-  font: 700 11px/1 var(--font);
-}
-.cmd-opt .bot-initial { width: 16px; height: 16px; font-size: 9px; align-self: center; }
+/* Generated avatars (avatar.js): round, drawn on a dark background. */
+.bot-avatar { flex: none; width: 24px; height: 24px; border-radius: 50%; }
+.cmd-opt .bot-avatar { width: 20px; height: 20px; align-self: center; }
+.meta .bot-avatar { width: 28px; height: 28px; margin: -6px 0 -6px -2px; }
 .panel.mini .bot-chip { pointer-events: none; -webkit-app-region: drag; }
 .agent-name { display: inline-block; }
 .agent.swap .agent-name { animation: swap 0.28s cubic-bezier(0.2, 1.1, 0.3, 1); }
@@ -1085,15 +1077,15 @@ kbd {
   background: var(--c, var(--faint));
 }
 /* Tab of a bot: its initial on its color. */
-.tab-dot.bot {
-  display: grid;
-  place-items: center;
-  width: 15px;
-  height: 15px;
-  color: #fff;
-  font: 700 9px/1 var(--font);
+/* Tab of a bot: its avatar, without the emblem (unreadable at 16 px); it scans while working. */
+.tab-dot.bot,
+.tab.running .tab-dot.bot {
+  width: 16px;
+  height: 16px;
+  border: 0;
+  background: none;
+  animation: none;
 }
-.tab.running .tab-dot.bot { color: transparent; font-size: 0; }
 /* Working tab: the dot becomes a small spinning ring. */
 .tab.running .tab-dot {
   width: 9px;

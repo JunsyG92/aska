@@ -170,7 +170,7 @@ function publicTabs() {
       title: t.conv.title || (last ? last.prompt.slice(0, 60) : ''),
       color: last && agents[last.agent] ? agents[last.agent].color : null,
       // Bot of the last turn, if it still exists: the tab shows it.
-      bot: last && typeof last.bot === 'string' && Object.hasOwn(bots, last.bot) ? { id: last.bot, label: bots[last.bot].label, color: bots[last.bot].color } : null,
+      bot: last && typeof last.bot === 'string' && Object.hasOwn(bots, last.bot) ? { id: last.bot, label: bots[last.bot].label, color: bots[last.bot].color, avatar: bots[last.bot].avatar } : null,
       running: !!t.run,
       unread: t.unread,
       active: t.id === tabs.activeId,

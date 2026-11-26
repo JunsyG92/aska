@@ -861,6 +861,13 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await page.isVisible('#bot'), true);
     assert.match(await page.getAttribute('#input', 'placeholder'), /Translator/);
     assert.match(await page.locator('.turn .meta').last().textContent(), /^Translator · Claude/);
+    // Generated avatars: in the turn header (with its emblem), in the chip; images that loaded.
+    const avatars = await page.evaluate(() => [...document.querySelectorAll('.turn .meta img.bot-avatar, #bot-avatar')].map((i) => [i.complete && i.naturalWidth > 0, decodeURIComponent(i.src)]));
+    assert.equal(avatars.length, 2);
+    for (const [loaded, src] of avatars) {
+      assert.ok(loaded, 'avatar drawn');
+      assert.ok(src.includes('class="em"'), 'emblem of a translator');
+    }
     await page.waitForTimeout(300);
     await shot('12-bot-light');
     await page.fill('#input', '@');
@@ -886,8 +893,10 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await settled('done');
     lastBotCall = calls().at(-1);
     assert.match(lastBotCall.stdin, /^<bot name="Translator">\nYou are "Translator"[\s\S]*<\/bot>\n\nHere is the history/);
-    // The tab bar shows the bot.
-    assert.equal(await page.textContent('.tab.active .tab-dot.bot'), 'T');
+    // The tab bar shows the bot's avatar (no emblem at 16 px, still once the answer is in).
+    const tabAvatar = decodeURIComponent(await page.getAttribute('.tab.active img.tab-dot.bot', 'src'));
+    assert.match(tabAvatar, /^data:image\/svg\+xml;charset=utf-8,<svg[\s\S]*aria-label="Translator"/);
+    assert.ok(!tabAvatar.includes('class="bd"') && !tabAvatar.includes('<animate'));
     // Window reloaded (as after a restart): the tab finds its bot and its agent again.
     await page.reload();
     await page.waitForFunction(() => document.getElementById('bot') && !document.getElementById('bot').hidden, null, { timeout: 15000 });

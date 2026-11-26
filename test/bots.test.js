@@ -44,7 +44,7 @@ test('bots: a valid bot is loaded with its defaults', () => {
   assert.equal(b.description, 'Into English');
   assert.equal(b.agent, 'claude');
   assert.equal(b.model, 'haiku');
-  assert.equal(b.color, AGENTS.claude.color, 'color of the agent by default');
+  assert.equal(b.color, require('../src/renderer/avatar').avatarColor('Translator', 0), 'color of the avatar by default');
   assert.equal(b.mode, 'read');
   assert.equal(b.maxMode, 'read', 'read-only by default');
   assert.equal(b.cwd, null);
@@ -173,7 +173,7 @@ test('bots: working folder, avatar, later fields and unknown keys', () => {
     maxMode: 'edit',
     cwd: proj,
     color: '#4285F4',
-    avatar: { variant: 3, shape: 'round', emblem: 'globe' },
+    avatar: { variant: 3, shape: 'dome', emblem: 'translation' },
     shortcut: 'Control+Alt+T',
     starters: ['Hello'],
     output: { autoCopy: true },
@@ -187,7 +187,7 @@ test('bots: working folder, avatar, later fields and unknown keys', () => {
   const dev = r.bots.dev;
   assert.equal(dev.cwd, fs.realpathSync(proj));
   assert.equal(dev.color, '#4285F4');
-  assert.deepEqual(dev.avatar, { variant: 3, shape: 'round', emblem: 'globe' });
+  assert.deepEqual(dev.avatar, { variant: 3, shape: 'dome', emblem: 'translation' });
   assert.ok(!r.warnings.some((w) => w.includes('"dev"')), 'later fields and unknown keys: no warning');
   assert.equal(r.bots.rel.cwd, null);
   assert.deepEqual(r.bots.rel.avatar, {});
@@ -345,4 +345,72 @@ test('@name: suggestions by prefix of the id or the label, then "no bot"', () =>
   assert.equal(suggest('@tr\nx', CTX), null);
   assert.equal(suggest('@@tr', CTX), null);
   assert.equal(suggest('hello @tr', CTX), null);
+});
+
+// ---------- generated avatars (ticket 05) ----------
+
+const AV = require('../src/renderer/avatar');
+
+/** Minimal XML check: every tag is closed in order, attributes are quoted. */
+function wellFormed(xml) {
+  const stack = [];
+  const tagRe = /<(\/?)([a-zA-Z][\w-]*)((?:\s+[\w:-]+="[^"<]*")*)\s*(\/?)>/g;
+  let last = 0;
+  let m;
+  while ((m = tagRe.exec(xml))) {
+    if (/[<>]/.test(xml.slice(last, m.index))) return false; // stray < or > between tags
+    last = tagRe.lastIndex;
+    if (m[1]) {
+      if (stack.pop() !== m[2]) return false;
+    } else if (!m[4]) stack.push(m[2]);
+  }
+  return stack.length === 0 && !/[<>]/.test(xml.slice(last));
+}
+
+test('avatars: same name and variant, same SVG; another variant, another one', () => {
+  assert.equal(AV.avatar('Translator'), AV.avatar('Translator'));
+  const drawing = (svg) => svg.replace(/aria-label="[^"]*"/, '');
+  assert.equal(drawing(AV.avatar('Traducteur', { variant: 2 })), drawing(AV.avatar('traducteur ', { variant: 2 })), 'same robot whatever the case and spaces');
+  assert.notEqual(AV.avatar('Translator', { variant: 0 }), AV.avatar('Translator', { variant: 1 }));
+  assert.notEqual(AV.avatar('Translator'), AV.avatar('Reviewer'));
+  assert.equal(AV.avatarDataUrl('Translator'), AV.avatarDataUrl('Translator'));
+  assert.match(AV.avatarDataUrl('Translator'), /^data:image\/svg\+xml;charset=utf-8,%3Csvg/);
+  assert.match(AV.avatarColor('Translator', 0), /^#[0-9a-f]{6}$/);
+  assert.notEqual(AV.avatarColor('Translator', 0), undefined);
+});
+
+test('avatars: every shape, variant and emblem gives a small, well-formed, script-free SVG', () => {
+  let max = 0;
+  for (const shape of AV.SHAPES) {
+    for (let variant = 0; variant < 30; variant++) {
+      for (const emblem of ['auto', 'none', ...AV.EMBLEMS]) {
+        for (const animate of [false, true]) {
+          const svg = AV.avatar('Bot ' + variant, { shape, variant, emblem, animate });
+          max = Math.max(max, Buffer.byteLength(svg));
+          assert.ok(wellFormed(svg), `${shape}/${variant}/${emblem}`);
+          assert.ok(!/<script|\son\w+=|href="(?!#)|javascript:|<foreignObject/i.test(svg), `${shape}/${variant}/${emblem}`);
+        }
+      }
+    }
+  }
+  assert.ok(max < 6 * 1024, `largest avatar: ${max} bytes`);
+});
+
+test('avatars: name escaped, emblem guessed or initial, no badge at small sizes', () => {
+  const svg = AV.avatar('A<b>"&\'x', { emblem: 'none' });
+  assert.ok(wellFormed(svg));
+  assert.match(svg, /aria-label="A&lt;b&gt;&quot;&amp;'x"/);
+  assert.equal(AV.guessEmblem('Traducteur'), 'translation');
+  assert.equal(AV.guessEmblem('Code reviewer'), 'search');
+  assert.equal(AV.guessEmblem('Écrivain'), 'pen', 'accents ignored');
+  assert.equal(AV.guessEmblem('Zorglub'), null);
+  assert.match(AV.avatar('Zorglub'), /class="ini">Z<\/text>/, 'no known job: the initial');
+  assert.match(AV.avatar('Traducteur'), /class="em"/);
+  assert.ok(!AV.avatar('Traducteur', { badge: false }).includes('class="bd"'), 'no badge');
+  assert.ok(!AV.avatar('Traducteur', { emblem: 'none' }).includes('class="bd"'));
+  assert.ok(AV.avatar('Zorglub', { emblem: 'chef' }).includes('class="em"'), 'emblem fixed in bot.json');
+  assert.ok(!AV.avatar('Zorglub').includes('<animate'), 'still by default');
+  assert.ok(AV.avatar('Zorglub', { animate: true }).includes('<animate'));
+  // An unknown shape falls back to the one drawn from the name.
+  assert.equal(AV.avatar('Zorglub', { shape: 'nope' }), AV.avatar('Zorglub'));
 });

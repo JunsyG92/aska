@@ -183,6 +183,7 @@
 
   function setActivity(text) {
     activityText = text || '';
+    syncBotAvatar();
     activity.hidden = !text;
     $('activity-text').textContent = activityText;
     syncMini();
@@ -291,13 +292,29 @@
     syncModel();
   }
 
+  // Avatar of a bot (bot.json "avatar": variant, shape, emblem). A bot removed
+  // since: drawn from its name alone.
+  const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function botAvatarEl(label, id, opts) {
+    const b = bots.find((x) => x.id === id);
+    const img = el('img', 'bot-avatar');
+    img.alt = '';
+    img.src = window.AskaAvatar.avatarDataUrl(label, { ...(b ? b.avatar : {}), ...opts });
+    return img;
+  }
+  // The chip's avatar scans while the bot works (also in the collapsed pill).
+  function syncBotAvatar() {
+    const b = bot();
+    if (b) $('bot-avatar').src = window.AskaAvatar.avatarDataUrl(b.label, { ...b.avatar, animate: running && !reducedMotion() });
+  }
+
   function syncBot(animate) {
     const b = bot();
     const chip = $('bot');
     chip.hidden = !b;
     if (b) {
       chip.style.setProperty('--bot', b.color);
-      $('bot-initial').textContent = b.label.slice(0, 1).toUpperCase();
+      syncBotAvatar();
       $('bot-name').textContent = b.label;
       chip.title = t('botTitle', { bot: b.label, description: b.description || b.agent });
       if (animate) replay(chip, 'swap');
@@ -435,7 +452,8 @@
     // A bot's turn: "Translator · Claude · haiku…".
     const parts = [turn.botLabel ? turn.label : null, turn.model, modes[turn.mode] ? modes[turn.mode].label : null, secs].filter(Boolean);
     metaEl.dataset.cancelled = t('cancelled');
-    metaEl.replaceChildren(el('i'), el('b', null, turn.botLabel || turn.label), parts.length ? ' · ' + parts.join(' · ') : '');
+    const mark = turn.botLabel ? botAvatarEl(turn.botLabel, turn.bot) : el('i');
+    metaEl.replaceChildren(mark, el('b', null, turn.botLabel || turn.label), parts.length ? ' · ' + parts.join(' · ') : '');
   }
 
   // Next mode, wider than `m`, offered by this agent (autonomous only if allowed,
@@ -745,7 +763,7 @@
     }
     showNotice('');
     thread.querySelectorAll('.notice .rerun').forEach((b) => b.remove()); // only on the last turn
-    live = addTurn({ label: a.label, botLabel: b ? b.label : null, color: a.color, model: model !== undefined ? model : currentModel(), mode, prompt, answer: '', status: 'running' }, false);
+    live = addTurn({ label: a.label, bot: b ? b.id : null, botLabel: b ? b.label : null, color: a.color, model: model !== undefined ? model : currentModel(), mode, prompt, answer: '', status: 'running' }, false);
     live.node.classList.add('live');
     turnCount += 1;
     panel.dataset.state = 'running';
@@ -870,10 +888,7 @@
           if (it.bot && it.none) {
             row.append(el('span', 'cmd-name', '@'), el('span', 'cmd-desc', t('commands.desc.noBot')));
           } else if (it.bot) {
-            const b = bots.find((x) => x.id === it.name);
-            const dot = el('span', 'bot-initial', it.label.slice(0, 1).toUpperCase());
-            if (b) dot.style.setProperty('--bot', b.color);
-            row.append(dot, el('span', 'cmd-name', '@' + it.name), el('span', 'cmd-desc', it.text || it.label));
+            row.append(botAvatarEl(it.label, it.name, { badge: false }), el('span', 'cmd-name', '@' + it.name), el('span', 'cmd-desc', it.text || it.label));
           } else if (it.desc || it.custom) {
             row.append(el('span', 'cmd-name', '/' + it.name));
             if (it.arg) row.append(el('span', 'cmd-arg', t('commands.args.' + it.arg)));

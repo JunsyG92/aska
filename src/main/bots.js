@@ -10,12 +10,12 @@ const os = require('os');
 const path = require('path');
 const { readOwnedJson, readOwnedText, checkWorkdir } = require('./security');
 const { MODE_ORDER, isModel, buildInvocation, fitInvocation } = require('./agents');
+const { avatarColor, SHAPES, EMBLEMS } = require('../renderer/avatar');
 const { buildContextPrompt, HISTORY_CHARS } = require('./conversations');
 const { t } = require('../i18n');
 
 const ID_RE = /^[a-z][a-z0-9_-]{0,31}$/; // same rule as the agents
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
-const SHAPE_RE = /^[a-z][a-z0-9-]{0,23}$/;
 const SOUL_WARN = 4000; // characters: longer works, but costs on every request
 const SOUL_MAX = 8000; // characters: beyond, the bot is refused
 const MEMORY_MAX = 6000; // characters injected from MEMORY.md
@@ -66,7 +66,7 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
     agent: agent.id,
     label: typeof u.label === 'string' && u.label.trim() ? u.label.trim().slice(0, 24) : id,
     description: typeof u.description === 'string' ? u.description.trim().slice(0, 120) : '',
-    color: COLOR_RE.test(u.color || '') ? u.color : agent.color,
+    color: COLOR_RE.test(u.color || '') ? u.color : null, // none: the avatar's (below)
     model: undefined,
     mode: 'read',
     maxMode: 'read',
@@ -75,7 +75,7 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
     soul: '',
     memory: '',
   };
-  if (u.color !== undefined && bot.color !== u.color) bad('color');
+  if (u.color !== undefined && u.color !== null && bot.color !== u.color) bad('color');
   if (u.model !== undefined) {
     if (u.model === null || isModel(u.model)) bot.model = u.model;
     else bad('model');
@@ -123,12 +123,14 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
     else {
       if (Number.isInteger(a.variant) && a.variant >= 0 && a.variant < 10000) bot.avatar.variant = a.variant;
       else if (a.variant !== undefined) bad('avatar.variant');
-      if (typeof a.shape === 'string' && SHAPE_RE.test(a.shape)) bot.avatar.shape = a.shape;
+      if (a.shape === 'auto' || SHAPES.includes(a.shape)) bot.avatar.shape = a.shape;
       else if (a.shape !== undefined) bad('avatar.shape');
-      if (typeof a.emblem === 'string' && a.emblem.trim() && a.emblem.length <= 32 && !a.emblem.includes('\0')) bot.avatar.emblem = a.emblem.trim();
+      if (a.emblem === 'auto' || a.emblem === 'none' || EMBLEMS.includes(a.emblem)) bot.avatar.emblem = a.emblem;
       else if (a.emblem !== undefined) bad('avatar.emblem');
     }
   }
+  // No color in bot.json: the neon of its avatar.
+  if (!bot.color) bot.color = avatarColor(bot.label, bot.avatar.variant || 0);
 
   // SOUL.md: required; too long refuses the bot (never cut silently).
   const s = readOwnedText(path.join(dir, 'SOUL.md'), FILE_MAX);
