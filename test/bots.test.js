@@ -480,10 +480,12 @@ test('avatar SVG: scripts, handlers, foreign content and external resources remo
 <script>alert(1)</script><script href="https://evil.example/x.js"/>
 <SCRIPT type="text/javascript">alert(2)</SCRIPT>
 <foreignObject><iframe src="https://evil.example"></iframe></foreignObject>
-<a href="https://evil.example" xlink:href="javascript:alert(1)"><rect width="10" height="10" onclick='alert(1)' onmouseover=alert(1) fill="url(#g)"/></a>
+<a href="https://evil.example" xlink:href="javascript:alert(1)"><rect width="10" height="10"/></a>
+<rect width="10" height="10" onclick='alert(1)' onmouseover=alert(1) fill="url(#g)" stroke="&#106;avascript:alert(1)"/>
 <image href="https://evil.example/track.png" width="1" height="1"/>
 <use xlink:href="#g"/>
-<rect style="background:url(http://evil.example/x.png); fill:url( '#g')" width="1" height="1"/>
+<rect style="background:url(http://evil.example/x.png)" width="1" height="1"/>
+<rect style="fill:url( '#g')" width="2" height="2"/>
 <style>@import url("https://evil.example/x.css"); rect{fill:url(https://evil.example/f)}</style>
 <set attributeName="href" to="javascript:alert(1)"/>
 <animate attributeName="xlink:href" values="javascript:alert(1)"/>
@@ -497,7 +499,10 @@ test('avatar SVG: scripts, handlers, foreign content and external resources remo
   assert.match(r.svg, /^<svg[\s\S]*<\/svg>$/);
   assert.match(r.svg, /xlink:href="#g"/, 'links inside the document are kept');
   assert.match(r.svg, /fill="url\(#g\)"/);
-  assert.match(r.svg, /fill:url\( '#g'\)/);
+  assert.match(r.svg, /style="fill:url\( '#g'\)"/);
+  assert.match(r.svg, /<rect width="10" height="10" fill="url\(#g\)"\/>/, 'handlers and entity-hidden javascript: removed');
+  assert.match(r.svg, /<text>&amp;boom;<\/text>/, 'an undeclared entity stays plain text');
+  assert.ok(!/<a\b|<image|<style/.test(r.svg), 'links, images and style sheets dropped');
   // Nested tricks do not rebuild a script.
   assert.ok(!/<script/i.test(sanitizeSvg('<svg><scr<script></script>ipt>alert(1)</script></svg>').svg || ''));
 });

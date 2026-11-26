@@ -202,39 +202,84 @@ const IMAGE_MAX = 10 * 1024 * 1024; // source picture before resizing
 const PNG_MAX = 512 * 1024; // avatar.png once resized (128 px)
 const AVATAR_PX = 128;
 
+// Drawing elements kept from an SVG added by hand; anything else is dropped
+// with its content (script, foreignObject, style, image, a, set…).
+const SVG_ELEMENTS = new Set([
+  'svg', 'g', 'defs', 'symbol', 'use', 'path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon',
+  'text', 'tspan', 'title', 'desc', 'lineargradient', 'radialgradient', 'stop', 'clippath', 'mask', 'pattern', 'marker',
+  'filter', 'feblend', 'fecolormatrix', 'fecomponenttransfer', 'fecomposite', 'feflood', 'fegaussianblur', 'femerge',
+  'femergenode', 'feoffset', 'fedropshadow', 'fefuncr', 'fefuncg', 'fefuncb', 'fefunca', 'femorphology', 'feturbulence',
+  'animate', 'animatetransform',
+]);
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+function decodeEntities(s) {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (m, e) => {
+    if (e[0] !== '#') return ENTITIES[e.toLowerCase()];
+    const hex = e[1] === 'x' || e[1] === 'X';
+    const code = Number.parseInt(e.slice(hex ? 2 : 1), hex ? 16 : 10);
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+  });
+}
+const escapeXml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+/** An attribute's value kept, or null: no event handler, no link or resource outside the document. */
+function safeAttribute(name, raw) {
+  if (!/^[A-Za-z][\w:.-]*$/.test(name) || /^on/i.test(name)) return null;
+  const value = decodeEntities(raw);
+  if (/^(xlink:)?href$/i.test(name)) return /^#[\w:.-]+$/.test(value.trim()) ? value.trim() : null;
+  if (/javascript:|@import|expression\(|url\((?![\s'"]*#)/i.test(value)) return null;
+  return value;
+}
+
 /**
  * Cleans an SVG chosen by the user. It is only ever shown as <img src="data:">,
  * where an SVG runs no script and loads nothing; this is a second line of
- * defense: scripts, event handlers, foreign content, external links and
- * resources, entity declarations and animations of links are removed.
+ * defense. The SVG is cut into tags and text, and a new one is written from
+ * the drawing elements and the safe attributes only: no script, event
+ * handler, embedded content, style sheet, entity, external link or resource.
  * Returns { svg } or { error }.
  */
-function sanitizeSvg(text) {
-  if (typeof text !== 'string' || Buffer.byteLength(text) > SVG_MAX) return { error: t('bots.avatarTooBig', { max: SVG_MAX / 1024 }) };
-  if (text.includes('\0')) return { error: t('bots.avatarNotImage') };
-  let s = text.replace(/^\uFEFF/, '');
-  for (let i = 0, before = ''; i < 6 && s !== before; i++) {
-    before = s;
-    s = s
-      .replace(/<\?[\s\S]*?\?>/g, '') // XML declaration and processing instructions
-      .replace(/<!DOCTYPE[^[>]*(\[[\s\S]*?\])?\s*>/gi, '') // DOCTYPE and its entities
-      .replace(/<!ENTITY[\s\S]*?>/gi, '')
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/<(script|foreignObject|iframe|object|embed|audio|video|handler|listener)\b[\s\S]*?<\/\1\s*>/gi, '')
-      .replace(/<(script|foreignObject|iframe|object|embed|audio|video|handler|listener|set)\b[^>]*>/gi, '')
-      .replace(/<\/(script|foreignObject|iframe|object|embed|audio|video|handler|listener|set)\s*>/gi, '')
-      .replace(/<animate\w*\b[^>]*attributeName\s*=\s*["']?(?:xlink:)?href[\s\S]*?(\/>|<\/animate\w*\s*>)/gi, '')
-      // event handlers: onload=, onclick=…
-      .replace(/\s+on[\w-]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-      // links and resources: only to the document itself (#id)
-      .replace(/\s+(?:xlink:)?href\s*=\s*("(?!#)[^"]*"|'(?!#)[^']*'|(?!["'#])[^\s>]+)/gi, '')
-      .replace(/url\((?![\s'"]*#)[^)]*\)/gi, 'none')
-      .replace(/@import[^;]*;?/gi, '')
-      .replace(/javascript:/gi, '');
+function sanitizeSvg(input) {
+  if (typeof input !== 'string' || Buffer.byteLength(input) > SVG_MAX) return { error: t('bots.avatarTooBig', { max: SVG_MAX / 1024 }) };
+  if (input.includes('\0')) return { error: t('bots.avatarNotImage') };
+  const text = input.charCodeAt(0) === 0xfeff ? input.slice(1) : input; // BOM
+  const TOKEN = /<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$)|<[!?][^>]*>?|<(\/?)([A-Za-z][\w:.-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)*)\s*(\/?)>|[^<]+|</g;
+  const ATTR = /([^\s=>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+  const out = [];
+  const open = []; // elements kept and still open
+  let skip = 0; // depth inside a dropped element
+  let root = false;
+  for (const m of text.matchAll(TOKEN)) {
+    const [whole, closing, tag, attrs = '', selfClosing] = m;
+    if (!tag) {
+      // Text: inside the drawing only, escaped (an undeclared entity stays plain text).
+      if (!skip && open.length && whole[0] !== '<') out.push(escapeXml(decodeEntities(whole)));
+      continue;
+    }
+    const name = tag.toLowerCase();
+    if (closing) {
+      if (skip) skip--;
+      else if (open.length && open[open.length - 1] === name) {
+        open.pop();
+        out.push(`</${tag}>`);
+      }
+      continue;
+    }
+    const pairs = [...attrs.matchAll(ATTR)].map(([, n, a, b, c]) => [n, a ?? b ?? c ?? '']);
+    // Animating a link could point it elsewhere: dropped.
+    const animatesLink = name.startsWith('animate') && pairs.some(([n, v]) => n === 'attributeName' && /href/i.test(v));
+    const kept = !skip && !animatesLink && SVG_ELEMENTS.has(name) && (root ? open.length > 0 : name === 'svg');
+    if (!kept) {
+      if (!selfClosing) skip++;
+      continue;
+    }
+    root = true;
+    const safe = pairs.map(([n, v]) => [n, safeAttribute(n, v)]).filter(([, v]) => v !== null);
+    out.push(`<${tag}${safe.map(([n, v]) => ` ${n}="${escapeXml(v)}"`).join('')}${selfClosing ? '/>' : '>'}`);
+    if (!selfClosing) open.push(name);
   }
-  s = s.trim();
-  if (!/^<svg[\s>]/i.test(s) || !/<\/svg\s*>$/i.test(s)) return { error: t('bots.avatarNotImage') };
-  return { svg: s };
+  if (!root || open.length) return { error: t('bots.avatarNotImage') };
+  return { svg: out.join('').trim() };
 }
 
 /** Image added by hand, as a data URL, or null (the generated avatar). */
@@ -325,7 +370,12 @@ function seedBots(dir, { lang = 'en', agent = 'claude', source = EXAMPLES } = {}
     ensurePrivateDir(dir);
     for (const id of ids) {
       const target = path.join(dir, id);
-      if (fs.existsSync(target)) continue;
+      // Created here or not at all (exclusive): a folder that exists is never touched.
+      try {
+        fs.mkdirSync(target, { mode: 0o700 });
+      } catch {
+        continue;
+      }
       const json = JSON.parse(fs.readFileSync(path.join(from, id, 'bot.json'), 'utf8'));
       writePrivate(path.join(target, 'bot.json'), JSON.stringify({ ...json, agent }, null, 2) + '\n');
       writePrivate(path.join(target, 'SOUL.md'), fs.readFileSync(path.join(from, id, 'SOUL.md'), 'utf8'));
