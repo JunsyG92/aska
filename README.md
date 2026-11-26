@@ -257,7 +257,7 @@ Each bot is a folder in `~/.aska/bots/<id>/` (`%USERPROFILE%\.aska\bots\<id>\` o
 | `label`, `description` | name shown (24 characters) and description in the `@` list |
 | `model` | model used on its own agent (a model picked by hand holds for the tab only) |
 | `mode`, `maxMode` | starting mode and ceiling, `read` by default; `auto` needs `"allowAutoMode": true` and is never the starting mode. A bot can never change its own ceiling (`~/.aska` is out of reach of every write mode) |
-| `allow` | commands the bot may run without asking, in a writing mode: `["git add", "git commit"]`. One or two plain words; never a shell, an interpreter, `rm`, `sudo`, `curl`, `git push`, `git reset`… Claude only for now (`--allowedTools`); the other agents ignore it |
+| `allow` | commands the bot may run without asking, in a writing mode: `["git add", "git commit", "gh workflow run deploy-qa.yml"]`. Each one is an exact prefix of 1 to 6 words: it allows that command with any arguments after it, nothing else (a workflow is always named). Never a shell, an interpreter, `rm`, `sudo`, `curl`, `git push`, `git reset`, `gh api`… Forced pushes and remote deletions are always denied. Claude only for now (`--allowedTools`, `--disallowedTools`); the other agents ignore it |
 | `cwd` | working folder (absolute path): picking the bot with `@` moves the tab there, as `/cd` does; checked as any folder |
 | `color` | `#rrggbb`; by default the color of its avatar |
 | `avatar` | `variant` (another robot for the same name), `shape` and `emblem` (`auto`, `none` or a name; `auto` guesses it from the bot's name) |

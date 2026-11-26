@@ -14,6 +14,14 @@ const modeInfo = (id) => ({
   },
 });
 const MODES = { read: modeInfo('read'), edit: modeInfo('edit'), auto: modeInfo('auto') };
+
+// Commands never run, even inside an allowed prefix ("git push" allowed:
+// "git push --force", "git push origin --delete x" still denied).
+const ALWAYS_DENIED = [
+  'git push --force*', 'git push * --force*', 'git push -f*', 'git push * -f*',
+  'git push --delete*', 'git push * --delete*', 'git push -d*', 'git push * -d*', 'git push * :*', 'git push --mirror*', 'git push * --mirror*',
+  'gh repo delete*', 'gh release delete*', 'gh api*',
+];
 const MODE_ORDER = ['read', 'edit', 'auto'];
 
 const BUILTIN = {
@@ -44,6 +52,9 @@ const BUILTIN = {
     // Tested with Claude Code 2.1.332 (-p, acceptEdits): the allowed command
     // runs, any other command is denied without a prompt.
     allowFlag: (cmds) => ['--allowedTools', cmds.flatMap((c) => [`Bash(${c})`, `Bash(${c} *)`]).join(',')],
+    // Always denied when commands are allowed: a deny rule wins over any allow
+    // rule, so "git push" can never become a forced push or a remote deletion.
+    denyFlag: () => ['--disallowedTools', ALWAYS_DENIED.map((c) => `Bash(${c})`).join(',')],
     env: ['ANTHROPIC_*', 'CLAUDE_*'],
     install: 'npm i -g @anthropic-ai/claude-code',
   },
@@ -234,7 +245,10 @@ function buildInvocation(agent, mode, prompt, { model, resume, trusted, system, 
   const systemAt = system ? argv.push(agent.systemFlag, system) - 1 : -1;
   // Commands allowed to a bot: never in read-only mode, and only for a CLI that
   // can allow commands one by one (checked by the bots' loader, see bots.js).
-  if (mode !== 'read' && agent.allowFlag && Array.isArray(allow) && allow.length) argv.push(...agent.allowFlag(allow));
+  if (mode !== 'read' && agent.allowFlag && Array.isArray(allow) && allow.length) {
+    argv.push(...agent.allowFlag(allow));
+    if (agent.denyFlag) argv.push(...agent.denyFlag());
+  }
   argv.push(...(agent.extraArgs || []));
 
   let stdin = null;
@@ -278,4 +292,4 @@ function fitInvocation(build, excess, maxChars) {
   }
 }
 
-module.exports = { MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, fitInvocation, isDangerousArg, isModel };
+module.exports = { ALWAYS_DENIED, MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, fitInvocation, isDangerousArg, isModel };
