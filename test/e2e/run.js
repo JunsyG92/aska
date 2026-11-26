@@ -54,7 +54,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   // App environment: isolated home folder and PATH (Windows: profile and AppData).
   const notifyLog = path.join(home, 'notifications.jsonl');
   const notifications = () => (fs.existsSync(notifyLog) ? fs.readFileSync(notifyLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
-  const env = { ...process.env, SECRET_TOKEN: 'must-not-leak', ASKA_NOTIFY_LOG: notifyLog };
+  const env = { ...process.env, SECRET_TOKEN: 'must-not-leak', ASKA_NOTIFY_LOG: notifyLog, ASKA_NO_TRASH: '1' };
   const setVar = (k, v) => {
     for (const x of Object.keys(env)) if (x.toUpperCase() === k.toUpperCase()) delete env[x];
     if (v !== undefined) env[k] = v;
@@ -959,7 +959,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForSelector('#settings:not([hidden]) .set-section');
     await page.click('.set-tab[data-page="bots"]');
     await page.waitForSelector('.set-bot.active[data-bot="trad"]');
-    assert.equal(await page.locator('.set-bot').count(), 1);
+    assert.equal(await page.locator('.set-bot[data-bot]').count(), 1);
     assert.equal(await page.inputValue('[data-focus-key="bot-label"]'), 'Translator');
     assert.equal(await page.inputValue('[data-focus-key="bot-soul"]'), 'You translate into English.');
     // The bot is read-only: "edit" cannot be picked; "Reset all" is not offered here.
@@ -1000,6 +1000,47 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForSelector('#settings', { state: 'hidden' });
     // The window follows at once: the chip carries the new name.
     assert.equal(await page.textContent('#bot-name'), 'Traducteur 2');
+
+    // ---------- settings, Bots tab: create, turn off, delete (French UI) ----------
+    const newBotJson = () => JSON.parse(fs.readFileSync(path.join(P.bots, 'relecteur', 'bot.json'), 'utf8'));
+    const saveSettings = async () => {
+      await page.click('.set-btn.primary');
+      await page.waitForFunction(() => document.querySelector('.set-message').dataset.kind === 'ok');
+    };
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    await page.click('.set-tab[data-page="bots"]');
+    await page.click('.set-bot.new');
+    await page.fill('[data-focus-key="bot-new"]', 'traducteur 2');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.set-row .set-error');
+    assert.match(await page.textContent('.set-row .set-error'), /s’appelle déjà « traducteur 2 »/, 'name taken');
+    await page.fill('[data-focus-key="bot-new"]', 'Relecteur');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.set-bot.active[data-bot="relecteur"]');
+    assert.match(await page.textContent('.set-message'), /Bot créé : @relecteur/);
+    assert.deepEqual(newBotJson(), { label: 'Relecteur', agent: 'claude', mode: 'read', maxMode: 'read' }, 'default agent, read-only');
+    assert.match(await page.inputValue('[data-focus-key="bot-soul"]'), /Tu es Relecteur/);
+    await page.fill('[data-focus-key="bot-soul"]', 'Tu relis du code.');
+    await saveSettings();
+    assert.ok((await page.evaluate(() => window.aska.getState())).bots.some((x) => x.id === 'relecteur'), 'callable with @');
+    // Turned off: kept on disk, greyed in the list, gone from "@".
+    await page.locator('.set-section .set-switch').first().click();
+    await saveSettings();
+    assert.equal(newBotJson().enabled, false);
+    await page.waitForSelector('.set-bot.off[data-bot="relecteur"]');
+    assert.ok(!(await page.evaluate(() => window.aska.getState())).bots.some((x) => x.id === 'relecteur'));
+    await shot('15-settings-bot-off-light');
+    // Deleted in two clicks.
+    await page.click('.set-btn.danger');
+    assert.match(await page.textContent('.set-message'), /Cliquez encore pour supprimer Relecteur/);
+    assert.ok(fs.existsSync(path.join(P.bots, 'relecteur')), 'not after one click');
+    await page.click('.set-btn.danger.armed');
+    await page.waitForFunction(() => /Bot supprimé/.test(document.querySelector('.set-message').textContent));
+    assert.ok(!fs.existsSync(path.join(P.bots, 'relecteur')));
+    assert.equal(await page.locator('.set-bot[data-bot="relecteur"]').count(), 0);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
 
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
