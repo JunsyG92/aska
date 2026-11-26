@@ -94,6 +94,11 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   };
   // No global shortcut: the test never grabs keys on the machine that runs it.
   fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, selectionShortcut: false, language: 'en', commands: userCommands }), { mode: 0o600 });
+  // A bot, chosen by the requests sent at the end of the test.
+  const botDir = path.join(P.bots, 'trad');
+  fs.mkdirSync(botDir, { recursive: true });
+  fs.writeFileSync(path.join(botDir, 'bot.json'), JSON.stringify({ agent: 'claude', label: 'Translator', model: 'haiku' }), { mode: 0o600 });
+  fs.writeFileSync(path.join(botDir, 'SOUL.md'), 'You translate into English.', { mode: 0o600 });
   const args = [ROOT];
   if (process.env.ASKA_E2E_NO_SANDBOX === '1') args.unshift('--no-sandbox');
   const app = await electron.launch({ executablePath: require(path.join(ROOT, 'node_modules', 'electron')), args, env, cwd: ROOT });
@@ -132,6 +137,9 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
         await window.aska.run({ agentId: 'claude', mode: 'read', prompt: 'x' }),
         (await window.aska.activateTab('../../x')).conversation.id === tabId,
         await window.aska.closeTab(42),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'read', prompt: 'x', botId: 'nope' }),
+        await window.aska.run({ tabId, agentId: 'claude', mode: 'edit', prompt: 'x', botId: 'trad', trust: 'always' }),
+        (await window.aska.getState()).bots,
       ];
     });
     assert.match(bad[0].error, /Unknown agent/);
@@ -146,6 +154,12 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(bad[8], true);
     assert.match(bad[9].error, /Tab not found/);
     assert.equal(bad[9].tabs.length, 1);
+    // Bots: unknown bot, and a mode above the bot's maxMode, refused by the main process.
+    assert.match(bad[10].error, /Unknown bot/);
+    assert.match(bad[11].error, /Translator is limited to a lower mode than "Edit"/);
+    // The window gets the public fields only, never the personality.
+    assert.deepEqual(bad[12].map((b) => [b.id, b.label, b.agent, b.mode, b.maxMode]), [['trad', 'Translator', 'claude', 'read', 'read']]);
+    assert.ok(!JSON.stringify(bad[12]).includes('translate'), 'personality not sent to the window');
 
     // Click outside: the chat hides (default behavior)...
     const blur = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit('blur'));
@@ -796,6 +810,38 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await waitVisible(true);
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
     assert.equal(await page.locator('.tab').count(), tabsBefore + 1);
+
+    // ---------- bots: personality sent to the agent ----------
+    // (the window chooses a bot from ticket 04 on: the request is sent directly here)
+    const botRun = (prompt, botId) => page.evaluate(async ([prompt, botId]) => {
+      const tabId = (await window.aska.getState()).conversation.id;
+      return window.aska.run({ tabId, agentId: 'claude', mode: 'read', prompt, botId });
+    }, [prompt, botId]);
+    const botIdle = async () => {
+      for (let i = 0; i < 100 && (await page.evaluate(() => window.aska.getState().then((s) => s.running))); i++) await page.waitForTimeout(100);
+    };
+    const botCallsFrom = calls().length;
+    assert.equal((await botRun('Bonjour', 'trad')).ok, true);
+    await botIdle();
+    assert.equal((await botRun('Et merci', 'trad')).ok, true);
+    await botIdle();
+    assert.equal((await botRun('Sans bot', null)).ok, true);
+    await botIdle();
+    const [b1, b2, b3] = calls().slice(botCallsFrom);
+    const sys = b1.args.indexOf('--append-system-prompt');
+    assert.ok(sys > 0, 'personality passed as a system prompt');
+    assert.match(b1.args[sys + 1], /^You are "Translator"[\s\S]*You translate into English\.$/);
+    assert.deepEqual(b1.args.slice(b1.args.indexOf('--model'), b1.args.indexOf('--model') + 2), ['--model', 'haiku'], 'model of the bot');
+    assert.equal(b1.stdin, 'Bonjour');
+    // Same bot, same personality: the CLI session is resumed.
+    assert.deepEqual(b2.args.slice(b2.args.indexOf('--resume'), b2.args.indexOf('--resume') + 2), ['--resume', 'sess-0001-abcd']);
+    assert.equal(b2.stdin, 'Et merci');
+    // Without the bot: not that session (its system prompt holds the personality); the history is fed back, labelled with the bot.
+    assert.ok(!b3.args.includes('--resume') && !b3.args.includes('--append-system-prompt'));
+    assert.match(b3.stdin, /\[Assistant: Translator\][\s\S]*New request from the user:\nSans bot$/);
+    const botAudit = fs.readFileSync(P.audit, 'utf8').trim().split('\n').slice(-3).map((l) => JSON.parse(l));
+    assert.deepEqual(botAudit.map((e) => e.bot), ['trad', 'trad', undefined]);
+    assert.ok(botAudit[0].argv.includes('<system>') && !JSON.stringify(botAudit).includes('You translate'), 'personality not in the audit log');
 
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.

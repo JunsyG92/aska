@@ -13,6 +13,7 @@ const { resolveBinary, readOwnedJson } = require('./main/security');
 const { buildId, runningInstance } = require('./main/build');
 const { resolveLaunch, extendedPath } = require('./main/launch');
 const { keyLabels } = require('./main/keys');
+const { loadBots } = require('./main/bots');
 const { t, systemLanguages } = require('./i18n');
 
 const HELP_FLAGS = ['-h', '--help', '-?', '/?'];
@@ -143,10 +144,19 @@ function helpText(stream = process.stdout, env = process.env) {
     lines.push(`  ${mark} ${s.bold(a.label.padEnd(9))} ${a.ok ? a.detail : s.dim(a.detail)}`);
     if (!a.ok && a.hint) lines.push(`    ${s.dim(t('cli.install', { hint: win && /\| ?bash/.test(a.hint) ? t('cli.seeCursor') : a.hint }))}`);
   }
+  // Bots (~/.aska/bots), checked as at startup: their problems join the warnings.
+  const b = loadBots(P.bots, { agents: resolveAgents(cfg.agents).agents, allowAutoMode: cfg.allowAutoMode });
+  warnings.push(...b.warnings);
+  const bots = Object.values(b.bots);
+  if (bots.length) {
+    lines.push('', s.bold(t('cli.bots')));
+    for (const x of bots) lines.push(row('@' + x.id, `${x.label}  ${s.dim([x.agent, MODES[x.mode].label, x.model].filter(Boolean).join(' · '))}`));
+  }
   lines.push(
     '',
     s.bold(t('cli.files')),
     row(t('cli.config'), P.config),
+    row(t('cli.botsFolder'), P.bots),
     row(t('cli.conversations'), P.conversations),
     row(t('cli.audit'), P.audit),
   );

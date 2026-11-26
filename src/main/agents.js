@@ -35,6 +35,9 @@ const BUILTIN = {
     modelFlag: '--model',
     models: ['opus', 'sonnet', 'haiku'],
     resumeFlag: '--resume', // native resume: the CLI restores the full thread context
+    // A bot's personality, added to the system prompt. On --resume, the CLI keeps
+    // the text of the first request (system prompt snapshot): see sessionKey in main.js.
+    systemFlag: '--append-system-prompt',
     env: ['ANTHROPIC_*', 'CLAUDE_*'],
     install: 'npm i -g @anthropic-ai/claude-code',
   },
@@ -174,6 +177,8 @@ function resolveAgents(userAgents = {}) {
         modes,
         tail: isStrArray(user.tail) ? user.tail : [],
         modelFlag: typeof user.modelFlag === 'string' ? user.modelFlag : undefined,
+        // Option that takes a bot's personality; without it, the personality goes before the prompt.
+        systemFlag: typeof user.systemFlag === 'string' && /^--[\w-]+$/.test(user.systemFlag) && !isDangerousArg(user.systemFlag) ? user.systemFlag : undefined,
         models: [],
         env: isStrArray(user.env) ? user.env : [],
         custom: true,
@@ -204,7 +209,7 @@ function resolveAgents(userAgents = {}) {
  * Builds argv (no shell). The prompt is either sent on stdin or passed as a
  * single argument; it is never interpreted by a shell.
  */
-function buildInvocation(agent, mode, prompt, { model, resume, trusted } = {}) {
+function buildInvocation(agent, mode, prompt, { model, resume, trusted, system } = {}) {
   const modeArgs = agent.modes[mode];
   if (!modeArgs) throw new Error(t('errors.modeNotOffered', { agent: agent.label, mode: MODES[mode]?.label || mode }));
   if (typeof prompt !== 'string' || !prompt.trim()) throw new Error(t('errors.emptyPrompt'));
@@ -212,12 +217,15 @@ function buildInvocation(agent, mode, prompt, { model, resume, trusted } = {}) {
 
   if (model != null && !isModel(model)) throw new Error(t('errors.invalidModel'));
   if (resume != null && !SESSION_RE.test(resume)) throw new Error(t('errors.invalidSession'));
+  if (system != null && (!agent.systemFlag || typeof system !== 'string' || system.includes('\0'))) throw new Error(t('errors.invalidPrompt'));
 
   const argv = [...(agent.base || []), ...modeArgs];
   if (trusted && agent.trustFlag) argv.push(agent.trustFlag);
   const chosen = model === undefined ? agent.model : model; // null = the CLI's default model
   if (chosen && agent.modelFlag) argv.push(agent.modelFlag, chosen);
   if (resume && agent.resumeFlag) argv.push(agent.resumeFlag, resume);
+  // Personality: never written to the audit log (replaced with <system>).
+  const systemAt = system ? argv.push(agent.systemFlag, system) - 1 : -1;
   argv.push(...(agent.extraArgs || []));
 
   let stdin = null;
@@ -237,6 +245,7 @@ function buildInvocation(agent, mode, prompt, { model, resume, trusted } = {}) {
     argv.push(safePrompt, ...(agent.tail || []));
     logArgv.push('<prompt>', ...(agent.tail || []));
   }
+  if (systemAt >= 0) logArgv[systemAt] = '<system>';
   return { argv, stdin, logArgv };
 }
 
