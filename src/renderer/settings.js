@@ -20,11 +20,11 @@
   let data = null; // { values, defaults, actions, languages, agents, gnome, keyNames, configError }
   let draft = null;
   let errors = {};
-  let capture = null; // { kind: 'global' } | { kind: 'key', action }
+  let capture = null; // { kind: 'global', key: 'shortcut' | 'selectionShortcut' } | { kind: 'key', action }
   let armedClose = false;
   let message = { text: '', kind: '' };
   let page = 'general'; // 'general' | 'keys'
-  const PAGE_OF_ERROR = (k) => (k === 'shortcut' || k.startsWith('keybindings') ? 'keys' : 'general');
+  const PAGE_OF_ERROR = (k) => (k === 'shortcut' || k === 'selectionShortcut' || k.startsWith('keybindings') ? 'keys' : 'general');
 
   const t = (k, p) => opts.t(k, p);
 
@@ -68,7 +68,7 @@
       if (e.key !== 'Escape' || e.ctrlKey || e.altKey || e.metaKey) {
         const combo = globalCombo(e);
         if (!combo) return; // key not usable for a global shortcut: wait for another
-        draft.shortcut = combo;
+        draft[capture.key] = combo;
       }
     } else {
       // In the window, Esc can be a shortcut too: the "Cancel" button stops the capture.
@@ -90,6 +90,10 @@
     }
     // The shortcuts are checked together (conflicts): all of them, or none.
     if (patch.keybindings) patch.keybindings = draft.keybindings;
+    if ('shortcut' in patch || 'selectionShortcut' in patch) {
+      patch.shortcut = draft.shortcut;
+      patch.selectionShortcut = draft.selectionShortcut;
+    }
     return patch;
   }
   const isDirty = () => !!data && Object.keys(changed()).length > 0;
@@ -160,35 +164,40 @@
     return b;
   }
 
-  function globalShortcutRow() {
+  // A global shortcut: "shortcut" (show / hide) or "selectionShortcut" (ask about the selection).
+  function globalShortcutRow(key) {
     const box = el('div', 'set-keys');
-    const recording = capture && capture.kind === 'global';
-    const btn = el('button', 'set-kbd' + (recording ? ' recording' : ''), recording ? t('settings.record') : label(draft.shortcut));
+    box.dataset.key = key;
+    const recording = capture && capture.kind === 'global' && capture.key === key;
+    const btn = el('button', 'set-kbd' + (recording ? ' recording' : ''), recording ? t('settings.record') : label(draft[key]));
     btn.type = 'button';
     btn.title = t('settings.change');
     btn.addEventListener('click', () => {
-      capture = { kind: 'global' };
+      capture = { kind: 'global', key };
       render();
     });
     box.append(btn);
     if (recording) box.append(cancelRecordButton());
-    if (draft.shortcut && !recording) {
+    if (draft[key] && !recording) {
       const clear = el('button', 'set-icon', '×');
       clear.type = 'button';
       clear.title = t('settings.clear');
       clear.setAttribute('aria-label', t('settings.clear'));
       clear.addEventListener('click', () => {
-        draft.shortcut = false;
+        draft[key] = false;
         armedClose = false;
         render();
       });
       box.append(clear);
     }
     const g = data.gnome || {};
-    return field(t('settings.shortcut'), box, {
-      hint: g.active ? t('settings.gnomeHint') : g.error ? t('settings.gnomeError', { error: g.error }) : t('settings.shortcutHint'),
-      error: errors.shortcut,
-    });
+    const sel = key === 'selectionShortcut';
+    const hint = g.active
+      ? t(sel ? 'settings.selectionGnomeHint' : 'settings.gnomeHint')
+      : g.error
+        ? t('settings.gnomeError', { error: g.error })
+        : t(sel ? 'settings.selectionHint' : 'settings.shortcutHint');
+    return field(t(sel ? 'settings.selectionShortcut' : 'settings.shortcut'), box, { hint, error: errors[key] });
   }
 
   function keyRow(action) {
@@ -283,7 +292,7 @@
       el('p', 'set-note', t('settings.fileOnly')),
     ];
     const shortcuts = [
-      section(t('settings.sections.globalShortcut'), globalShortcutRow()),
+      section(t('settings.sections.globalShortcut'), globalShortcutRow('shortcut'), globalShortcutRow('selectionShortcut')),
       section(t('settings.sections.keys'), ...data.actions.map(keyRow)),
       section(
         t('settings.fixed.title'),

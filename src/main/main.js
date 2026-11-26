@@ -5,17 +5,18 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel } = require('./agents');
-const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
+const { MODES, MODE_ORDER, resolveAgents, buildInvocation, fitInvocation, isModel } = require('./agents');
+const { ConversationStore, buildContextPrompt, HISTORY_CHARS, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const src = require('./sources');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
 const sec = require('./security');
 const { runAgent } = require('./runner');
-const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
+const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
 const { buildId, runningInstance } = require('./build');
 const { createTray } = require('./tray');
+const { readSelection, quoteSelection, MAX_CHARS: MAX_SELECTION } = require('./selection');
 const { keyLabels, ACTIONS } = require('./keys');
 const { settingsView, validateSettings, mergeConfig } = require('./settings');
 const gnome = require('./gnome');
@@ -44,6 +45,7 @@ let tray = null; // system tray icon
 let runSeq = 0;
 let dialogOpen = false;
 let shortcutOk = false;
+let selectionShortcutOk = false;
 let quitting = false;
 let mini = false; // panel collapsed into a pill
 let pinned = null; // pinned: stays visible when clicking elsewhere (null = per config)
@@ -470,16 +472,34 @@ function setupTray() {
 
 function registerShortcut() {
   globalShortcut.unregisterAll();
-  shortcutOk = false;
-  if (!cfg.shortcut) return;
-  try {
-    shortcutOk = globalShortcut.register(cfg.shortcut, toggleWindow);
-  } catch {
-    shortcutOk = false;
+  const register = (accel, fn) => {
+    try {
+      return globalShortcut.register(accel, fn);
+    } catch {
+      return false;
+    }
+  };
+  shortcutOk = !!cfg.shortcut && register(cfg.shortcut, toggleWindow);
+  if (cfg.shortcut && !shortcutOk) warnings.push(t('app.shortcutUnavailable', { shortcut: cfg.shortcut }));
+  selectionShortcutOk = !!cfg.selectionShortcut && register(cfg.selectionShortcut, askAboutSelection);
+  if (cfg.selectionShortcut && !selectionShortcutOk) {
+    warnings.push(t('app.selectionShortcutUnavailable', { shortcut: cfg.selectionShortcut }));
   }
-  if (!shortcutOk) {
-    warnings.push(t('app.shortcutUnavailable', { shortcut: cfg.shortcut }));
-  }
+}
+
+// "Ask about the selection": the window shows up with the selected text quoted
+// in the field (see selection.js). Nothing is sent.
+async function askAboutSelection() {
+  if (!win) return;
+  const sel = await readSelection(clipboard);
+  if (!win || win.isDestroyed()) return;
+  showWindow();
+  win.webContents.send('aska:selection', {
+    quote: sel.text ? quoteSelection(sel.text) : null,
+    source: sel.source,
+    truncated: sel.truncated,
+    max: MAX_SELECTION,
+  });
 }
 
 // ---------- settings panel (see settings.js) ----------
@@ -504,8 +524,10 @@ async function settingsGet() {
   if (run) {
     try {
       const g = await gnome.readShortcut(run);
+      const s = await gnome.readShortcut(run, gnome.ENTRIES.selection);
       gnomeInfo = { active: true };
       view.values.shortcut = g.binding;
+      view.values.selectionShortcut = s.binding;
     } catch (e) {
       gnomeInfo = { active: false, error: e.message }; // gsettings unusable: Aska's own shortcut
     }
@@ -531,13 +553,15 @@ async function settingsSave(patch) {
   if (r.error) return { errors: { _: r.error } };
   const values = { ...v.values };
   const run = gnomeRunner();
-  if (run && Object.hasOwn(values, 'shortcut')) {
+  // GNOME handles the global shortcuts: Aska does not register them too.
+  for (const [k, entry] of [['shortcut', gnome.ENTRIES.toggle], ['selectionShortcut', gnome.ENTRIES.selection]]) {
+    if (!run || !Object.hasOwn(values, k)) continue;
     try {
-      await gnome.writeShortcut(run, values.shortcut, gnome.toggleCommand({ appPath: app.getAppPath() }));
+      await gnome.writeShortcut(run, values[k], gnome.toggleCommand({ appPath: app.getAppPath(), flag: entry.flag }), entry);
     } catch (e) {
-      return { errors: { shortcut: t('settings.errors.gnome', { error: e.message }) } };
+      return { errors: { [k]: t('settings.errors.gnome', { error: e.message }) } };
     }
-    values.shortcut = false; // GNOME handles it: Aska does not register it too
+    values[k] = false;
   }
   try {
     const merged = mergeConfig(r.missing ? {} : r.data, values);
@@ -629,9 +653,12 @@ function startRun(req, loaded = []) {
   const canResume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length && !(sess.sources && !docs);
   const resume = canResume ? sess.id : null;
   const sendDocs = docs && !(resume && sess.sources === docsHash);
-  const body = resume ? prompt : buildContextPrompt(conv.turns, prompt);
-  const fullPrompt = sendDocs ? src.withSources(docs, body, { hasHistory: body !== prompt }) : body;
   const used = docs ? loaded.filter((l) => !l.error) : [];
+  // The request as sent: the history unless the session is resumed, the documents unless it has them.
+  const fullPrompt = (maxChars) => {
+    const body = resume ? prompt : buildContextPrompt(conv.turns, prompt, maxChars);
+    return sendDocs ? src.withSources(docs, body, { hasHistory: body !== prompt }) : body;
+  };
   // A "/" command of the config may name a model for this request only (null: the CLI's default).
   let model = modelFor(agent);
   if (req.model !== undefined && agent.modelFlag) {
@@ -639,9 +666,25 @@ function startRun(req, loaded = []) {
     model = req.model;
   }
 
+  // The history fed back is cut down if the command would exceed the system's
+  // limit (prompt passed as an argument: Copilot, Cursor).
+  const env = agentEnv(agent);
+  const excess = (i) => {
+    let cmd;
+    try {
+      cmd = buildCommand(agent.launch, i.argv);
+    } catch {
+      return 0; // refused by cmd.exe: launchAgent reports it
+    }
+    return commandLineExcess(cmd.command, cmd.args, { verbatim: cmd.verbatim, env });
+  };
   let inv;
   try {
-    inv = buildInvocation(agent, mode, fullPrompt, { model, resume, trusted: true });
+    inv = fitInvocation(
+      (maxChars) => buildInvocation(agent, mode, fullPrompt(maxChars), { model, resume, trusted: true }),
+      excess,
+      HISTORY_CHARS
+    );
   } catch (e) {
     return { error: e.message };
   }
@@ -1021,7 +1064,7 @@ if (wantsCliOutput(argv)) {
 }
 const wants = (flag) => argv.includes(flag);
 
-const APP_FLAGS = ['--toggle', '--hidden', '--reload', '--restart', '--replaced', '--quit', '--no-autostart'];
+const APP_FLAGS = ['--toggle', '--selection', '--hidden', '--reload', '--restart', '--replaced', '--quit', '--no-autostart'];
 
 // Replaces the running instance: a helper instance sends it "--quit"
 // (understood even by old versions), then we relaunch in its place.
@@ -1090,6 +1133,8 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     if (secondArgv.includes('--quit')) {
       quitting = true;
       app.quit();
+    } else if (secondArgv.includes('--selection')) {
+      askAboutSelection();
     } else if (secondArgv.includes('--reload')) {
       loadEverything();
       registerShortcut();
@@ -1120,7 +1165,8 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     createWindow();
     setupTray();
     win.webContents.once('did-finish-load', () => {
-      if (!wants('--hidden')) showWindow();
+      if (wants('--selection')) askAboutSelection();
+      else if (!wants('--hidden')) showWindow();
     });
   });
 

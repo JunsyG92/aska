@@ -276,6 +276,27 @@ test('context fed back in: previous turns, budget respected', () => {
   const big = Array.from({ length: 30 }, (_, i) => ({ agent: 'a', prompt: `Q${i}`, answer: 'x'.repeat(3000) }));
   const q = buildContextPrompt(big, 'end', 10000);
   assert.ok(q.length < 11000 && q.includes('Q29') && !q.includes('Q0\n'));
+  assert.equal(buildContextPrompt(big, 'end', 0), 'end'); // no room left: the request alone
+});
+
+test('history cut down to fit the command line, error if the request alone is too long', () => {
+  const { fitInvocation } = require('../src/main/agents');
+  const turns = Array.from({ length: 30 }, (_, i) => ({ agent: 'a', prompt: `Q${i}`, answer: 'é'.repeat(3000) }));
+  const agents = resolveAgents({}).agents;
+  const build = (prompt) => (maxChars) => buildInvocation(agents.copilot, 'read', buildContextPrompt(turns, prompt, maxChars), {});
+  // Limit: 20,000 characters for the prompt argument.
+  const excess = (inv) => Math.max(0, inv.argv[inv.argv.length - 1].length - 20000);
+  const seen = [];
+  const inv = fitInvocation((n) => { seen.push(n); return build('end')(n); }, excess, 24000);
+  const sent = inv.argv[inv.argv.length - 1];
+  assert.ok(sent.length <= 20000 && sent.includes('Q29') && sent.endsWith('end'));
+  assert.ok(seen.length <= 3, `rebuilt ${seen.length} times`);
+  // Fits at once: built a single time, with the whole budget.
+  let calls = 0;
+  fitInvocation((n) => { calls++; return build('end')(n); }, () => 0, 24000);
+  assert.equal(calls, 1);
+  // Even without history the request is too long.
+  assert.throws(() => fitInvocation(build('x'.repeat(30000)), excess, 24000), /too long/);
 });
 
 test('conversations: private storage, list, reopen, delete', () => {
@@ -466,6 +487,38 @@ test('Windows: another .cmd goes through cmd.exe only with safe arguments', () =
   assert.deepEqual(resolveLaunch('/usr/bin/tool', { platform: 'linux' }), { command: '/usr/bin/tool', prefix: [], viaCmd: false });
 });
 
+test('command-line limits: Windows quoting, Linux per argument, macOS in total', () => {
+  const { quotedLength, commandLineExcess } = require('../src/main/launch');
+  // Quoting as done by libuv for CreateProcess.
+  assert.equal(quotedLength(''), 2);
+  assert.equal(quotedLength('plain'), 5);
+  assert.equal(quotedLength('a\\b'), 3); // nothing to quote
+  assert.equal(quotedLength('a b'), 5); // "a b"
+  assert.equal(quotedLength('a"b'), 6); // "a\"b"
+  assert.equal(quotedLength('a b\\'), 7); // "a b\\"
+  assert.equal(quotedLength('x \\"y'), 9); // "x \\\"y"
+  assert.equal(quotedLength('a\\b c'), 7); // a backslash in the middle stays single
+  // Windows: 32,767 units in all, NUL included (checked against the real limit on 2026-11-25).
+  const exe = 'C:\\node.exe'; // 11 units
+  const fits = 'x'.repeat(32767 - 11 - 1 - 1); // exe, space, argument, NUL
+  assert.equal(commandLineExcess(exe, [fits], { platform: 'win32' }), 0);
+  assert.equal(commandLineExcess(exe, [fits + 'x'], { platform: 'win32' }), 1);
+  assert.equal(commandLineExcess(exe, ['"'.repeat(16000)], { platform: 'win32' }), 0);
+  assert.ok(commandLineExcess(exe, ['"'.repeat(17000)], { platform: 'win32' }) > 0); // each " counts twice
+  // Through cmd.exe: 8,191.
+  assert.equal(commandLineExcess('cmd.exe', ['x'.repeat(8000)], { platform: 'win32', verbatim: true }), 0);
+  assert.ok(commandLineExcess('cmd.exe', ['x'.repeat(8200)], { platform: 'win32', verbatim: true }) > 0);
+  // Linux: 131,071 bytes per argument (checked on 2026-11-25); é takes 2 bytes.
+  assert.equal(commandLineExcess('/bin/x', ['x'.repeat(131071)], { platform: 'linux' }), 0);
+  assert.equal(commandLineExcess('/bin/x', ['x'.repeat(131072)], { platform: 'linux' }), 1);
+  assert.equal(commandLineExcess('/bin/x', ['é'.repeat(65535)], { platform: 'linux' }), 0);
+  assert.equal(commandLineExcess('/bin/x', ['é'.repeat(65536)], { platform: 'linux' }), 1);
+  assert.equal(commandLineExcess('/bin/x', ['x'.repeat(100000), 'y'.repeat(100000)], { platform: 'linux' }), 0);
+  // macOS: no limit per argument, 1 MiB with the environment.
+  assert.equal(commandLineExcess('/bin/x', ['x'.repeat(500000)], { platform: 'darwin' }), 0);
+  assert.ok(commandLineExcess('/bin/x', ['x'.repeat(500000)], { platform: 'darwin', env: { BIG: 'y'.repeat(600000) } }) > 0);
+});
+
 test('system tray icon: state, tooltip and menu', () => {
   const item = (m, id) => m.items.find((it) => it.id === id);
   const idle = trayModel({ running: 0, visible: false });
@@ -575,7 +628,7 @@ test('aska --help: options, shortcuts, detected agents and files; --version', ()
   for (const k of Object.keys(env)) if (/^XDG_/.test(k)) delete env[k];
   const cli = path.join(__dirname, '..', 'src', 'cli.js');
   const out = execFileSync(process.execPath, [cli, '--help'], { env, encoding: 'utf8' });
-  for (const expected of ['Usage: aska [option]', '--toggle', '--hidden', '--reload', '--quit', 'Ctrl+Alt+Space', 'Read-only', 'Files']) {
+  for (const expected of ['Usage: aska [option]', '--toggle', '--selection', '--hidden', '--reload', '--quit', 'Ctrl+Alt+Space', 'Ctrl+Alt+Shift+Space Global shortcut: ask about the selected text', 'Read-only', 'Files']) {
     assert.ok(out.includes(expected), `"${expected}" missing from the help`);
   }
   assert.match(out, new RegExp(`✓ Claude\\s+${fs.realpathSync(path.join(bin, exe('claude'))).replace(/[\\.]/g, '\\$&')}`));
@@ -585,7 +638,7 @@ test('aska --help: options, shortcuts, detected agents and files; --version', ()
   assert.ok(!/\x1b\[/.test(out), 'no colors outside a terminal');
   assert.match(execFileSync(process.execPath, [cli, '--version'], { env, encoding: 'utf8' }), /^aska \d+\.\d+\.\d+\n$/);
   const fr = execFileSync(process.execPath, [cli, '--help'], { env: { ...env, LC_ALL: 'fr_FR.UTF-8' }, encoding: 'utf8' });
-  for (const expected of ['Usage : aska [option]', 'Ctrl+Alt+Espace', 'Lecture seule', 'Fichiers', 'introuvable dans le PATH']) {
+  for (const expected of ['Usage : aska [option]', 'Ctrl+Alt+Espace', 'Ctrl+Alt+Maj+Espace', 'Lecture seule', 'Fichiers', 'introuvable dans le PATH']) {
     assert.ok(fr.includes(expected), `"${expected}" missing from the French help`);
   }
   assert.ok(!fr.includes('—'), 'no em dash in the help');
@@ -1116,6 +1169,11 @@ test('settings: validation of the values sent by the window', () => {
   );
   assert.deepEqual(ok.errors, {});
   assert.deepEqual(ok.values, { language: 'fr', defaultAgent: 'codex', defaultMode: 'edit', timeoutSec: 120, tray: false, notify: 'never', shortcut: 'Control+Alt+A', keybindings: { history: ['Ctrl+J'] } });
+  // The selection shortcut: same rules, and never the same as show / hide.
+  assert.deepEqual(validateSettings({ shortcut: 'Control+Alt+Space', selectionShortcut: 'shift+ctrl+alt+space' }).values, { shortcut: 'Control+Alt+Space', selectionShortcut: 'Control+Alt+Shift+Space' });
+  assert.match(validateSettings({ shortcut: 'Control+Alt+A', selectionShortcut: 'Ctrl+Alt+A' }).errors.selectionShortcut, /show \/ hide/);
+  assert.equal(validateSettings({ shortcut: false, selectionShortcut: false }).errors.selectionShortcut, undefined, 'both off');
+  assert.ok(validateSettings({ selectionShortcut: 'Shift+S' }).errors.selectionShortcut);
   assert.ok(!('agents' in ok.values) && !('allowAutoMode' in ok.values), 'keys outside the panel are dropped');
 
   const bad = validateSettings(
@@ -1221,6 +1279,20 @@ test('GNOME shortcut: conversions and gsettings calls', async () => {
   // Command for a new entry: the launcher if installed, else Electron, quoted when needed.
   assert.equal(gnome.toggleCommand({ env: {}, home: '/home/me', exists: () => true }), '/home/me/.local/bin/aska --toggle');
   assert.equal(gnome.toggleCommand({ env: {}, home: '/h', exists: () => false, execPath: '/opt/my apps/electron', appPath: '/src/aska' }), '"/opt/my apps/electron" /src/aska --toggle');
+
+  // The selection entry: its own path, name and command, next to the toggle one.
+  const sel = gnome.ENTRIES.selection;
+  assert.equal(gnome.toggleCommand({ env: {}, home: '/home/me', exists: () => true, flag: sel.flag }), '/home/me/.local/bin/aska --selection');
+  const h = fake({});
+  await gnome.writeShortcut(h.run, 'Control+Alt+A', '/b/aska --toggle');
+  await gnome.writeShortcut(h.run, 'Control+Alt+Shift+Space', '/b/aska --selection', sel);
+  assert.deepEqual(gnome.parseList(h.db[LIST]), [gnome.KEY, sel.key]);
+  const S = `${gnome.SCHEMA}.custom-keybinding:${sel.key}`;
+  assert.equal(h.db[`${S} name`], "'Aska (selection)'");
+  assert.equal(h.db[`${S} command`], "'/b/aska --selection'");
+  assert.equal(h.db[`${S} binding`], "'<Control><Alt><Shift>space'");
+  assert.deepEqual(await gnome.readShortcut(h.run, sel), { binding: 'Control+Alt+Shift+Space', command: '/b/aska --selection' });
+  assert.deepEqual(await gnome.readShortcut(h.run), { binding: 'Control+Alt+A', command: '/b/aska --toggle' }, 'toggle entry untouched');
 });
 
 // ---------- POSIX ACLs ----------
@@ -1572,3 +1644,39 @@ test('conversations: the documents of a conversation are saved with it', () => {
   }
 });
 
+// ---------- ask about the selection ----------
+
+test('selection: primary selection first, then the clipboard; cleaned and quoted', async () => {
+  const { readSelection, cleanSelection, quoteSelection, MAX_CHARS } = require('../src/main/selection');
+  // Electron's clipboard: readText() returns a promise; Linux adds clipboard.selection.
+  const board = (selection, clipboard) => ({ readText: async () => clipboard, selection: { readText: async () => selection } });
+  assert.deepEqual(await readSelection(board('selected', 'copied'), 'linux'), { text: 'selected', truncated: false, source: 'selection' });
+  assert.deepEqual(await readSelection(board('  \n ', 'copied'), 'linux'), { text: 'copied', truncated: false, source: 'clipboard' });
+  // No primary selection on macOS and Windows: the clipboard only.
+  assert.equal((await readSelection(board('selected', 'copied'), 'darwin')).source, 'clipboard');
+  assert.equal((await readSelection({ readText: async () => 'copied' }, 'linux')).text, 'copied', 'no selection board');
+  assert.deepEqual(await readSelection(board('', ''), 'linux'), { text: '', truncated: false, source: null });
+  const failing = { readText: async () => { throw new Error('no X'); }, selection: { readText: () => Promise.reject(new Error('no X')) } };
+  assert.equal((await readSelection(failing, 'linux')).source, null);
+  // Lines kept; Windows line ends, control characters and terminal colors dropped.
+  assert.deepEqual(cleanSelection('\n\nline 1  \r\n\x1b[31mred\x1b[0m\tok\x00\x07\n\n'), { text: 'line 1\nred\tok', truncated: false });
+  const big = cleanSelection('x'.repeat(MAX_CHARS + 5));
+  assert.equal(big.text.length, MAX_CHARS);
+  assert.equal(big.truncated, true);
+  assert.equal(quoteSelection('first\n\n  indented'), '> first\n>\n>   indented');
+});
+
+test('selection: shortcut in the config, off with false', () => {
+  const d = tmp();
+  const file = path.join(d, 'config.json');
+  assert.equal(loadConfig(path.join(d, 'absent.json')).config.selectionShortcut, 'Control+Alt+Shift+Space');
+  fs.writeFileSync(file, JSON.stringify({ selectionShortcut: 'Control+Alt+Q' }), { mode: 0o600 });
+  assert.equal(loadConfig(file).config.selectionShortcut, 'Control+Alt+Q');
+  fs.writeFileSync(file, JSON.stringify({ selectionShortcut: false }), { mode: 0o600 });
+  assert.equal(loadConfig(file).config.selectionShortcut, null);
+  fs.writeFileSync(file, JSON.stringify({ selectionShortcut: 'rm -rf; x' }), { mode: 0o600 });
+  assert.equal(loadConfig(file).config.selectionShortcut, 'Control+Alt+Shift+Space', 'invalid: default kept');
+  // The settings panel only keeps what differs from the default.
+  assert.deepEqual(settings.mergeConfig({}, { selectionShortcut: 'Control+Alt+Shift+Space' }), {});
+  assert.deepEqual(settings.mergeConfig({}, { selectionShortcut: false }), { selectionShortcut: false });
+});

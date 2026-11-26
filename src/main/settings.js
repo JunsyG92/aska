@@ -13,7 +13,7 @@ const { LANGUAGES, t } = require('../i18n');
 
 const MANAGED = [
   'language', 'defaultAgent', 'defaultMode', 'timeoutSec',
-  'alwaysOnTop', 'tray', 'shortcut',
+  'alwaysOnTop', 'tray', 'shortcut', 'selectionShortcut',
   'notify', 'notifyPreview', 'notifySound', 'savePrompts',
   'keybindings',
 ];
@@ -58,6 +58,7 @@ function settingsView(cfg) {
     alwaysOnTop: src.alwaysOnTop,
     tray: src.tray,
     shortcut: src.shortcut || false,
+    selectionShortcut: src.selectionShortcut || false,
     notify: src.notify,
     notifyPreview: src.notifyPreview,
     notifySound: src.notifySound,
@@ -106,14 +107,17 @@ function validateSettings(patch, { agentIds = [] } = {}) {
     if (NOTIFY.includes(patch.notify)) values.notify = patch.notify;
     else errors.notify = t('settings.errors.invalid');
   }
-  if (has('shortcut')) {
-    if (patch.shortcut === false || patch.shortcut === null || patch.shortcut === '') values.shortcut = false;
+  for (const k of ['shortcut', 'selectionShortcut']) {
+    if (!has(k)) continue;
+    if (patch[k] === false || patch[k] === null || patch[k] === '') values[k] = false;
     else {
-      const a = normalizeAccelerator(patch.shortcut);
-      if (a) values.shortcut = a;
-      else errors.shortcut = t('settings.errors.globalShortcut');
+      const a = normalizeAccelerator(patch[k]);
+      if (a) values[k] = a;
+      else errors[k] = t('settings.errors.globalShortcut');
     }
   }
+  // The two global shortcuts must differ (the panel sends both when one changes).
+  if (values.selectionShortcut && values.selectionShortcut === values.shortcut) errors.selectionShortcut = t('settings.errors.sameShortcut');
   if (has('keybindings')) {
     const kb = patch.keybindings;
     if (!kb || typeof kb !== 'object' || Array.isArray(kb)) errors.keybindings = t('settings.errors.invalid');

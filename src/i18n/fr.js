@@ -17,6 +17,7 @@ module.exports = {
     autoDisabled: 'Le mode autonome est désactivé ("allowAutoMode": true dans la configuration pour l\'activer)',
     invalidPrompt: 'Prompt invalide',
     emptyPrompt: 'Prompt vide',
+    promptTooLong: "Cette demande est trop longue pour être passée à cet agent en ligne de commande : raccourcissez-la, ou utilisez un agent qui la lit sur l'entrée standard (Claude, Codex)",
     invalidModel: 'Nom de modèle invalide',
     invalidSession: 'Identifiant de session invalide',
     modeNotOffered: '{agent} ne propose pas le mode « {mode} »',
@@ -61,6 +62,7 @@ module.exports = {
   app: {
     scratch: 'Espace temporaire',
     shortcutUnavailable: 'Raccourci {shortcut} indisponible : associez la commande « aska --toggle » dans les raccourcis de votre bureau',
+    selectionShortcutUnavailable: 'Raccourci {shortcut} (demander à partir de la sélection) indisponible : associez la commande « aska --selection » dans les raccourcis de votre bureau',
     pickDirTitle: 'Dossier de travail de l’agent',
     shortcutDescription: 'Demander une action à un agent IA (Claude, Codex, Copilot, Cursor)',
   },
@@ -91,6 +93,7 @@ module.exports = {
       timeout: 'Entre {min} et {max} secondes',
       globalShortcut: 'Utilisez Ctrl, Alt ou Super avec une lettre, un chiffre, F1 à F24 ou Espace',
       gnome: 'Raccourci GNOME non enregistré : {error}',
+      sameShortcut: 'Déjà utilisé pour afficher / masquer Aska',
       write: 'Impossible d’enregistrer les réglages : {error}',
     },
   },
@@ -177,6 +180,7 @@ module.exports = {
     usage: '{label} : aska [option]',
     options: 'Options',
     toggle: 'Affiche ou masque la fenêtre, et démarre Aska si besoin (par défaut)',
+    selection: 'Affiche la fenêtre avec le texte sélectionné cité dans le champ',
     hidden: 'Démarre en arrière-plan, sans afficher la fenêtre',
     reload: 'Relit la configuration (agents, raccourci, modèles…)',
     restart: 'Redémarre Aska (à lancer après une mise à jour)',
@@ -187,6 +191,7 @@ module.exports = {
     none: 'aucun',
     space: 'Espace',
     globalShortcut: 'Raccourci global : afficher / masquer',
+    selectionShortcut: 'Raccourci global : demander à partir du texte sélectionné',
     keys: {
       enter: 'Entrée',
       tab: 'Tab  /  Maj+Tab',
@@ -250,7 +255,7 @@ module.exports = {
       sections: {
         general: 'Général',
         window: 'Fenêtre',
-        globalShortcut: 'Raccourci global',
+        globalShortcut: 'Raccourcis globaux',
         notifications: 'Notifications',
         history: 'Historique',
         keys: 'Raccourcis dans la fenêtre',
@@ -267,6 +272,9 @@ module.exports = {
       shortcut: 'Afficher / masquer Aska',
       gnomeHint: 'Enregistré dans les raccourcis clavier de GNOME (entrée « Aska »). Une combinaison déjà prise par GNOME, comme l’actuelle, ne peut pas être saisie ici : choisissez-en une libre.',
       shortcutHint: 'Fonctionne partout sur le bureau. Sous Wayland, s’il ne fait rien, associez « aska --toggle » dans les raccourcis clavier de votre bureau.',
+      selectionShortcut: 'Demander à partir du texte sélectionné',
+      selectionHint: 'Ouvre Aska avec le texte sélectionné dans une autre fenêtre cité dans le champ, prêt pour votre question (sous Linux, inutile de le copier). Sous Wayland, s’il ne fait rien, associez « aska --selection ».',
+      selectionGnomeHint: 'Enregistré dans les raccourcis clavier de GNOME (entrée « Aska (selection) ») : ouvre Aska avec le texte sélectionné cité dans le champ.',
       notify: 'Prévenir quand une réponse arrive',
       notifyOptions: {
         hidden: 'Quand le chat est masqué ou réduit',
@@ -377,6 +385,11 @@ module.exports = {
       cancel: 'Annuler',
     },
     status: { done: 'Terminé', cancelled: 'Annulé', failed: 'Échec', copied: 'Réponse copiée' },
+    selection: {
+      empty: 'Aucun texte sélectionné : sélectionnez-en (ou copiez-le), puis refaites le raccourci',
+      fromClipboard: 'Cité depuis le presse-papiers (aucun texte sélectionné)',
+      truncated: 'Sélection coupée à {max} caractères',
+    },
     commands: {
       label: 'Commandes',
       note: 'Tapez // pour envoyer un message qui commence par /',

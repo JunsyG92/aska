@@ -1450,6 +1450,25 @@
   api.onRunEvent(onRunEvent);
   api.onNewConversation(() => newConversation()); // system tray icon menu
   api.onOpenSettings(() => showSettings(true)); // system tray icon menu
+  // "Ask about the selection": the selected text, quoted, before the draft; nothing is sent.
+  api.onSelection(async (sel) => {
+    if (!sel || !sel.quote) {
+      setStatus(t('selection.empty'), 'err');
+      return;
+    }
+    if (view === 'settings') window.AskaSettings.requestClose();
+    if (view === 'history') await showHistory(false);
+    if (menuOpen) closeModelMenu();
+    if (view !== 'chat' || pendingTrust) return; // unsaved settings or an approval waiting: left as is
+    setMini(false);
+    const rest = input.value.trim();
+    setInput(sel.quote + '\n\n' + (rest ? rest : ''));
+    input.scrollTop = input.scrollHeight;
+    input.focus();
+    if (sel.truncated) setStatus(t('selection.truncated', { max: Number(sel.max).toLocaleString(locale) }), 'err');
+    else if (sel.source === 'clipboard') setStatus(t('selection.fromClipboard'));
+    else setStatus('');
+  });
   api.onUnread(setUnread);
   $('pin-btn').addEventListener('click', () => { setPinned(!pinned, true); input.focus(); });
   api.onWillHide(() => {
