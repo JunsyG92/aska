@@ -36,7 +36,7 @@
     });
   }
 
-  /** @param list  [{ id, title, color, running, unread, active }] */
+  /** @param list  [{ id, title, color, bot: { id, label, color } | null, running, unread, active }] */
   function update(list) {
     if (!nav) return;
     const t = handlers.t || ((key) => key);
@@ -49,9 +49,11 @@
         b.dataset.id = tab.id;
         b.setAttribute('role', 'tab');
         b.setAttribute('aria-selected', String(tab.active));
-        b.title = `${title}${i < 9 ? ` (Ctrl+${i + 1})` : ''}`;
-        const dot = el('span', 'tab-dot');
-        if (tab.color) dot.style.setProperty('--c', tab.color);
+        b.title = `${tab.bot ? `@${tab.bot.label} · ` : ''}${title}${i < 9 ? ` (Ctrl+${i + 1})` : ''}`;
+        // A bot: its initial on its color (before the generated avatars).
+        const dot = tab.bot ? el('span', 'tab-dot bot', tab.bot.label.slice(0, 1).toUpperCase()) : el('span', 'tab-dot');
+        const color = tab.bot ? tab.bot.color : tab.color;
+        if (color) dot.style.setProperty('--c', color);
         const close = el('span', 'tab-close', '×');
         close.setAttribute('role', 'button');
         close.setAttribute('aria-label', t('tabs.close'));

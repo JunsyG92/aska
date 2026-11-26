@@ -169,6 +169,8 @@ function publicTabs() {
       id: t.id,
       title: t.conv.title || (last ? last.prompt.slice(0, 60) : ''),
       color: last && agents[last.agent] ? agents[last.agent].color : null,
+      // Bot of the last turn, if it still exists: the tab shows it.
+      bot: last && typeof last.bot === 'string' && Object.hasOwn(bots, last.bot) ? { id: last.bot, label: bots[last.bot].label, color: bots[last.bot].color } : null,
       running: !!t.run,
       unread: t.unread,
       active: t.id === tabs.activeId,
@@ -285,7 +287,7 @@ function publicState() {
     allowAutoMode: cfg.allowAutoMode,
     commands: Object.values(cfg.commands || {}),
     // Public fields only: the personality stays in the main process.
-    bots: Object.values(bots).map((b) => ({ id: b.id, label: b.label, description: b.description, color: b.color, agent: b.agent, mode: b.mode, maxMode: b.maxMode, avatar: b.avatar })),
+    bots: Object.values(bots).map((b) => ({ id: b.id, label: b.label, description: b.description, color: b.color, agent: b.agent, model: b.model, mode: b.mode, maxMode: b.maxMode, avatar: b.avatar })),
     cwd: tilde(cwd),
     cwdIsScratch: cwd === P.workspace,
     shortcut: shortcutOk ? cfg.shortcut : null,

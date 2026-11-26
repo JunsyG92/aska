@@ -154,6 +154,40 @@ body { padding: 14px; }
   transition: background 0.35s ease, color 0.35s ease, transform 0.12s ease;
 }
 .agent:active { transform: scale(0.96); }
+/* Bot of the tab, before the agent: its initial on its color (avatars come later). */
+.bot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  max-width: 180px;
+  padding: 0 11px 0 7px;
+  border: 0;
+  border-radius: 11px;
+  background: color-mix(in oklab, var(--bot) 14%, var(--surface));
+  color: color-mix(in oklab, var(--bot) 70%, var(--text));
+  font: 600 13px/1 var(--font);
+  cursor: pointer;
+  flex: none;
+}
+.bot-chip[hidden] { display: none; }
+.bot-chip:active { transform: scale(0.96); }
+.bot-chip:focus-visible { outline: 2px solid var(--bot); outline-offset: 1px; }
+.bot-chip.swap .bot-name { animation: swap 0.28s cubic-bezier(0.2, 1.1, 0.3, 1); }
+.bot-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-initial {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bot);
+  color: #fff;
+  font: 700 11px/1 var(--font);
+}
+.cmd-opt .bot-initial { width: 16px; height: 16px; font-size: 9px; align-self: center; }
+.panel.mini .bot-chip { pointer-events: none; -webkit-app-region: drag; }
 .agent-name { display: inline-block; }
 .agent.swap .agent-name { animation: swap 0.28s cubic-bezier(0.2, 1.1, 0.3, 1); }
 @keyframes swap {
@@ -1050,6 +1084,16 @@ kbd {
   border-radius: 50%;
   background: var(--c, var(--faint));
 }
+/* Tab of a bot: its initial on its color. */
+.tab-dot.bot {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  color: #fff;
+  font: 700 9px/1 var(--font);
+}
+.tab.running .tab-dot.bot { color: transparent; font-size: 0; }
 /* Working tab: the dot becomes a small spinning ring. */
 .tab.running .tab-dot {
   width: 9px;

@@ -843,6 +843,61 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.deepEqual(botAudit.map((e) => e.bot), ['trad', 'trad', undefined]);
     assert.ok(botAudit[0].argv.includes('<system>') && !JSON.stringify(botAudit).includes('You translate'), 'personality not in the audit log');
 
+    // ---------- bots in the window: "@name", chip, mode ceiling, tab restored ----------
+    // (French UI at this point)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('aska:new-conversation'));
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
+    assert.equal(await page.isHidden('#bot'), true);
+    await page.fill('#input', '@tr');
+    await page.waitForSelector('#cmd-menu:not([hidden])');
+    assert.deepEqual(await page.locator('.cmd-opt .cmd-name').allTextContents(), ['@trad']);
+    assert.match(await page.textContent('#cmd-note'), /@@/);
+    await page.keyboard.press('Tab');
+    assert.equal(await page.inputValue('#input'), '@trad ');
+    await page.keyboard.type('Bonjour');
+    await page.keyboard.press('Enter');
+    await settled('done');
+    assert.equal(await page.textContent('#bot-name'), 'Translator');
+    assert.equal(await page.isVisible('#bot'), true);
+    assert.match(await page.getAttribute('#input', 'placeholder'), /Translator/);
+    assert.match(await page.locator('.turn .meta').last().textContent(), /^Translator · Claude/);
+    await page.waitForTimeout(300);
+    await shot('12-bot-light');
+    await page.fill('#input', '@');
+    await page.waitForSelector('#cmd-menu:not([hidden])');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(300);
+    await shot('12-bot-palette-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.fill('#input', '');
+    let lastBotCall = calls().at(-1);
+    assert.ok(lastBotCall.args.includes('--append-system-prompt'));
+    assert.equal(lastBotCall.stdin, 'Bonjour');
+    // The bot is read-only: Shift+Tab stays there, "/mode edit" is refused.
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.textContent('#mode-name'), 'Lecture seule');
+    await send('/mode edit');
+    assert.match(await page.textContent('#status'), /Translator est limité à Lecture seule/);
+    // "/agent codex" keeps the bot: Codex gets the personality before the prompt.
+    await send('/agent codex');
+    assert.equal(await page.textContent('#agent-name'), 'Codex');
+    assert.equal(await page.isVisible('#bot'), true);
+    await send('Merci [echo]');
+    await settled('done');
+    lastBotCall = calls().at(-1);
+    assert.match(lastBotCall.stdin, /^<bot name="Translator">\nYou are "Translator"[\s\S]*<\/bot>\n\nHere is the history/);
+    // The tab bar shows the bot.
+    assert.equal(await page.textContent('.tab.active .tab-dot.bot'), 'T');
+    // Window reloaded (as after a restart): the tab finds its bot and its agent again.
+    await page.reload();
+    await page.waitForFunction(() => document.getElementById('bot') && !document.getElementById('bot').hidden, null, { timeout: 15000 });
+    assert.equal(await page.textContent('#bot-name'), 'Translator');
+    assert.equal(await page.textContent('#agent-name'), 'Codex');
+    // "@" alone: back to the agent alone.
+    await send('@');
+    assert.equal(await page.isHidden('#bot'), true);
+    assert.match(await page.textContent('#status'), /Sans bot/);
+
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
     const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));

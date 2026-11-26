@@ -304,3 +304,45 @@ test('personality: system prompt when possible, else before the prompt', () => {
   // No bot: exactly as before.
   assert.deepEqual(invocationFor({ ...req, bot: null, agent: AGENTS.codex }), buildInvocation(AGENTS.codex, 'read', buildContextPrompt(TURNS, 'Merci'), { trusted: true }));
 });
+
+// ---------- "@name" in the field (ticket 04) ----------
+
+const { parse, suggest } = require('../src/renderer/commands');
+
+const CTX = {
+  bots: [
+    { id: 'trad', label: 'Translator', description: 'Into English' },
+    { id: 'review', label: 'Reviewer', description: '' },
+  ],
+  agents: [{ id: 'claude', label: 'Claude' }],
+};
+
+test('@name: parsed at the start of the message only', () => {
+  assert.deepEqual(parse('@trad bonjour à tous', CTX), { kind: 'bot', botId: 'trad', rest: 'bonjour à tous' });
+  assert.deepEqual(parse('@TRAD\nline 2', CTX), { kind: 'bot', botId: 'trad', rest: 'line 2' });
+  assert.deepEqual(parse('@trad', CTX), { kind: 'bot', botId: 'trad', rest: '' });
+  assert.deepEqual(parse('  @  ', CTX), { kind: 'bot', botId: null, rest: '' }, '"@" alone leaves the bot');
+  assert.deepEqual(parse('@@trad hi', CTX), { kind: 'send', text: '@trad hi' });
+  assert.deepEqual(parse('@nope hi', CTX), { kind: 'unknownBot', name: 'nope' });
+  assert.deepEqual(parse('write to mail@example.org', CTX), { kind: 'send', text: 'write to mail@example.org' });
+  assert.deepEqual(parse('@trad, hi', CTX), { kind: 'send', text: '@trad, hi' });
+  assert.deepEqual(parse('@ hi', CTX), { kind: 'send', text: '@ hi' });
+  assert.deepEqual(parse('@trad', {}), { kind: 'unknownBot', name: 'trad' }, 'no bots loaded');
+  // "/" commands are unchanged.
+  assert.deepEqual(parse('/claude hi', CTX), { kind: 'agent', agentId: 'claude', rest: 'hi' });
+});
+
+test('@name: suggestions by prefix of the id or the label, then "no bot"', () => {
+  assert.deepEqual(suggest('@', CTX).map((i) => i.line), ['@trad', '@review']);
+  assert.deepEqual(suggest('@', { ...CTX, bot: 'trad' }).map((i) => i.line), ['@', '@trad', '@review'], '"no bot" first when a bot is on: "@" then Enter leaves it');
+  assert.equal(suggest('@', { ...CTX, bot: 'trad' })[0].none, true);
+  assert.deepEqual(suggest('@tr', CTX).map((i) => i.line), ['@trad']);
+  assert.deepEqual(suggest('@Rev', CTX).map((i) => i.line), ['@review'], 'case-insensitive, by label too');
+  assert.deepEqual(suggest('@x', CTX), []);
+  const it = suggest('@tr', CTX)[0];
+  assert.deepEqual([it.name, it.label, it.text, it.bot, it.done, it.arg], ['trad', 'Translator', 'Into English', true, true, 'message']);
+  assert.equal(suggest('@trad hello', CTX), null, 'typing the message: no palette');
+  assert.equal(suggest('@tr\nx', CTX), null);
+  assert.equal(suggest('@@tr', CTX), null);
+  assert.equal(suggest('hello @tr', CTX), null);
+});
