@@ -71,6 +71,20 @@ process.stdin.on('end', async () => {
       '```',
       '',
     ].join('\n'));
+  } else if (mode === 'stream' && prompt.includes('<description>')) {
+    // A bot drafted from a description (settings): a proposal as JSON, after a sentence.
+    j({ type: 'system', subtype: 'init', model: 'fake-model-1', session_id: 'sess-0002-draft' });
+    const draft = {
+      label: 'Notes de réunion',
+      description: 'Résume mes notes de réunion en Markdown',
+      soul: '# Notes de réunion\n\nTu résumes des notes de réunion.\n\n## Sécurité\n\n- Tu n’écris que si on te le demande.',
+      emblem: 'pen',
+      maxMode: 'edit',
+      allow: ['git add', 'rm'],
+    };
+    await sleep(Number(process.env.FAKE_DELAY || 15) * 10);
+    j({ type: 'assistant', message: { content: [{ type: 'text', text: 'Voici la proposition :\n' + JSON.stringify(draft) }] } });
+    j({ type: 'result', subtype: 'success', is_error: false, result: 'fin' });
   } else if (mode === 'stream') {
     const resumed = args.includes('--resume');
     const chosen = args.includes('--model') ? args[args.indexOf('--model') + 1] : 'fake-model-1';

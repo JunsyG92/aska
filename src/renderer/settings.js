@@ -122,7 +122,7 @@
           soul: b.soul,
           avatar: { variant: b.avatar.variant || 0, shape: b.avatar.shape || 'auto', emblem: b.avatar.emblem || 'auto' },
         };
-  let creating = null; // { label, error } while a new bot is being named
+  let creating = null; // { label, describe, busy, proposal, error } while a new bot is being made
   let removeArmed = null; // bot whose deletion waits for a second click
   const botList = () => (botData ? botData.bots : []);
   const draftOf = (b) => (botDrafts[b.id] = botDrafts[b.id] || botFields(b));
@@ -139,9 +139,15 @@
   const avatarUrl = (b, d) => b.image || window.AskaAvatar.avatarDataUrl(d.label || b.label || b.id, { ...(d.avatar || {}), color: d.color || null });
 
   async function createNow() {
-    const r = await opts.api.createBot(creating.label);
+    if (creating.busy) return;
+    // With a proposal (reviewed by the user): its fields are saved too.
+    const p = creating.proposal;
+    const req = p
+      ? { label: creating.label, description: p.description, soul: p.soul, emblem: p.emblem, maxMode: p.maxMode, allow: p.allow.split(',').map((c) => c.trim()).filter(Boolean) }
+      : creating.label;
+    const r = await opts.api.createBot(req);
     if (r.errors) {
-      creating.error = r.errors.label || r.errors._;
+      creating.error = r.errors.label || r.errors._ || Object.values(r.errors)[0];
       render();
       return;
     }
@@ -153,6 +159,30 @@
     setMessage(t('settings.bots.created', { id: r.id }), 'ok');
     const soul = root.querySelector('[data-focus-key="bot-soul"]');
     if (soul) soul.focus();
+  }
+
+  // A proposal written by the default agent from the description: shown to be
+  // reviewed, saved only by "Create".
+  async function draftNow() {
+    if (!creating || creating.busy || !creating.describe.trim()) return;
+    creating.busy = true;
+    creating.error = null;
+    render();
+    const r = await opts.api.draftBot(creating.describe);
+    if (!creating) return; // closed meanwhile
+    creating.busy = false;
+    if (r.error) creating.error = r.error;
+    else if (r.draft) {
+      creating.proposal = { ...r.draft, allow: r.draft.allow.join(', ') };
+      if (!creating.label.trim()) creating.label = r.draft.label;
+    }
+    render();
+  }
+
+  function stopCreating() {
+    if (creating && creating.busy) opts.api.cancelBotDraft();
+    creating = null;
+    render();
   }
 
   // Two clicks: the first one arms, the second one deletes (to the trash).
@@ -242,7 +272,7 @@
     const add = el('button', 'set-bot new' + (creating ? ' active' : ''), '+ ' + t('settings.bots.newBot'));
     add.type = 'button';
     add.addEventListener('click', () => {
-      creating = creating || { label: '', error: null };
+      creating = creating || { label: '', describe: '', busy: false, proposal: null, error: null };
       removeArmed = null;
       render();
       const input = root.querySelector('[data-focus-key="bot-new"]');
@@ -267,11 +297,59 @@
         }
       });
       const box = el('div', 'set-inline wrap');
-      box.append(name, button(t('settings.bots.create'), createNow, 'set-btn small primary'), button(t('settings.cancel'), () => {
-        creating = null;
-        render();
-      }));
-      return [nav, section(t('settings.bots.newBot'), field(t('settings.bots.newName'), box, { error: creating.error }))];
+      const create = button(t('settings.bots.create'), createNow, 'set-btn small primary');
+      create.disabled = !!creating.busy;
+      box.append(name, create, button(t('settings.cancel'), stopCreating));
+
+      // Or a description, from which an agent writes a proposal.
+      const describe = el('textarea', 'set-textarea short');
+      describe.rows = 3;
+      describe.value = creating.describe;
+      describe.placeholder = t('settings.bots.describePlaceholder');
+      describe.dataset.focusKey = 'bot-describe';
+      describe.disabled = !!creating.busy;
+      describe.addEventListener('input', () => { creating.describe = describe.value; });
+      const gen = button(creating.busy ? t('settings.bots.generating') : t('settings.bots.generate'), draftNow, 'set-btn small');
+      gen.disabled = !!creating.busy;
+      gen.dataset.action = 'draft';
+      const describeBox = el('div', 'set-stack');
+      const genRow = el('div', 'set-inline wrap');
+      genRow.append(gen);
+      describeBox.append(describe, genRow);
+
+      const rows = [
+        field(t('settings.bots.newName'), box, { error: creating.error }),
+        wide(field(t('settings.bots.describe'), describeBox, { hint: t('settings.bots.describeHint') })),
+      ];
+      const p = creating.proposal;
+      if (p) {
+        // The proposal, to review: everything stays editable.
+        const preview = el('img', 'set-bot-preview');
+        preview.alt = '';
+        preview.src = window.AskaAvatar.avatarDataUrl(creating.label || p.label, { emblem: p.emblem });
+        const maxSelect = select(['read', 'edit'].map((m) => ({ value: m, label: opts.modeLabel(m) })), p.maxMode, (v) => {
+          p.maxMode = v;
+          render();
+        });
+        maxSelect.dataset.focusKey = 'draft-max-mode';
+        const soul = el('textarea', 'set-textarea');
+        soul.rows = 10;
+        soul.value = p.soul;
+        soul.dataset.focusKey = 'draft-soul';
+        soul.addEventListener('input', () => { p.soul = soul.value; });
+        const rights = [];
+        if (p.maxMode !== 'read') rights.push(t('settings.bots.writeWarning'));
+        if (p.maxMode !== 'read' && p.allow.trim()) rights.push(t('settings.bots.commandsWarning', { commands: p.allow }));
+        rows.push(
+          el('p', 'set-note', t('settings.bots.proposal')),
+          wide(field(t('settings.bots.avatar'), preview)),
+          field(t('settings.bots.description'), textInput(p.description, (v) => { p.description = v; }, { focusKey: 'draft-description', max: 120 })),
+          field(t('settings.bots.maxMode'), maxSelect, { hint: rights.join(' ') || t('settings.bots.maxModeHint') }),
+          field(t('settings.bots.allow'), textInput(p.allow, (v) => { p.allow = v; }, { focusKey: 'draft-allow', placeholder: t('settings.bots.allowPlaceholder') }), { hint: t('settings.bots.allowHint') }),
+          wide(field(t('settings.bots.soul'), soul))
+        );
+      }
+      return [nav, section(t('settings.bots.newBot'), ...rows)];
     }
     if (!b) return [nav, el('p', 'set-note', t('settings.bots.empty', { folder: botData ? botData.folder : '' }))];
 
@@ -771,6 +849,7 @@
     errors = {};
     botDrafts = {};
     botErrors = {};
+    if (creating && creating.busy) opts.api.cancelBotDraft();
     creating = null;
     removeArmed = null;
     message = { text: '', kind: '' };

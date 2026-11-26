@@ -1056,6 +1056,36 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.keyboard.press('Escape');
     await page.waitForSelector('#settings', { state: 'hidden' });
 
+    // ---------- settings: a bot written by an agent from a description ----------
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    await page.click('.set-tab[data-page="bots"]');
+    await page.click('.set-bot.new');
+    await page.fill('[data-focus-key="bot-describe"]', 'Un bot qui résume mes notes de réunion en Markdown');
+    const draftCallsFrom = calls().length;
+    await page.click('[data-action="draft"]');
+    await page.waitForSelector('[data-focus-key="draft-soul"]', { timeout: 20000 });
+    const draftCall = calls()[draftCallsFrom];
+    assert.ok(draftCall.args.includes('plan') && !draftCall.args.includes('--allowedTools'), 'asked read-only');
+    assert.match(draftCall.stdin, /<description>\nUn bot qui résume mes notes de réunion en Markdown\n<\/description>/);
+    assert.ok(samePath(draftCall.cwd, fs.realpathSync(P.workspace)), 'in Aska’s own empty folder');
+    assert.equal(await page.inputValue('[data-focus-key="bot-new"]'), 'Notes de réunion', 'name proposed');
+    assert.equal(await page.inputValue('[data-focus-key="draft-allow"]'), 'git add', '"rm" dropped');
+    assert.match(await page.textContent('.set-body'), /pourra modifier les fichiers de son dossier[\s\S]*lancer, sans demander : git add/);
+    assert.ok(!fs.existsSync(path.join(P.bots, 'notes-de-reunion')), 'nothing written before "Create"');
+    await shot('16-settings-bot-draft-light');
+    await page.fill('[data-focus-key="draft-soul"]', '# Notes\n\nTu résumes mes notes, en listes courtes.');
+    await page.click('.set-btn.small.primary');
+    await page.waitForSelector('.set-bot.active[data-bot="notes-de-reunion"]');
+    const drafted = JSON.parse(fs.readFileSync(path.join(P.bots, 'notes-de-reunion', 'bot.json'), 'utf8'));
+    assert.deepEqual(drafted, {
+      label: 'Notes de réunion', agent: 'claude', mode: 'read', maxMode: 'edit', description: 'Résume mes notes de réunion en Markdown',
+      avatar: { emblem: 'pen' }, allow: ['git add'],
+    });
+    assert.equal(fs.readFileSync(path.join(P.bots, 'notes-de-reunion', 'SOUL.md'), 'utf8'), '# Notes\n\nTu résumes mes notes, en listes courtes.\n');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
+
     // ---------- settings: maximum mode and allowed commands ----------
     await page.keyboard.press('Control+,');
     await page.waitForSelector('#settings:not([hidden]) .set-section');
