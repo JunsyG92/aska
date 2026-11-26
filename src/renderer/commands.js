@@ -27,19 +27,33 @@
   const MAX_ITEMS = 40; // the list scrolls
 
   const LINE_RE = /^\/([A-Za-z][\w-]*)(?:\s+([\s\S]*))?$/;
+  // "@name rest": a bot, at the start of the message only ("mail@example.org" stays text).
+  const BOT_RE = /^@([A-Za-z][\w-]*)?(?:\s+([\s\S]*))?$/;
   const byName = (name) => COMMANDS.find((c) => c.name === name || (c.aliases || []).includes(name)) || null;
 
   /**
    * What to do with the text of the field.
    * ctx: { agents: [{ id, label }] (available agents, for "/codex …"),
-   *        custom: [{ name, prompt, description?, agent?, mode?, model? }] (commands of the config) }.
+   *        custom: [{ name, prompt, description?, agent?, mode?, model? }] (commands of the config),
+   *        bots: [{ id, label }] (for "@trad …") }.
    * Aska's commands come first, then the user's, then the agents.
+   * "@name rest" picks a bot (and sends the rest, if any); "@" alone leaves the bot;
+   * "@@text" sends "@text" as is.
    * Returns { kind: 'send', text } | { kind: 'command', name, arg } | { kind: 'custom', command, arg }
-   *       | { kind: 'agent', agentId, rest } | { kind: 'unknown', name }.
+   *       | { kind: 'agent', agentId, rest } | { kind: 'unknown', name }
+   *       | { kind: 'bot', botId (null: no bot), rest } | { kind: 'unknownBot', name }.
    */
   function parse(text, ctx = {}) {
     const s = String(text).trim();
-    if (s.startsWith('//')) return { kind: 'send', text: s.slice(1) };
+    if (s.startsWith('//') || s.startsWith('@@')) return { kind: 'send', text: s.slice(1) };
+    if (s.startsWith('@')) {
+      const b = BOT_RE.exec(s);
+      if (!b) return { kind: 'send', text: s }; // "@trad, hi", "@ hi"...
+      if (!b[1]) return b[2] ? { kind: 'send', text: s } : { kind: 'bot', botId: null, rest: '' };
+      const name = b[1].toLowerCase();
+      const bot = (ctx.bots || []).find((x) => x.id === name);
+      return bot ? { kind: 'bot', botId: bot.id, rest: (b[2] || '').trim() } : { kind: 'unknownBot', name };
+    }
     const m = LINE_RE.exec(s);
     if (!m) return { kind: 'send', text: s };
     const name = m[1].toLowerCase();
@@ -64,6 +78,7 @@
    */
   function suggest(text, ctx = {}) {
     const s = String(text);
+    if (s.startsWith('@')) return suggestBots(s, ctx);
     if (!s.startsWith('/') || s.startsWith('//') || s.includes('\n')) return null;
     const m = /^\/([A-Za-z][\w-]*)?(\s+)?(.*)$/s.exec(s);
     if (!m) return null;
@@ -104,6 +119,25 @@
       .filter((v) => starts(v.value, needle.trim()))
       .slice(0, MAX_ITEMS)
       .map((v) => ({ line: `/${cmd.name} ${v.value}`, name: v.value, label: v.label, done: true }));
+  }
+
+  /**
+   * Bots while "@name" is typed: "no bot" first (only while nothing is typed
+   * after "@", and when a bot is on), then the bots by prefix of the id or the label.
+   * ctx: { bots: [{ id, label, description }], bot: id of the current bot or null }.
+   * Item: { line, name, text, bot: true, done } ("no bot": name '', none: true).
+   */
+  function suggestBots(s, ctx) {
+    if (s.startsWith('@@') || s.includes('\n')) return null;
+    const m = /^@([A-Za-z][\w-]*)?$/.exec(s);
+    if (!m) return null; // the message itself is being typed
+    const typed = m[1] || '';
+    const items = (ctx.bots || [])
+      .filter((b) => starts(b.id, typed) || starts(b.label, typed))
+      .map((b) => ({ line: '@' + b.id, name: b.id, label: b.label, text: b.description || '', bot: true, arg: 'message', done: true }));
+    // First: "@" then Enter leaves the bot.
+    if (!typed && ctx.bot) items.unshift({ line: '@', name: '', none: true, bot: true, done: true });
+    return items.slice(0, MAX_ITEMS);
   }
 
   /**

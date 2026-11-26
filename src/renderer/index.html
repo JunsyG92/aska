@@ -34,6 +34,10 @@
 
       <header class="bar">
         <span class="grip" title="Move" data-i18n-title="move" aria-hidden="true"></span>
+        <button id="bot" class="bot-chip" type="button" hidden>
+          <span id="bot-initial" class="bot-initial" aria-hidden="true"></span>
+          <span id="bot-name" class="bot-name"></span>
+        </button>
         <button id="agent" class="agent" type="button" title="Switch agent (Tab)" data-i18n-title="switchAgent">
           <span class="orb" aria-hidden="true"><i></i></span>
           <span id="agent-name" class="agent-name">…</span>
@@ -92,7 +96,7 @@
 
       <section id="cmd-menu" class="cmd-menu" hidden aria-label="Commands" data-i18n-aria-label="commands.label">
         <div id="cmd-list" class="cmd-list" role="listbox" aria-label="Commands" data-i18n-aria-label="commands.label"></div>
-        <div class="cmd-note" data-i18n="commands.note"></div>
+        <div id="cmd-note" class="cmd-note" data-i18n="commands.note"></div>
       </section>
 
       <footer class="foot">

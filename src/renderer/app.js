@@ -42,7 +42,10 @@
   let pinned = false;
   let unread = 0;
   let tabList = []; // tabs: [{ id, title, color, running, unread, active }]
-  const tabUi = new Map(); // per tab: { draft, agentId, mode }, kept when switching tabs
+  const tabUi = new Map(); // per tab: { draft, agentId, mode, botId, modelOverride }, kept when switching tabs
+  let bots = []; // custom bots: [{ id, label, description, color, agent, model, mode, maxMode }]
+  let botId = null; // bot of the active tab (null: the agent alone)
+  let modelOverride; // model picked by hand while a bot brings its own (undefined: none)
   let closeArmed = null; // working tab waiting for the close confirmation
   let lastPrompt = ''; // last request of the active conversation, for /retry
   let customCommands = []; // "/" commands of the config: [{ name, prompt, description?, agent?, mode?, model? }]
@@ -224,26 +227,82 @@
     if (animate) replay(modeBtn, 'swap');
   }
 
+  const bot = () => bots.find((b) => b.id === botId) || null;
+  const RANK = ['read', 'edit', 'auto'];
+  // Modes of the agent, up to the bot's maxMode (the main process checks it too).
+  function allowedModes(a = agent()) {
+    const b = bot();
+    if (!a) return [];
+    const ok = a.modes.filter((m) => !b || RANK.indexOf(m) <= RANK.indexOf(b.maxMode));
+    return ok.length ? ok : a.modes.slice(0, 1);
+  }
+  // The bot brings its own model, on its own agent.
+  const botModel = () => {
+    const a = agent();
+    const b = bot();
+    return !!(a && b && b.agent === a.id && b.model !== undefined);
+  };
+  // Model of the next request: picked by hand, else the bot's, else the agent's.
+  function currentModel() {
+    const a = agent();
+    if (!a) return null;
+    if (modelOverride !== undefined) return modelOverride;
+    return botModel() ? bot().model : a.model;
+  }
+  // Who the field talks to: the bot, else the agent.
+  const who = () => (bot() ? bot().label : agent() ? agent().label : '');
+
   function syncModel() {
     const a = agent();
     modelBtn.hidden = !a || !a.canPickModel;
     if (!a) return;
-    $('model-name').textContent = a.model || t('model.default');
+    $('model-name').textContent = currentModel() || t('model.default');
     modelBtn.title = t('model.title', { agent: a.label });
   }
 
   function setAgent(id, animate) {
     const a = agents.find((x) => x.id === id);
     if (!a) return;
+    if (id !== agentId) modelOverride = undefined;
     agentId = id;
     panel.style.setProperty('--agent', a.color);
     $('agent-name').textContent = a.label;
-    input.placeholder = t(turnCount ? 'reply' : 'ask', { agent: a.label });
+    input.placeholder = t(turnCount ? 'reply' : 'ask', { agent: who() });
     if (animate) replay(agentBtn, 'swap');
     // An agent may not offer every mode: fall back to the most restrictive one.
-    if (!a.modes.includes(mode)) setMode(a.modes[0], animate);
+    if (!allowedModes(a).includes(mode)) setMode(allowedModes(a)[0], animate);
     syncModel();
     if (menuOpen) closeModelMenu();
+  }
+
+  // Bot of the tab: its agent, its starting mode and its model. "/agent" then
+  // changes the agent and keeps the bot.
+  function setBot(id, animate) {
+    const b = id ? bots.find((x) => x.id === id) : null;
+    botId = b ? b.id : null;
+    modelOverride = undefined;
+    if (b) {
+      if (agents.some((x) => x.id === b.agent)) setAgent(b.agent, animate);
+      else setStatus(t('commands.botAgentMissing', { bot: b.label, agent: b.agent, current: who() }), 'err');
+      const allowed = allowedModes();
+      if (allowed.length) setMode(allowed.includes(b.mode) ? b.mode : allowed[0], animate);
+    }
+    syncBot(animate);
+    syncModel();
+  }
+
+  function syncBot(animate) {
+    const b = bot();
+    const chip = $('bot');
+    chip.hidden = !b;
+    if (b) {
+      chip.style.setProperty('--bot', b.color);
+      $('bot-initial').textContent = b.label.slice(0, 1).toUpperCase();
+      $('bot-name').textContent = b.label;
+      chip.title = t('botTitle', { bot: b.label, description: b.description || b.agent });
+      if (animate) replay(chip, 'swap');
+    }
+    if (agent()) input.placeholder = t(turnCount ? 'reply' : 'ask', { agent: who() });
   }
 
   function cycleAgent(dir) {
@@ -255,8 +314,9 @@
   function cycleMode() {
     const a = agent();
     if (running || !a) return;
-    const i = a.modes.indexOf(mode);
-    setMode(a.modes[(i + 1) % a.modes.length], true);
+    const list = allowedModes(a);
+    const i = list.indexOf(mode);
+    setMode(list[(i + 1) % list.length], true);
   }
 
   // ----- model picker: list provided by the CLI, filterable from the keyboard -----
@@ -278,7 +338,11 @@
   async function chooseModel(value) {
     const a = agent();
     if (!a) return;
-    applyState(await api.setModel(a.id, value));
+    // A bot with its own model: the choice holds for this tab, the agent's stays as it is.
+    if (botModel()) {
+      modelOverride = value;
+      syncModel();
+    } else applyState(await api.setModel(a.id, value));
     closeModelMenu();
     replay(modelBtn, 'swap');
   }
@@ -325,7 +389,7 @@
     btn.classList.remove('busy');
     if (!menuOpen || agentId !== a.id) return;
     modelAll = res.models;
-    modelCurrent = res.current;
+    modelCurrent = botModel() ? currentModel() : res.current;
     modelDefault = res.defaultModel || null;
     $('model-note').textContent = res.fromCli
       ? ''
@@ -343,7 +407,7 @@
     if (menuOpen) return closeModelMenu();
     modelAll = a.models.map((id) => ({ id, label: null }));
     modelDefault = null;
-    modelCurrent = a.model || null;
+    modelCurrent = currentModel() || null;
     $('model-filter').value = '';
     $('model-filter').placeholder = t('model.search', { agent: a.label });
     menuOpen = true;
@@ -368,15 +432,16 @@
 
   function fillMeta(metaEl, turn) {
     const secs = turn.durationMs ? t('duration', { secs: (turn.durationMs / 1000).toLocaleString(locale, { maximumFractionDigits: 1 }) }) : null;
-    const parts = [turn.model, modes[turn.mode] ? modes[turn.mode].label : null, secs].filter(Boolean);
+    // A bot's turn: "Translator · Claude · haiku…".
+    const parts = [turn.botLabel ? turn.label : null, turn.model, modes[turn.mode] ? modes[turn.mode].label : null, secs].filter(Boolean);
     metaEl.dataset.cancelled = t('cancelled');
-    metaEl.replaceChildren(el('i'), el('b', null, turn.label), parts.length ? ' · ' + parts.join(' · ') : '');
+    metaEl.replaceChildren(el('i'), el('b', null, turn.botLabel || turn.label), parts.length ? ' · ' + parts.join(' · ') : '');
   }
 
-  // Next mode, wider than `m`, offered by this agent (autonomous only if allowed): null if none.
+  // Next mode, wider than `m`, offered by this agent (autonomous only if allowed,
+  // never beyond the bot's maxMode): null if none.
   function widerMode(a, m) {
-    const order = ['read', 'edit', 'auto'];
-    return (a && a.modes.find((x) => order.indexOf(x) > order.indexOf(m))) || null;
+    return (a && allowedModes(a).find((x) => RANK.indexOf(x) > RANK.indexOf(m))) || null;
   }
 
   // Notice of a turn. Actions denied by the mode, on the last turn: a button runs
@@ -446,6 +511,7 @@
     history = s.history || [];
     warnings = s.warnings || [];
     customCommands = s.commands || [];
+    bots = s.bots || [];
     $('cwd-name').textContent = s.cwd;
     $('cwd').title = t('cwdTitle', { path: s.cwdIsScratch ? t('cwdScratch') : s.cwd });
     $('hist-btn').hidden = !s.historyEnabled;
@@ -468,16 +534,23 @@
     if (saved && saved.agentId && agents.some((x) => x.id === saved.agentId)) {
       agentId = saved.agentId;
       mode = saved.mode || mode;
+      botId = saved.botId || null;
+      modelOverride = saved.modelOverride;
       tabUi.set(convId, { ...saved, agentId: null }); // applied once, when arriving on the tab
     }
+    if (botId && !bot()) botId = null; // bot removed (reload)
     if (!agentId || !agent()) {
       const preferred = agents.find((a) => a.id === s.defaultAgent) || agents[0];
       if (!modes[mode] || !agentId) mode = s.defaultMode;
       agentId = preferred.id;
     }
+    const keep = modelOverride;
     setAgent(agentId, false);
-    const a = agent();
-    setMode(a.modes.includes(mode) ? mode : a.modes[0], false);
+    modelOverride = keep;
+    const allowed = allowedModes();
+    setMode(allowed.includes(mode) ? mode : allowed[0], false);
+    syncBot(false);
+    syncModel();
     if (warnings.length && !turnCount && !running) showNotice(warnings.join('\n'), 'warn');
   }
 
@@ -492,7 +565,19 @@
   // Switching to another tab: store the draft and choices of the tab being left,
   // show the new one's thread, and reattach to its running request.
   function switchTo(s) {
-    if (convId) tabUi.set(convId, { draft: input.value, agentId, mode });
+    if (convId) tabUi.set(convId, { draft: input.value, agentId, mode, botId, modelOverride });
+    // A tab not seen yet in this session (new, or reopened at startup): the bot
+    // of its last turn, if it still exists, with the agent that answered.
+    if (!tabUi.has(s.conversation.id)) {
+      const last = s.conversation.turns[s.conversation.turns.length - 1];
+      const b = last && last.bot ? (s.bots || []).find((x) => x.id === last.bot) : null;
+      botId = b ? b.id : null;
+      modelOverride = undefined;
+      if (b) {
+        agentId = last.agentId;
+        mode = b.mode;
+      }
+    }
     clearTimeout(renderTimer);
     renderTimer = null;
     closeArmed = null;
@@ -598,6 +683,7 @@
             const list = offered.map((id) => `${id} (${modes[id] ? modes[id].label : id})`).join(', ');
             return setStatus(t('commands.unknownMode', { name: c.mode, agent: agent().label, list }), 'err');
           }
+          if (!allowedModes().includes(c.mode)) return setStatus(t('commands.modeAboveBot', { bot: bot().label, max: modes[bot().maxMode].label }), 'err');
           setMode(c.mode, true);
         }
         if (c.model !== undefined && agent().canPickModel) model = c.model;
@@ -607,12 +693,25 @@
         setAgent(cmd.agentId, true);
         if (!cmd.rest) return setInput('');
         prompt = cmd.rest;
-      } else prompt = cmd.text;
+      } else if (cmd.kind === 'bot') {
+        // "@trad": this tab now talks to the bot; "@" alone: back to the agent.
+        if (running) return setStatus(t('commands.busy'), 'err');
+        setBot(cmd.botId, true);
+        if (!cmd.rest) {
+          setInput('');
+          return setStatus(cmd.botId ? t('commands.bot', { bot: bot().label }) : t('commands.noBot'), 'ok');
+        }
+        prompt = cmd.rest;
+      } else if (cmd.kind === 'unknownBot') return setStatus(t('commands.unknownBot', { name: cmd.name }), 'err');
+      else prompt = cmd.text;
     }
     const a = agent();
     if (running || !prompt || !a) return;
     if (view === 'history') showHistory(false);
+    const b = bot();
+    if (model === undefined && modelOverride !== undefined) model = modelOverride;
     const req = { tabId: convId, agentId, mode, prompt, trust };
+    if (b) req.botId = b.id;
     if (model !== undefined) req.model = model;
     const res = await api.run(req);
     if (res.needsTrust) {
@@ -646,7 +745,7 @@
     }
     showNotice('');
     thread.querySelectorAll('.notice .rerun').forEach((b) => b.remove()); // only on the last turn
-    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode, prompt, answer: '', status: 'running' }, false);
+    live = addTurn({ label: a.label, botLabel: b ? b.label : null, color: a.color, model: model !== undefined ? model : currentModel(), mode, prompt, answer: '', status: 'running' }, false);
     live.node.classList.add('live');
     turnCount += 1;
     panel.dataset.state = 'running';
@@ -655,7 +754,7 @@
     setKeys();
     autosize();
     scrollEnd(true);
-    input.placeholder = t('reply', { agent: a.label });
+    input.placeholder = t('reply', { agent: who() });
     input.focus();
   }
 
@@ -730,6 +829,8 @@
       modes: (a ? a.modes : []).map((id) => ({ id, label: modes[id] ? modes[id].label : id })),
       models: a && a.canPickModel ? a.models : [],
       custom: customCommands,
+      bots: bots.map((x) => ({ id: x.id, label: x.label, description: x.description })),
+      bot: botId,
     };
   }
 
@@ -766,7 +867,14 @@
         ...cmdItems.map((it, i) => {
           const row = el('div', 'cmd-opt');
           row.setAttribute('role', 'option');
-          if (it.desc || it.custom) {
+          if (it.bot && it.none) {
+            row.append(el('span', 'cmd-name', '@'), el('span', 'cmd-desc', t('commands.desc.noBot')));
+          } else if (it.bot) {
+            const b = bots.find((x) => x.id === it.name);
+            const dot = el('span', 'bot-initial', it.label.slice(0, 1).toUpperCase());
+            if (b) dot.style.setProperty('--bot', b.color);
+            row.append(dot, el('span', 'cmd-name', '@' + it.name), el('span', 'cmd-desc', it.text || it.label));
+          } else if (it.desc || it.custom) {
             row.append(el('span', 'cmd-name', '/' + it.name));
             if (it.arg) row.append(el('span', 'cmd-arg', t('commands.args.' + it.arg)));
             row.append(el('span', 'cmd-desc', it.custom ? it.text : t('commands.desc.' + it.desc, it.descParams || {})));
@@ -781,6 +889,7 @@
       );
       const keep = cmdItems.findIndex((it) => it.line === prev);
       highlightCmd(keep >= 0 ? keep : 0, true);
+      $('cmd-note').textContent = t(cmdItems[0].bot ? 'commands.botNote' : 'commands.note');
     }
     if (wasOpen !== cmdOpen()) setKeys();
   }
@@ -825,6 +934,7 @@
           const list = (a ? a.modes : []).map((id) => `${id} (${modes[id] ? modes[id].label : id})`).join(', ');
           return setStatus(t('commands.unknownMode', { name: arg, agent: a ? a.label : '', list }), 'err');
         }
+        if (!allowedModes().includes(m)) return setStatus(t('commands.modeAboveBot', { bot: bot().label, max: modes[bot().maxMode].label }), 'err');
         setMode(m, true);
         return done();
       }
@@ -835,7 +945,10 @@
         if (!arg) return openModelMenu();
         const value = arg === window.AskaCommands.DEFAULT_MODEL ? null : arg;
         if (value !== null && !MODEL_RE.test(value)) return setStatus(t('errors.invalidModel'), 'err');
-        applyState(await api.setModel(a.id, value));
+        if (botModel()) {
+          modelOverride = value; // for this tab: the bot brings its own model
+          syncModel();
+        } else applyState(await api.setModel(a.id, value));
         replay(modelBtn, 'swap');
         return setStatus(t('commands.model', { model: value || t('model.cliDefault') }), 'ok');
       }
@@ -1233,6 +1346,12 @@
     refreshPalette();
   });
   agentBtn.addEventListener('click', () => { cycleAgent(1); input.focus(); });
+  // The bot's chip: "@" in the field lists the bots (and "no bot").
+  $('bot').addEventListener('click', () => {
+    if (running) return;
+    setInput('@');
+    input.focus();
+  });
   modeBtn.addEventListener('click', () => { cycleMode(); input.focus(); });
   modelBtn.addEventListener('click', openModelMenu);
   $('model-filter').addEventListener('input', renderModels);
