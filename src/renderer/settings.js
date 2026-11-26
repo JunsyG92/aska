@@ -119,6 +119,7 @@
           mode: b.mode,
           maxMode: b.maxMode,
           allow: (b.allow || []).join(', '),
+          remote: b.remote || 'ask',
           soul: b.soul,
           avatar: { variant: b.avatar.variant || 0, shape: b.avatar.shape || 'auto', emblem: b.avatar.emblem || 'auto' },
         };
@@ -464,6 +465,12 @@
     // Commands allowed without asking, in a writing mode (Claude only for now).
     const allowInput = textInput(d.allow, (v) => { d.allow = v; }, { focusKey: 'bot-allow', placeholder: t('settings.bots.allowPlaceholder') });
     const allowHint = d.maxMode === 'read' ? t('settings.bots.allowOff') : t('settings.bots.allowHint');
+    // Remote actions (push, PR, workflow…): confirmed at each request, or not.
+    const remoteSelect = select(['ask', 'auto'].map((v) => ({ value: v, label: t(`settings.bots.remoteOptions.${v}`) })), d.remote, (v) => {
+      d.remote = v;
+      render();
+    });
+    remoteSelect.dataset.focusKey = 'bot-remote';
 
     // Personality, with its length: a warning from 4,000 characters, refused beyond 8,000.
     const soul = el('textarea', 'set-textarea');
@@ -506,6 +513,7 @@
         field(t('settings.bots.maxMode'), maxSelect, { hint: t('settings.bots.maxModeHint'), error: errs.maxMode }),
         field(t('settings.bots.mode'), modeSelect, { hint: t('settings.bots.modeHint', { max: opts.modeLabel(d.maxMode) }), error: errs.mode }),
         field(t('settings.bots.allow'), allowInput, { hint: allowHint, error: errs.allow }),
+        ...(d.maxMode === 'read' ? [] : [field(t('settings.bots.remote'), remoteSelect, { hint: t(d.remote === 'auto' ? 'settings.bots.remoteAutoHint' : 'settings.bots.remoteAskHint'), error: errs.remote })]),
         wide(field(t('settings.bots.soul'), soulBox, { hint: t('settings.bots.soulHint'), error: errs.soul })),
         field(t('settings.bots.filesHint'), filesBox),
         field('', removeButton)

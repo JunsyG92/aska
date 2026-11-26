@@ -10,7 +10,7 @@ const { ConversationStore, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
-const { loadBots, saveBot, createBot, deleteBot, draftPrompt, parseDraft, DESCRIPTION_MAX, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
+const { isRemote, loadBots, saveBot, createBot, deleteBot, draftPrompt, parseDraft, DESCRIPTION_MAX, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
@@ -642,6 +642,19 @@ function startRun(req) {
     }
   }
 
+  // Remote actions of the bot (push, PR, workflow…), in a writing mode and for
+  // a CLI that applies allowed commands: with the "ask" policy, confirmed for
+  // this request, always for this folder, or left out ("without").
+  let granted = bot ? bot.allow : [];
+  const remoteCmds = bot && mode !== 'read' && agent.allowFlag ? bot.allow.filter(isRemote) : [];
+  if (remoteCmds.length && bot.remote !== 'auto' && !trust.isRemoteTrusted(dir.path, bot.id, remoteCmds)) {
+    const choice = req.remote;
+    if (choice === 'always') trust.addRemote(dir.path, bot.id, remoteCmds);
+    else if (choice === 'without') granted = bot.allow.filter((c) => !isRemote(c));
+    else if (choice !== 'once') return { needsRemote: true, bot: bot.label, cwd: tilde(dir.path), commands: remoteCmds };
+  }
+  const remoteGranted = granted.filter(isRemote);
+
   // Follow-up in a conversation: native resume if the CLI already has the whole
   // thread in its session (same agent, same folder), otherwise the context is fed back in.
   // A CLI session keeps the system prompt of its first request (Claude: system
@@ -679,7 +692,7 @@ function startRun(req) {
   };
   let inv;
   try {
-    inv = invocationFor({ agent, mode, prompt, turns: conv.turns, bot, model, resume, excess, canPass });
+    inv = invocationFor({ agent, mode, prompt, turns: conv.turns, bot, model, resume, excess, canPass, allow: granted });
   } catch (e) {
     return { error: e.message };
   }
@@ -753,6 +766,8 @@ function startRun(req) {
       ts: startedAt,
       agent: agent.id,
       bot: bot ? bot.id : undefined,
+      // Remote actions the bot could run without asking for this request (policy or confirmation).
+      remote: remoteGranted.length ? remoteGranted : undefined,
       mode,
       cwd: dir.path,
       bin: agent.binPath,
@@ -1127,6 +1142,7 @@ function botsList() {
       // Ceilings the settings offer: auto only when the config allows it.
       maxModes: MODE_ORDER.filter((m) => a && a.modes[m] && (m !== 'auto' || cfg.allowAutoMode)),
       allow: b.allow,
+      remote: b.remote,
       allowSupported: !!(a && a.allowFlag),
       avatar: b.avatar,
       image: b.image,
