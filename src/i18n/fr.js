@@ -154,7 +154,6 @@ module.exports = {
     avatarNotImage: "Ce fichier n'est pas une image utilisable par Aska (PNG, JPEG, WebP, GIF ou SVG)",
     newSoul: "Tu es {label}, un assistant. Réponds clairement et brièvement.",
     busy: "{bot} travaille dans un onglet : attendez sa réponse ou annulez-la d’abord",
-    deleted: "{bot} mis à la corbeille",
     edit: {
       unreadable: "bot.json est illisible",
       enabled: "Activé ou non",
@@ -307,7 +306,7 @@ module.exports = {
         enabledHint: "Désactivé : absent de @ et de la fenêtre ; ses fichiers restent",
         off: "désactivé",
         remove: "Supprimer ce bot",
-        removeConfirm: "Cliquez encore pour supprimer {bot} (mis à la corbeille)",
+        removeConfirm: "Cliquez encore pour supprimer {bot} (à la corbeille, si le système en a une)",
         created: "Bot créé : @{id}. Écrivez sa personnalité, puis enregistrez.",
         removed: "Bot supprimé",
         auto: "Automatique",

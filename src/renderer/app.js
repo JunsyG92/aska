@@ -716,6 +716,13 @@
         // "@trad": this tab now talks to the bot; "@" alone: back to the agent.
         if (running) return setStatus(t('commands.busy'), 'err');
         setBot(cmd.botId, true);
+        // A bot with a folder of its own ("cwd" in bot.json): the tab moves there, as with /cd.
+        const b = bot();
+        if (b && b.cwd) {
+          const res = await api.setDir(b.cwd);
+          applyState(res);
+          if (res.error) return setStatus(res.error, 'err');
+        }
         if (!cmd.rest) {
           setInput('');
           return setStatus(cmd.botId ? t('commands.bot', { bot: bot().label }) : t('commands.noBot'), 'ok');
