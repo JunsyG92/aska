@@ -42,6 +42,11 @@ contextBridge.exposeInMainWorld('aska', {
   deleteBot: (id) => ipcRenderer.invoke('aska:bot-delete', id),
   pickBotAvatar: (botId) => ipcRenderer.invoke('aska:bot-avatar-pick', botId),
   clearBotAvatar: (botId) => ipcRenderer.invoke('aska:bot-avatar-clear', botId),
+  listTasks: () => ipcRenderer.invoke('aska:tasks-list'),
+  createTask: (task) => ipcRenderer.invoke('aska:task-create', task),
+  startTask: (id, numbers) => ipcRenderer.invoke('aska:task-start', { id, numbers }),
+  cancelTask: (id, n) => ipcRenderer.invoke('aska:task-cancel', { id, n }),
+  cleanupTask: (id) => ipcRenderer.invoke('aska:task-cleanup', id),
   onRunEvent: on('aska:run-event'),
   onShown: on('aska:shown'),
   onWillHide: on('aska:will-hide'),
@@ -50,4 +55,5 @@ contextBridge.exposeInMainWorld('aska', {
   onSelection: on('aska:selection'),
   onUnread: on('aska:unread'),
   onTabs: on('aska:tabs'),
+  onTask: on('aska:task'),
 });

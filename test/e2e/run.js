@@ -67,7 +67,9 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     setVar('USERPROFILE', home);
     setVar('APPDATA', path.join(home, 'AppData', 'Roaming'));
     setVar('LOCALAPPDATA', path.join(home, 'AppData', 'Local'));
-    setVar('PATH', [bin, path.dirname(process.execPath), sys32].join(';'));
+    // git, for the tasks (its own folder only: no agent CLI comes with it).
+    const gitDir = (require('child_process').spawnSync('where', ['git'], { encoding: 'utf8' }).stdout || '').split(/\r?\n/)[0];
+    setVar('PATH', [bin, path.dirname(process.execPath), sys32, ...(gitDir ? [path.dirname(gitDir)] : [])].join(';'));
   } else {
     setVar('HOME', home);
     // The system tools stay reachable, but not an agent CLI installed on this machine
@@ -1172,6 +1174,54 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await send('Où suis-je ?');
     await settled('done');
     assert.ok(samePath(calls().at(-1).cwd, fs.realpathSync(botProject)), `working folder: ${calls().at(-1).cwd}`);
+
+    // ---------- tasks (engine, through the API until the view comes) ----------
+    const gitIn = (dir, ...args) => require('child_process').spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+    const taskRoot = path.join(home, 'apps');
+    for (const name of ['api', 'web']) {
+      const d = path.join(taskRoot, name);
+      fs.mkdirSync(d, { recursive: true });
+      gitIn(d, 'init', '-q', '-b', 'main');
+      gitIn(d, 'config', 'user.email', 't@example.com');
+      gitIn(d, 'config', 'user.name', 'T');
+      fs.writeFileSync(path.join(d, 'README.md'), name);
+      gitIn(d, 'add', '.');
+      gitIn(d, 'commit', '-qm', 'init');
+    }
+    const firstList = await page.evaluate(() => window.aska.listTasks());
+    assert.deepEqual(firstList, { tasks: [] }, JSON.stringify(firstList));
+    const refused = await page.evaluate((root) => window.aska.createTask({ goal: 'x', root, subtasks: [{ repo: root, botId: 'trad', prompt: 'p' }] }), taskRoot);
+    assert.match(refused.error, /n’est pas un dépôt git du dossier choisi/);
+    const created = await page.evaluate((root) => window.aska.createTask({
+      goal: 'Passer à Node 26',
+      root,
+      subtasks: [{ repo: root + '/api', botId: 'trad', prompt: 'Mets à jour Node' }, { repo: root + '/web', botId: 'trad', prompt: 'Mets à jour Node' }],
+    }), taskRoot);
+    assert.equal(created.task.subtasks.length, 2);
+    const taskCallsFrom = calls().length;
+    await page.evaluate((id) => window.aska.startTask(id), created.task.id);
+    let taskNow;
+    for (let i = 0; i < 100; i++) {
+      taskNow = (await page.evaluate(() => window.aska.listTasks())).tasks[0];
+      if (taskNow.status === 'done') break;
+      await page.waitForTimeout(100);
+    }
+    assert.equal(taskNow.status, 'done');
+    assert.deepEqual(taskNow.subtasks.map((s) => [s.status, s.branch]), [['done', 'aska/passer-a-node-26/1'], ['done', 'aska/passer-a-node-26/2']]);
+    const subCalls = calls().slice(taskCallsFrom);
+    assert.equal(subCalls.length, 2);
+    for (const c of subCalls) {
+      assert.ok(c.cwd.includes('worktrees'), `in a worktree: ${c.cwd}`);
+      assert.ok(c.args.includes('acceptEdits'), 'Edit mode, the bot’s ceiling');
+      assert.ok(c.args[c.args.indexOf('--allowedTools') + 1].includes('Bash(git push)'), 'approving the task grants the bot’s commands');
+      assert.match(c.stdin, /Mets à jour Node/);
+    }
+    assert.equal(gitIn(path.join(taskRoot, 'api'), 'branch', '--show-current').stdout.trim(), 'main', 'the user’s copy untouched');
+    const taskAudit = fs.readFileSync(P.audit, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.task === created.task.id);
+    assert.deepEqual(taskAudit.map((e) => e.subtask).sort(), [1, 2]);
+    assert.deepEqual((await page.evaluate((id) => window.aska.cleanupTask(id), created.task.id)), { ok: true });
+    assert.equal(fs.readdirSync(path.join(P.dataDir, 'worktrees', created.task.id)).length, 0, 'worktrees removed');
+    assert.ok(gitIn(path.join(taskRoot, 'web'), 'rev-parse', '--verify', 'aska/passer-a-node-26/2').status === 0, 'branches kept');
 
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.

@@ -1,5 +1,6 @@
 'use strict';
 const { app, BrowserWindow, globalShortcut, ipcMain, dialog, screen, clipboard, Notification, session, shell, Tray, Menu, nativeImage } = require('electron');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -82,6 +83,32 @@ function launchAgent(agent, argv, opts, onEvent) {
     return { cancel() {}, done: Promise.resolve({ ok: false, reason: 'spawn-error', error: e.message, durationMs: 0, stderrTail: '' }) };
   }
   return runAgent({ ...opts, bin: cmd.command, argv: cmd.args, verbatim: cmd.verbatim, env: agentEnv(agent) }, onEvent);
+}
+
+// How far a command goes beyond the system's limit (the history fed back is cut
+// down then: prompt passed as an argument by Copilot, Cursor), and whether some
+// arguments can be passed at all (cmd.exe launcher: no argument with spaces).
+function commandFit(agent) {
+  const env = agentEnv(agent);
+  return {
+    excess: (i) => {
+      let cmd;
+      try {
+        cmd = buildCommand(agent.launch, i.argv);
+      } catch {
+        return 0; // refused by cmd.exe: launchAgent reports it
+      }
+      return commandLineExcess(cmd.command, cmd.args, { verbatim: cmd.verbatim, env });
+    },
+    canPass: (args) => {
+      try {
+        buildCommand(agent.launch, args);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
 }
 
 // System languages, most preferred first (decides the language when "language" is "auto").
@@ -458,6 +485,7 @@ function setupTray() {
       // Cancels every running request, across all tabs.
       cancel: () => {
         for (const tab of tabs ? tabs.running() : []) tab.run.handle.cancel();
+        if (taskEngine) taskEngine.stopAll();
       },
       settings: () => {
         if (!win) return;
@@ -606,7 +634,8 @@ function startRun(req) {
   const tab = typeof req.tabId === 'string' ? tabs.get(req.tabId) : null;
   if (!tab) return { error: t('errors.tabNotFound') };
   if (tab.run) return { error: t('errors.tabBusy') };
-  if (tabs.running().length >= MAX_RUNS) return { error: t('errors.tooManyRuns', { max: MAX_RUNS }) };
+  // The limit counts the subtasks of the tasks too (when the task module is loaded).
+  if (tabs.running().length + (taskEngine ? taskEngine.active : 0) >= MAX_RUNS) return { error: t('errors.tooManyRuns', { max: MAX_RUNS }) };
   const conv = tab.conv;
   const { agentId, mode, prompt, trust: trustChoice } = req;
   const agent = typeof agentId === 'string' && Object.hasOwn(agents, agentId) ? agents[agentId] : null;
@@ -670,26 +699,7 @@ function startRun(req) {
     model = req.model;
   }
 
-  // The history fed back is cut down if the command would exceed the system's
-  // limit (prompt passed as an argument: Copilot, Cursor).
-  const env = agentEnv(agent);
-  const excess = (i) => {
-    let cmd;
-    try {
-      cmd = buildCommand(agent.launch, i.argv);
-    } catch {
-      return 0; // refused by cmd.exe: launchAgent reports it
-    }
-    return commandLineExcess(cmd.command, cmd.args, { verbatim: cmd.verbatim, env });
-  };
-  const canPass = (args) => {
-    try {
-      buildCommand(agent.launch, args);
-      return true;
-    } catch {
-      return false; // cmd.exe launcher: no argument with spaces
-    }
-  };
+  const { excess, canPass } = commandFit(agent);
   let inv;
   try {
     inv = invocationFor({ agent, mode, prompt, turns: conv.turns, bot, model, resume, excess, canPass, allow: granted });
@@ -736,6 +746,7 @@ function startRun(req) {
 
   handleRun.done.then((res) => {
     tab.run = null;
+    if (taskEngine) taskEngine.pump(); // a place for a waiting subtask
     const ok = res.ok && !streamError;
     turn.status = ok ? 'ok' : res.reason === 'cancel' ? 'cancel' : 'error';
     turn.durationMs = res.durationMs;
@@ -1162,6 +1173,113 @@ function draftAgent() {
 // A bot answering in a tab: it can be neither deleted nor turned off.
 const botBusy = (id) => tabs.list.some((x) => x.run && x.run.botId === id);
 
+// ---------- tasks (several bots at once, each in its worktree) ----------
+// Loaded on first use only: Aska starts and runs as before for whoever never opens them.
+
+let taskEngine = null;
+
+function tasksModule() {
+  if (taskEngine) return taskEngine;
+  const git = sec.resolveBinary(['git'], { envPath: searchPath() });
+  if (git.error) throw new Error(t('tasks.noGit', { error: git.error }));
+  const { TaskEngine } = require('./tasks/engine');
+  const { TaskStore } = require('./tasks/store');
+  taskEngine = new TaskEngine({
+    store: new TaskStore(P.tasks),
+    gitBin: git.path,
+    worktreesDir: P.worktrees,
+    launch: launchSubtask,
+    busy: () => tabs.running().length,
+    max: MAX_RUNS,
+    onUpdate: (task) => {
+      if (win && !win.isDestroyed()) win.webContents.send('aska:task', publicTask(task));
+    },
+  });
+  taskEngine.gitBin = git.path;
+  return taskEngine;
+}
+
+// A subtask's agent, run like a tab's request: its bot (personality, model,
+// allowed commands: granted when the task was approved), in its worktree.
+function launchSubtask(task, s) {
+  const bot = Object.hasOwn(bots, s.botId) ? bots[s.botId] : null;
+  if (!bot) return { error: t('errors.unknownBot') };
+  const agent = agents[bot.agent];
+  if (!agent || !agent.binPath) return { error: t('errors.agentUnavailable', { agent: bot.agent, error: agent ? agent.binError : '' }) };
+  // The worktree is Aska's own folder (as the scratch space): writing there needs no other approval.
+  const dir = sec.checkWorkdir(s.worktree, s.mode, os.homedir(), [fs.realpathSync(s.worktree)]);
+  if (dir.error) return { error: dir.error };
+  const { excess, canPass } = commandFit(agent);
+  const model = bot.model !== undefined ? bot.model : modelFor(agent);
+  const inv = invocationFor({ agent, mode: s.mode, prompt: s.prompt, turns: [], bot, model, excess, canPass, allow: s.allow });
+  let answer = '';
+  const startedAt = new Date().toISOString();
+  const handle = launchAgent(
+    agent,
+    inv.argv,
+    { cwd: dir.path, stdin: inv.stdin, output: agent.output, timeoutMs: cfg.timeoutSec * 1000, maxBytes: cfg.maxOutputKb * 1024 },
+    (ev) => {
+      if (ev.type === 'text' && answer.length < MAX_ANSWER) answer += ev.text;
+    }
+  );
+  return {
+    cancel: () => handle.cancel(),
+    done: handle.done.then((res) => {
+      sec.appendAudit(P.audit, {
+        ts: startedAt,
+        task: task.id,
+        subtask: s.n,
+        agent: agent.id,
+        bot: bot.id,
+        mode: s.mode,
+        cwd: dir.path,
+        bin: agent.binPath,
+        argv: inv.logArgv,
+        remote: s.allow.filter(isRemote).length ? s.allow.filter(isRemote) : undefined,
+        prompt: cfg.savePrompts ? s.prompt : undefined,
+        result: res.reason,
+        code: res.code ?? null,
+        durationMs: res.durationMs,
+      });
+      return { ...res, answer };
+    }),
+  };
+}
+
+// What the window sees of a task (the bots by their public fields).
+function publicTask(task) {
+  return {
+    ...task,
+    subtasks: task.subtasks.map((s) => {
+      const b = bots[s.botId];
+      return { ...s, repo: tilde(s.repo), worktree: s.worktree ? tilde(s.worktree) : null, bot: b ? { id: b.id, label: b.label, color: b.color, avatar: b.avatar, image: b.image } : { id: s.botId, label: s.botId } };
+    }),
+    root: tilde(task.root),
+  };
+}
+
+function setupTaskIpc() {
+  const engineOr = (fn) => {
+    try {
+      return fn(tasksModule());
+    } catch (e) {
+      return { error: e.message };
+    }
+  };
+  handle('aska:tasks-list', () => engineOr((e) => ({ tasks: e.list().map(publicTask) })));
+  handle('aska:task-create', (input) =>
+    engineOr((e) => {
+      const { checkTask } = require('./tasks/check');
+      const c = checkTask(input, { bots, agents, allowAutoMode: cfg.allowAutoMode, gitBin: e.gitBin });
+      if (c.error) return c;
+      return { task: publicTask(e.add(e.store.create(c))) };
+    })
+  );
+  handle('aska:task-start', (req) => engineOr((e) => e.start(req && req.id, req && Array.isArray(req.numbers) ? req.numbers : null)));
+  handle('aska:task-cancel', (req) => engineOr((e) => e.cancel(req && req.id, req && Number.isInteger(req.n) ? req.n : null)));
+  handle('aska:task-cleanup', (id) => engineOr((e) => e.cleanup(id)));
+}
+
 // Bots read again after a change made from the window (their warnings were shown at startup).
 function reloadBots() {
   const r = loadBots(P.bots, { agents, allowAutoMode: cfg.allowAutoMode });
@@ -1278,6 +1396,7 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
 
     loadEverything();
     registerIpc();
+    setupTaskIpc();
     registerShortcut();
     createWindow();
     setupTray();
@@ -1295,6 +1414,7 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
   app.on('before-quit', () => {
     quitting = true;
     for (const t of tabs ? tabs.running() : []) t.run.handle.cancel();
+    if (taskEngine) taskEngine.stopAll();
   });
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();

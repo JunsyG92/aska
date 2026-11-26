@@ -32,6 +32,9 @@ function paths(env = process.env, home = os.homedir(), platform = process.platfo
     audit: path.join(stateDir, 'history.jsonl'),
     conversations: path.join(stateDir, 'conversations'),
     workspace: path.join(dataDir, 'workspace'),
+    // Tasks (several bots at once): their state, and the git worktrees they work in.
+    tasks: path.join(stateDir, 'tasks'),
+    worktrees: path.join(dataDir, 'worktrees'),
     // Bots: same place on every system, outside the config, easy to find and to copy.
     bots: path.join(home, '.aska', 'bots'),
   };
