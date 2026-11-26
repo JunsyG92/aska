@@ -655,3 +655,20 @@ test('turned off: listed apart, on again from the settings', () => {
   assert.ok(load(root).off.off);
   assert.ok(saveBot(dir, { enabled: 'no' }, { agents: AGENTS }).errors.enabled);
 });
+
+// ---------- fixes after the first test by Flo (2026-11-26) ----------
+
+test('avatars: a chosen color tints the robot, the drawing stays the same', () => {
+  const red = AV.avatar('Correcteur', { color: '#ff0000' });
+  const blue = AV.avatar('Correcteur', { color: '#0000ff' });
+  assert.match(red, /hsl\(0 100% 62%\)/);
+  assert.match(blue, /hsl\(240 100% 62%\)/);
+  const shape = (svg) => svg.replace(/hsl\([^)]*\)/g, '');
+  assert.equal(shape(red), shape(blue), 'only the colors change');
+  assert.equal(shape(red), shape(AV.avatar('Correcteur')));
+  // The color drawn from the name, given back as the bot's color, keeps the robot's hue.
+  const own = AV.avatarColor('Correcteur', 0);
+  assert.equal(AV.avatar('Correcteur', { color: own }).match(/hsl\((\d+) 100% 62%\)/)[1], AV.avatar('Correcteur').match(/hsl\((\d+) 100% 62%\)/)[1]);
+  assert.equal(AV.avatar('Correcteur', { color: 'blue' }), AV.avatar('Correcteur'), 'not a #rrggbb: ignored');
+  assert.notEqual(AV.avatarDataUrl('Correcteur', { color: '#ff0000' }), AV.avatarDataUrl('Correcteur', { color: '#0000ff' }), 'cached per color');
+});

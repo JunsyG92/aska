@@ -132,7 +132,7 @@
     return patch;
   }
   const botPatches = () => botList().map((b) => [b.id, botChanged(b)]).filter(([, p]) => Object.keys(p).length);
-  const avatarUrl = (b, d) => b.image || window.AskaAvatar.avatarDataUrl(d.label || b.label || b.id, d.avatar || {});
+  const avatarUrl = (b, d) => b.image || window.AskaAvatar.avatarDataUrl(d.label || b.label || b.id, { ...(d.avatar || {}), color: d.color || null });
 
   async function createNow() {
     const r = await opts.api.createBot(creating.label);
@@ -184,13 +184,12 @@
     await refreshBots();
   }
 
-  function textInput(value, onInput, { focusKey, max, placeholder, list } = {}) {
+  function textInput(value, onInput, { focusKey, max, placeholder } = {}) {
     const i = el('input', 'set-input');
     i.type = 'text';
     i.value = value;
     if (max) i.maxLength = max;
     if (placeholder) i.placeholder = placeholder;
-    if (list) i.setAttribute('list', list);
     i.dataset.focusKey = focusKey;
     i.addEventListener('input', () => {
       onInput(i.value);
@@ -341,7 +340,7 @@
     picker.disabled = auto;
     picker.addEventListener('input', () => {
       d.color = picker.value;
-      armedClose = false;
+      redraw(); // the robot takes the color
     });
     const autoSwitch = toggle(auto, (v) => {
       d.color = v ? '' : picker.value;
@@ -349,18 +348,17 @@
     });
     colorBox.append(picker, autoSwitch, el('span', 'set-unit', t('settings.bots.colorAuto')));
 
-    // Model: the agent's by default, or a name (suggested from the agent's list).
-    const listId = 'set-bot-models';
-    const models = el('datalist');
-    models.id = listId;
-    for (const m of b.models) {
-      const o = el('option');
-      o.value = m;
-      models.append(o);
-    }
-    const model = textInput(d.model, (v) => { d.model = v.trim(); }, { focusKey: 'bot-model', placeholder: t('settings.bots.modelDefault', { agent: b.agentLabel }), list: listId });
-    const modelBox = el('div', 'set-inline');
-    modelBox.append(model, models);
+    // Model: the agent's by default, or one of its list (the window's model
+    // picker adds the names typed by hand to that list). Every choice stays
+    // visible, whatever is picked (a text field with suggestions only showed
+    // the names starting like the current one).
+    const modelNames = [...new Set([...b.models, ...(d.model ? [d.model] : [])])];
+    const modelBox = select(
+      [{ value: '', label: t('settings.bots.modelDefault', { agent: b.agentLabel }) }, ...modelNames.map((m) => ({ value: m, label: m }))],
+      d.model,
+      (v) => { d.model = v; }
+    );
+    modelBox.dataset.focusKey = 'bot-model';
 
     // Mode: up to the bot's maxMode, among the agent's modes; never auto at startup.
     const modeSelect = select(

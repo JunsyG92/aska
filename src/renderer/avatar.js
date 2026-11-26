@@ -92,15 +92,28 @@
     return `#${f(0)}${f(8)}${f(4)}`;
   }
 
+  /** Hue (0-359) of a #rrggbb color, or null. */
+  function hueOf(color) {
+    if (typeof color !== 'string' || !/^#[0-9a-f]{6}$/i.test(color)) return null;
+    const [r, g, b] = [1, 3, 5].map((i) => Number.parseInt(color.slice(i, i + 2), 16) / 255);
+    const max = Math.max(r, g, b);
+    const d = max - Math.min(r, g, b);
+    if (!d) return 0;
+    const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return Math.round((h * 60 + 360) % 360);
+  }
+
   /**
    * name: the bot's name; opts: { variant, shape ('auto' | id), emblem ('auto' | id | 'none'),
-   * badge (emblem shown), animate (scan line while the bot works) }.
+   * badge (emblem shown), animate (scan line while the bot works),
+   * color (#rrggbb: the robot takes its hue; else one drawn from the name) }.
    * Returns a standalone SVG (viewBox 64 x 64).
    */
   function avatar(name, opts = {}) {
-    const { variant = 0, shape = 'auto', emblem = 'auto', badge = true, animate = false } = opts;
+    const { variant = 0, shape = 'auto', emblem = 'auto', badge = true, animate = false, color = null } = opts;
     const r = seedOf(name, variant);
-    const h = pick(r, HUES);
+    const drawn = pick(r, HUES); // always drawn: the rest of the robot stays the same
+    const h = hueOf(color) ?? drawn;
     const shapeId = pick(r, Object.keys(SHAPES));
     const S = SHAPES[shape !== 'auto' && Object.hasOwn(SHAPES, shape) ? shape : shapeId];
     const neon = `hsl(${h} 100% 62%)`;
@@ -196,8 +209,8 @@ ${badgeSvg ? `<g filter="url(#${id}g)">${badgeSvg}</g>` : ''}
   // data: URLs, built once per combination (the thread redraws often).
   const cache = new Map();
   function avatarDataUrl(name, opts = {}) {
-    const o = { variant: 0, shape: 'auto', emblem: 'auto', badge: true, animate: false, ...opts };
-    const key = JSON.stringify([name, o.variant, o.shape, o.emblem, o.badge, o.animate]);
+    const o = { variant: 0, shape: 'auto', emblem: 'auto', badge: true, animate: false, color: null, ...opts };
+    const key = JSON.stringify([name, o.variant, o.shape, o.emblem, o.badge, o.animate, o.color]);
     let url = cache.get(key);
     if (!url) {
       if (cache.size > 300) cache.clear();
