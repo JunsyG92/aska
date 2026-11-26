@@ -876,6 +876,7 @@ kbd {
 .set-count[data-kind='warn'] { color: var(--auto); }
 .set-count[data-kind='err'] { color: var(--err); }
 .set-row.wide { grid-template-columns: minmax(0, 1fr); }
+.set-textarea.short { min-height: 64px; font-family: var(--font); font-size: 13px; }
 .set-input:focus-visible, .set-textarea:focus-visible, .set-color:focus-visible { outline: 2px solid var(--agent); outline-offset: 1px; }
 
 .set-switch {

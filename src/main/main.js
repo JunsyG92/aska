@@ -5,12 +5,12 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, isModel } = require('./agents');
+const { MODES, MODE_ORDER, resolveAgents, isModel, buildInvocation } = require('./agents');
 const { ConversationStore, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
-const { loadBots, saveBot, createBot, deleteBot, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
+const { loadBots, saveBot, createBot, deleteBot, draftPrompt, parseDraft, DESCRIPTION_MAX, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
@@ -1026,15 +1026,63 @@ function registerIpc() {
     return { bots: botsList(), state: publicState() };
   });
   // New bot: for the default agent (else the first one installed), read-only.
-  handle('aska:bot-create', (label) => {
-    const usable = Object.values(agents).filter((a) => a.binPath);
-    const agent = (agents[cfg.defaultAgent] && agents[cfg.defaultAgent].binPath ? agents[cfg.defaultAgent] : usable[0] || agents.claude || {}).id;
+  // With a proposal (drafted below, then reviewed by the user): its fields too,
+  // checked by saveBot; if one is refused, the new folder is removed.
+  handle('aska:bot-create', async (req) => {
+    const { label, ...fields } = typeof req === 'string' ? { label: req } : req && typeof req === 'object' ? req : {};
+    const agent = draftAgent();
     if (!agent) return { errors: { _: t('errors.unknownAgent') } };
     const taken = [...Object.values(bots), ...Object.values(offBots)].map((b) => b.label);
-    const r = createBot(P.bots, { label, agent, taken });
+    const r = createBot(P.bots, { label, agent: agent.id, taken });
     if (r.errors) return r;
+    const values = {};
+    for (const k of ['description', 'soul', 'maxMode', 'allow']) if (fields[k] !== undefined) values[k] = fields[k];
+    if (fields.emblem !== undefined) values.avatar = { emblem: fields.emblem };
+    if (Object.keys(values).length) {
+      const s = saveBot(path.join(P.bots, r.id), values, { agents, allowAutoMode: cfg.allowAutoMode });
+      if (s.errors) {
+        await deleteBot(P.bots, r.id);
+        return s;
+      }
+    }
     reloadBots();
     return { id: r.id, bots: botsList(), state: publicState() };
+  });
+  // A bot drafted from a description: the default agent, read-only, in Aska's
+  // own empty folder, is asked for a proposal. Nothing is written: the settings
+  // show it to be reviewed, then "Create" saves it.
+  let draftRun = null;
+  handle('aska:bot-draft', async (description) => {
+    if (typeof description !== 'string' || !description.trim() || description.length > DESCRIPTION_MAX || description.includes('\0')) {
+      return { error: t('bots.draft.invalid', { max: DESCRIPTION_MAX }) };
+    }
+    if (draftRun) return { error: t('bots.draft.busy') };
+    const agent = draftAgent();
+    if (!agent || !agent.binPath) return { error: t('errors.unknownAgent') };
+    let inv;
+    try {
+      inv = buildInvocation(agent, 'read', draftPrompt(description.trim(), getLanguage()), { model: modelFor(agent), trusted: true });
+    } catch (e) {
+      return { error: e.message };
+    }
+    let answer = '';
+    draftRun = launchAgent(
+      agent,
+      inv.argv,
+      { cwd: fsRealWorkspace(), stdin: inv.stdin, output: agent.output, timeoutMs: Math.min(cfg.timeoutSec, 300) * 1000, maxBytes: 512 * 1024 },
+      (ev) => {
+        if (ev.type === 'text') answer += ev.text;
+      }
+    );
+    const res = await draftRun.done;
+    draftRun = null;
+    if (res.reason === 'cancel') return { cancelled: true };
+    if (!res.ok && !answer.trim()) return { error: t('bots.draft.failed', { agent: agent.label, error: res.error || (res.stderrTail || '').slice(-300) || res.reason }) };
+    const d = parseDraft(answer);
+    return d.error ? { error: d.error } : { draft: d.draft, agent: agent.label };
+  });
+  handle('aska:bot-draft-cancel', () => {
+    if (draftRun) draftRun.cancel();
   });
   // Deleted for good is too much for a slip: the folder goes to the trash when the system has one.
   handle('aska:bot-delete', async (id) => {
@@ -1087,6 +1135,12 @@ function botsList() {
       enabled: true,
     };
   }).concat(Object.values(offBots).map((o) => ({ id: o.id, label: o.label, description: o.description, enabled: false })));
+}
+
+// Agent of a new bot, and of the drafts: the default agent, else the first one installed.
+function draftAgent() {
+  const usable = Object.values(agents).filter((a) => a.binPath);
+  return agents[cfg.defaultAgent] && agents[cfg.defaultAgent].binPath ? agents[cfg.defaultAgent] : usable[0] || agents.claude || null;
 }
 
 // A bot answering in a tab: it can be neither deleted nor turned off.
