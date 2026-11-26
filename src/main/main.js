@@ -10,7 +10,7 @@ const { ConversationStore, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
-const { loadBots, seedBots, systemText, fingerprint, invocationFor } = require('./bots');
+const { loadBots, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
@@ -175,7 +175,7 @@ function publicTabs() {
       title: t.conv.title || (last ? last.prompt.slice(0, 60) : ''),
       color: last && agents[last.agent] ? agents[last.agent].color : null,
       // Bot of the last turn, if it still exists: the tab shows it.
-      bot: last && typeof last.bot === 'string' && Object.hasOwn(bots, last.bot) ? { id: last.bot, label: bots[last.bot].label, color: bots[last.bot].color, avatar: bots[last.bot].avatar } : null,
+      bot: last && typeof last.bot === 'string' && Object.hasOwn(bots, last.bot) ? { id: last.bot, label: bots[last.bot].label, color: bots[last.bot].color, avatar: bots[last.bot].avatar, image: bots[last.bot].image } : null,
       running: !!t.run,
       unread: t.unread,
       active: t.id === tabs.activeId,
@@ -292,7 +292,7 @@ function publicState() {
     allowAutoMode: cfg.allowAutoMode,
     commands: Object.values(cfg.commands || {}),
     // Public fields only: the personality stays in the main process.
-    bots: Object.values(bots).map((b) => ({ id: b.id, label: b.label, description: b.description, color: b.color, agent: b.agent, model: b.model, mode: b.mode, maxMode: b.maxMode, avatar: b.avatar })),
+    bots: Object.values(bots).map((b) => ({ id: b.id, label: b.label, description: b.description, color: b.color, agent: b.agent, model: b.model, mode: b.mode, maxMode: b.maxMode, avatar: b.avatar, image: b.image })),
     cwd: tilde(cwd),
     cwdIsScratch: cwd === P.workspace,
     shortcut: shortcutOk ? cfg.shortcut : null,
@@ -987,6 +987,42 @@ function registerIpc() {
     }
     return publicState();
   });
+
+  // A bot's picture, chosen by hand (the settings' Bots tab): copied into its
+  // folder, resized or cleaned (see importAvatar), then the bots are read again.
+  handle('aska:bot-avatar-pick', async (id) => {
+    const bot = typeof id === 'string' && Object.hasOwn(bots, id) ? bots[id] : null;
+    if (!bot) return { ...publicState(), error: t('errors.unknownBot') };
+    let error = null;
+    dialogOpen = true;
+    try {
+      const r = await dialog.showOpenDialog(win, {
+        title: t('app.pickAvatarTitle', { bot: bot.label }),
+        defaultPath: os.homedir(),
+        properties: ['openFile'],
+        filters: [{ name: t('app.avatarFilter'), extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'] }],
+      });
+      if (!r.canceled && r.filePaths[0]) error = importAvatar(bot.dir, r.filePaths[0], { nativeImage }).error || null;
+    } finally {
+      dialogOpen = false;
+      if (win) win.focus();
+    }
+    reloadBots();
+    return error ? { ...publicState(), error } : publicState();
+  });
+  handle('aska:bot-avatar-clear', (id) => {
+    const bot = typeof id === 'string' && Object.hasOwn(bots, id) ? bots[id] : null;
+    if (!bot) return { ...publicState(), error: t('errors.unknownBot') };
+    clearAvatar(bot.dir);
+    reloadBots();
+    return publicState();
+  });
+}
+
+// Bots read again after a change made from the window (their warnings were shown at startup).
+function reloadBots() {
+  bots = loadBots(P.bots, { agents, allowAutoMode: cfg.allowAutoMode }).bots;
+  pushTabs();
 }
 
 // ---------- lifecycle ----------

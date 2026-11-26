@@ -299,13 +299,14 @@
     const b = bots.find((x) => x.id === id);
     const img = el('img', 'bot-avatar');
     img.alt = '';
-    img.src = window.AskaAvatar.avatarDataUrl(label, { ...(b ? b.avatar : {}), ...opts });
+    // A picture added by hand wins over the generated robot.
+    img.src = b && b.image ? b.image : window.AskaAvatar.avatarDataUrl(label, { ...(b ? b.avatar : {}), ...opts });
     return img;
   }
   // The chip's avatar scans while the bot works (also in the collapsed pill).
   function syncBotAvatar() {
     const b = bot();
-    if (b) $('bot-avatar').src = window.AskaAvatar.avatarDataUrl(b.label, { ...b.avatar, animate: running && !reducedMotion() });
+    if (b) $('bot-avatar').src = b.image || window.AskaAvatar.avatarDataUrl(b.label, { ...b.avatar, animate: running && !reducedMotion() });
   }
 
   function syncBot(animate) {

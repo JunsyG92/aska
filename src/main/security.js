@@ -235,6 +235,12 @@ function othersCanWriteAcl(fd, ownerUid) {
  * PowerShell 5.1 and Notepad add one); a file over maxBytes is refused.
  */
 function readOwnedText(file, maxBytes = Infinity) {
+  const r = readOwnedFile(file, maxBytes);
+  return r.data ? { text: r.data.toString('utf8').replace(/^\uFEFF/, '') } : r;
+}
+
+/** Same checks as readOwnedText, for a binary file: { data: Buffer } | { missing } | { error }. */
+function readOwnedFile(file, maxBytes = Infinity) {
   // The checks and the read go through the same descriptor: the file cannot be
   // swapped between the two (symbolic links are followed, as before).
   let fd;
@@ -252,7 +258,7 @@ function readOwnedText(file, maxBytes = Infinity) {
       return { error: t('security.fileWritable', { file }) };
     }
     if (st.size > maxBytes) return { error: t('security.fileTooBig', { file, max: Math.round(maxBytes / 1024) }) };
-    return { text: fs.readFileSync(fd, 'utf8').replace(/^\uFEFF/, '') };
+    return { data: fs.readFileSync(fd) };
   } finally {
     fs.closeSync(fd);
   }
@@ -319,6 +325,6 @@ function readRecentPrompts(file, limit = 50) {
 }
 
 module.exports = {
-  resolveBinary, buildEnv, checkWorkdir, readOwnedJson, readOwnedText, writePrivate, ensurePrivateDir, aclWritableByOthers,
+  resolveBinary, buildEnv, checkWorkdir, readOwnedJson, readOwnedText, readOwnedFile, writePrivate, ensurePrivateDir, aclWritableByOthers,
   TrustStore, appendAudit, readRecentPrompts, BASE_ENV, setEnvVar, within, posixSystemDirs,
 };

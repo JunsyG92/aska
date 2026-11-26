@@ -50,6 +50,8 @@ module.exports = {
     shortcutUnavailable: 'Shortcut {shortcut} unavailable: bind the command "aska --toggle" in your desktop\'s keyboard shortcuts',
     selectionShortcutUnavailable: 'Shortcut {shortcut} (ask about the selection) unavailable: bind the command "aska --selection" in your desktop\'s keyboard shortcuts',
     pickDirTitle: "Agent's working folder",
+    pickAvatarTitle: 'Picture of {bot}',
+    avatarFilter: 'Pictures',
     shortcutDescription: 'Ask an AI agent to do something (Claude, Codex, Copilot, Cursor)',
   },
 
@@ -150,6 +152,8 @@ module.exports = {
     soulTooLong: 'Bot "{id}" ignored: SOUL.md is {length} characters long, {max} at most',
     soulLong: 'Bot "{id}": SOUL.md is {length} characters long, sent with every request (keep it under {max})',
     memoryCut: 'Bot "{id}": MEMORY.md is longer than {max} characters, only the most recent entries are sent',
+    avatarTooBig: 'Picture too big ({max} KB at most)',
+    avatarNotImage: 'This file is not a picture Aska can use (PNG, JPEG, WebP, GIF or SVG)',
   },
 
   security: {

@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('aska', {
   setModel: (agentId, model) => ipcRenderer.invoke('aska:set-model', { agentId, model }),
   getSettings: () => ipcRenderer.invoke('aska:settings-get'),
   saveSettings: (values) => ipcRenderer.invoke('aska:settings-save', values),
+  pickBotAvatar: (botId) => ipcRenderer.invoke('aska:bot-avatar-pick', botId),
+  clearBotAvatar: (botId) => ipcRenderer.invoke('aska:bot-avatar-clear', botId),
   onRunEvent: on('aska:run-event'),
   onShown: on('aska:shown'),
   onWillHide: on('aska:will-hide'),

@@ -176,7 +176,7 @@ body { padding: 14px; }
 .bot-chip.swap .bot-name { animation: swap 0.28s cubic-bezier(0.2, 1.1, 0.3, 1); }
 .bot-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Generated avatars (avatar.js): round, drawn on a dark background. */
-.bot-avatar { flex: none; width: 24px; height: 24px; border-radius: 50%; }
+.bot-avatar { flex: none; width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
 .cmd-opt .bot-avatar { width: 20px; height: 20px; align-self: center; }
 .meta .bot-avatar { width: 28px; height: 28px; margin: -6px 0 -6px -2px; }
 .panel.mini .bot-chip { pointer-events: none; -webkit-app-region: drag; }
@@ -1085,6 +1085,7 @@ kbd {
   border: 0;
   background: none;
   animation: none;
+  object-fit: cover;
 }
 /* Working tab: the dot becomes a small spinning ring. */
 .tab.running .tab-dot {

@@ -48,6 +48,8 @@ module.exports = {
     shortcutUnavailable: 'Raccourci {shortcut} indisponible : associez la commande « aska --toggle » dans les raccourcis de votre bureau',
     selectionShortcutUnavailable: 'Raccourci {shortcut} (demander à partir de la sélection) indisponible : associez la commande « aska --selection » dans les raccourcis de votre bureau',
     pickDirTitle: 'Dossier de travail de l’agent',
+    pickAvatarTitle: 'Image de {bot}',
+    avatarFilter: 'Images',
     shortcutDescription: 'Demander une action à un agent IA (Claude, Codex, Copilot, Cursor)',
   },
 
@@ -148,6 +150,8 @@ module.exports = {
     soulTooLong: 'Bot « {id} » ignoré : SOUL.md fait {length} caractères, {max} au maximum',
     soulLong: 'Bot « {id} » : SOUL.md fait {length} caractères, envoyés à chaque demande (restez sous {max})',
     memoryCut: 'Bot « {id} » : MEMORY.md dépasse {max} caractères, seules les entrées les plus récentes sont envoyées',
+    avatarTooBig: 'Image trop grande ({max} Ko au maximum)',
+    avatarNotImage: "Ce fichier n'est pas une image utilisable par Aska (PNG, JPEG, WebP, GIF ou SVG)",
   },
 
   security: {

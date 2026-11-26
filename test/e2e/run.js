@@ -909,6 +909,49 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await page.isHidden('#bot'), true);
     assert.match(await page.textContent('#status'), /Sans bot/);
 
+    // ---------- avatar added by hand (the settings' button comes with ticket 08) ----------
+    // A 1024 x 600 PNG, made by Electron itself; the file dialog answers with it.
+    const bigPng = path.join(home, 'portrait.png');
+    const notPicture = path.join(home, 'notes.png');
+    fs.writeFileSync(notPicture, 'just text');
+    const pngBase64 = await app.evaluate(({ nativeImage }) => {
+      const w = 1024;
+      const h = 600;
+      const px = Buffer.alloc(w * h * 4);
+      for (let i = 0; i < w * h; i++) px.writeUInt32LE(i % w < w / 2 ? 0xff3366cc : 0xffcc6633, i * 4);
+      return nativeImage.createFromBitmap(px, { width: w, height: h }).toPNG().toString('base64');
+    });
+    fs.writeFileSync(bigPng, Buffer.from(pngBase64, 'base64'));
+    const pickWith = (file) => app.evaluate(({ dialog }, f) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [f] });
+    }, file);
+    await pickWith(notPicture);
+    let picked = await page.evaluate(() => window.aska.pickBotAvatar('trad'));
+    assert.match(picked.error, /pas une image utilisable/);
+    await pickWith(bigPng);
+    picked = await page.evaluate(() => window.aska.pickBotAvatar('trad'));
+    assert.equal(picked.error, undefined);
+    assert.match(picked.bots.find((b) => b.id === 'trad').image, /^data:image\/png;base64,/);
+    const savedPng = path.join(P.bots, 'trad', 'avatar.png');
+    assert.deepEqual(await app.evaluate(({ nativeImage }, f) => nativeImage.createFromPath(f).getSize(), savedPng), { width: 128, height: 128 }, 'cropped to a square, 128 px');
+    if (POSIX) assert.equal(fs.statSync(savedPng).mode & 0o777, 0o600);
+    assert.match(await page.getAttribute('.tab.active img.tab-dot.bot', 'src'), /^data:image\/png/);
+    await page.reload();
+    await page.waitForSelector('.turn .meta img.bot-avatar');
+    assert.match(await page.getAttribute('.turn .meta img.bot-avatar', 'src'), /^data:image\/png/, 'the picture in the thread');
+    // After a reload, the panel comes in at the next show.
+    await toggle();
+    await waitVisible(false);
+    await toggle();
+    await page.waitForSelector('.panel.in');
+    await page.waitForTimeout(400);
+    await shot('13-bot-picture-light');
+    // Back to the generated robot.
+    const cleared = await page.evaluate(() => window.aska.clearBotAvatar('trad'));
+    assert.equal(cleared.bots.find((b) => b.id === 'trad').image, null);
+    assert.ok(!fs.existsSync(savedPng));
+    assert.match((await page.evaluate(() => window.aska.pickBotAvatar('nope'))).error, /Bot inconnu/);
+
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
     const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));

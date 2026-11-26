@@ -56,7 +56,7 @@
         if (tab.bot && window.AskaAvatar) {
           dot = el('img', 'tab-dot bot');
           dot.alt = '';
-          dot.src = window.AskaAvatar.avatarDataUrl(tab.bot.label, { ...tab.bot.avatar, badge: false, animate: tab.running && !reducedMotion() });
+          dot.src = tab.bot.image || window.AskaAvatar.avatarDataUrl(tab.bot.label, { ...tab.bot.avatar, badge: false, animate: tab.running && !reducedMotion() });
         } else dot = el('span', 'tab-dot');
         const color = tab.bot ? tab.bot.color : tab.color;
         if (color) dot.style.setProperty('--c', color);

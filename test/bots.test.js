@@ -467,3 +467,74 @@ test('example bots: never again, nothing overwritten, a deleted bot stays delete
   // No examples shipped: nothing done, no error.
   assert.deepEqual(seedBots(path.join(tmp(), 'b2'), { source: path.join(tmp(), 'none') }), []);
 });
+
+// ---------- avatar added by hand (ticket 07) ----------
+
+const { sanitizeSvg, importAvatar, clearAvatar } = require('../src/main/bots');
+
+test('avatar SVG: scripts, handlers, foreign content and external resources removed', () => {
+  const evil = `<?xml version="1.0"?>
+<!DOCTYPE svg [<!ENTITY boom "&#x3C;script&#x3E;alert(1)&#x3C;/script&#x3E;"><!ENTITY x SYSTEM "file:///etc/passwd">]>
+<!-- a comment -->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10" onload="alert(1)">
+<script>alert(1)</script><script href="https://evil.example/x.js"/>
+<SCRIPT type="text/javascript">alert(2)</SCRIPT>
+<foreignObject><iframe src="https://evil.example"></iframe></foreignObject>
+<a href="https://evil.example" xlink:href="javascript:alert(1)"><rect width="10" height="10"/></a>
+<rect width="10" height="10" onclick='alert(1)' onmouseover=alert(1) fill="url(#g)" stroke="&#106;avascript:alert(1)"/>
+<image href="https://evil.example/track.png" width="1" height="1"/>
+<use xlink:href="#g"/>
+<rect style="background:url(http://evil.example/x.png)" width="1" height="1"/>
+<rect style="fill:url( '#g')" width="2" height="2"/>
+<style>@import url("https://evil.example/x.css"); rect{fill:url(https://evil.example/f)}</style>
+<set attributeName="href" to="javascript:alert(1)"/>
+<animate attributeName="xlink:href" values="javascript:alert(1)"/>
+<text>&boom;</text>
+</svg>`;
+  const r = sanitizeSvg(evil);
+  assert.ok(r.svg, r.error);
+  for (const bad of [/<script/i, /\son\w+=/i, /foreignObject/i, /iframe/i, /evil\.example/, /javascript:/i, /<!ENTITY/i, /<!DOCTYPE/i, /<\?xml/, /<set\b/, /@import/, /attributeName="xlink:href"/]) {
+    assert.ok(!bad.test(r.svg), `${bad} left in: ${r.svg}`);
+  }
+  assert.match(r.svg, /^<svg[\s\S]*<\/svg>$/);
+  assert.match(r.svg, /xlink:href="#g"/, 'links inside the document are kept');
+  assert.match(r.svg, /fill="url\(#g\)"/);
+  assert.match(r.svg, /style="fill:url\( '#g'\)"/);
+  assert.match(r.svg, /<rect width="10" height="10" fill="url\(#g\)"\/>/, 'handlers and entity-hidden javascript: removed');
+  assert.match(r.svg, /<text>&amp;boom;<\/text>/, 'an undeclared entity stays plain text');
+  assert.ok(!/<a\b|<image|<style/.test(r.svg), 'links, images and style sheets dropped');
+  // Nested tricks do not rebuild a script.
+  assert.ok(!/<script/i.test(sanitizeSvg('<svg><scr<script></script>ipt>alert(1)</script></svg>').svg || ''));
+});
+
+test('avatar SVG: size and shape', () => {
+  assert.match(sanitizeSvg('<svg>' + 'x'.repeat(65 * 1024) + '</svg>').error, /too big \(64 KB at most\)/);
+  assert.match(sanitizeSvg('<html><body>not svg</body></html>').error, /not a picture/);
+  assert.match(sanitizeSvg('<svg><script>x</script>').error, /not a picture/, 'not closed');
+  assert.match(sanitizeSvg('a\0b').error, /not a picture/);
+  assert.equal(sanitizeSvg('﻿ <svg viewBox="0 0 1 1"><circle r="1"/></svg>\n').svg, '<svg viewBox="0 0 1 1"><circle r="1"/></svg>');
+});
+
+test('avatar added by hand: SVG imported, loaded as a data URL, cleared', () => {
+  const root = tmp();
+  const dir = makeBot(root, 'pic');
+  const src = path.join(root, 'pic.svg');
+  fs.writeFileSync(src, '<svg xmlns="http://www.w3.org/2000/svg" onload="x()"><circle r="5"/></svg>');
+  // No nativeImage needed for an SVG.
+  assert.deepEqual(importAvatar(dir, src, { nativeImage: null }), {});
+  assert.equal(fs.readFileSync(path.join(dir, 'avatar.svg'), 'utf8'), '<svg xmlns="http://www.w3.org/2000/svg"><circle r="5"/></svg>');
+  if (POSIX) assert.equal(fs.statSync(path.join(dir, 'avatar.svg')).mode & 0o777, 0o600);
+  let b = load(root).bots.pic;
+  assert.equal(decodeURIComponent(b.image), 'data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg"><circle r="5"/></svg>');
+  // A file that is not a picture: refused, nothing written.
+  const txt = path.join(root, 'notes.png');
+  fs.writeFileSync(txt, 'just text, despite the extension');
+  assert.match(importAvatar(dir, txt, { nativeImage: null }).error, /not a picture/);
+  assert.ok(fs.existsSync(path.join(dir, 'avatar.svg')), 'the previous picture is kept');
+  // An avatar.svg edited by hand afterwards is cleaned again when read.
+  fs.writeFileSync(path.join(dir, 'avatar.svg'), '<svg><script>alert(1)</script><rect/></svg>', { mode: 0o600 });
+  assert.equal(decodeURIComponent(load(root).bots.pic.image), 'data:image/svg+xml;charset=utf-8,<svg><rect/></svg>');
+  clearAvatar(dir);
+  b = load(root).bots.pic;
+  assert.equal(b.image, null, 'back to the generated robot');
+});
