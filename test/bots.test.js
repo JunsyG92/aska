@@ -682,7 +682,7 @@ const { cleanAllow } = require('../src/main/bots');
 
 test('allowed commands: plain words only, never a shell, a deletion or a push', () => {
   assert.deepEqual(cleanAllow(['git add', ' git   commit ', 'npm test', 'make build', 'pytest', 'git add']), { allow: ['git add', 'git commit', 'npm test', 'make build', 'pytest'], refused: [] });
-  const bad = ['git', 'git push', 'git reset', 'git config', 'rm', 'sudo apt', 'bash', 'powershell', 'curl', 'node', 'npm publish', 'npm',
+  const bad = ['git', 'git reset', 'git config', 'rm', 'sudo apt', 'bash', 'powershell', 'curl', 'node', 'npm',
     'git commit; rm -rf /', 'git commit && x', 'git $(id)', 'Git commit', '', 42];
   for (const c of bad) assert.deepEqual(cleanAllow([c]).allow, [], String(c));
   assert.equal(cleanAllow(bad).refused.length, bad.length);
@@ -711,10 +711,10 @@ test('allowed commands: given to Claude in a writing mode only', () => {
 
 test('bot.json "allow" and maxMode: loaded, checked, saved from the settings', () => {
   const root = tmp();
-  const dir = makeBot(root, 'commit', { agent: 'claude', maxMode: 'edit', allow: ['git add', 'git push', 'git commit'] });
+  const dir = makeBot(root, 'commit', { agent: 'claude', maxMode: 'edit', allow: ['git add', 'git reset', 'git commit'] });
   let r = load(root);
   assert.deepEqual(r.bots.commit.allow, ['git add', 'git commit']);
-  assert.match(r.warnings.join('\n'), /"commit": commands refused in "allow" \(git push\)/);
+  assert.match(r.warnings.join('\n'), /"commit": commands refused in "allow" \(git reset\)/);
   // Settings: raise the ceiling, the starting mode follows when it is lowered.
   assert.deepEqual(saveBot(dir, { maxMode: 'read' }, { agents: AGENTS }), {});
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'bot.json'), 'utf8')).maxMode, 'read');
@@ -747,7 +747,7 @@ test('draft: the description is data, the answer is checked as any bot', () => {
 
   const answer = 'Here it is:\n```json\n' + JSON.stringify({
     label: 'Notes de réunion et comptes rendus détaillés', description: 'Résume', soul: '# Notes\n\nTu résumes.',
-    emblem: 'pen', maxMode: 'auto', allow: ['git add', 'rm', 'git push', 'make doc', 'npm test', 'git commit'],
+    emblem: 'pen', maxMode: 'auto', allow: ['git add', 'rm', 'git reset', 'make doc', 'npm test', 'git commit'],
   }) + '\n```';
   const d = parseDraft(answer).draft;
   assert.equal(d.label, 'Notes de réunion et comp', '24 characters at most');
@@ -772,7 +772,7 @@ test('allowed commands: an exact prefix of 1 to 6 words, a workflow always by it
     'gh workflow', 'gh workflow run', 'gh workflow list', 'gh workflow disable deploy.yml', 'gh run', 'gh pr', 'gh api repos/x', 'gh auth token', 'gh secret set X',
     'gh repo delete x', 'gh release delete v1', 'gh pr close 1 --delete-branch delete',
     'git -c core.pager=x log', 'npm -g x', 'a b c d e f g', 'git commit -m $(id)', 'git commit -m `id`', 'gh workflow run x.yml; rm -rf /',
-    'gh workflow run "x.yml"', "git commit -m 'x'", 'git push origin main',
+    'gh workflow run "x.yml"', "git commit -m 'x'", 'gh pr merge 12',
   ];
   for (const c of bad) assert.deepEqual(cleanAllow([c]).allow, [], c);
 });
@@ -788,4 +788,53 @@ test('allowed commands: forced pushes and deletions denied to Claude, whatever i
   assert.equal(rules.length, ALWAYS_DENIED.length);
   assert.ok(!buildInvocation(AGENTS.claude, 'edit', 'x').argv.includes('--disallowedTools'), 'nothing allowed: nothing to deny');
   assert.ok(!buildInvocation(AGENTS.claude, 'read', 'x', { allow: ['git commit'] }).argv.includes('--disallowedTools'));
+});
+
+// ---------- ticket 11: remote actions and their policy ----------
+
+const { isRemote } = require('../src/main/bots');
+
+test('remote actions: what leaves the computer, and never a merge', () => {
+  for (const c of ['git push', 'git push origin main', 'gh workflow run deploy-qa.yml', 'gh pr create', 'gh pr comment', 'gh release create', 'gh run rerun', 'npm publish', 'docker push']) assert.equal(isRemote(c), true, c);
+  for (const c of ['git commit', 'git add -A', 'gh run watch', 'gh pr view', 'gh workflow view deploy.yml', 'npm test', 'make build']) assert.equal(isRemote(c), false, c);
+  assert.deepEqual(cleanAllow(['git push', 'npm publish', 'gh pr create']).allow, ['git push', 'npm publish', 'gh pr create'], 'remote commands may be allowed');
+  for (const c of ['gh pr merge', 'gh pr merge 12', 'git reset']) assert.deepEqual(cleanAllow([c]).allow, [], c);
+});
+
+test('remote actions: policy in bot.json, set from the settings', () => {
+  const root = tmp();
+  const dir = makeBot(root, 'qa', { agent: 'claude', maxMode: 'edit', allow: ['gh workflow run deploy-qa.yml'] });
+  makeBot(root, 'odd', { agent: 'claude', remote: 'yes' });
+  const r = load(root);
+  assert.equal(r.bots.qa.remote, 'ask', 'ask by default');
+  assert.equal(r.bots.odd.remote, 'ask');
+  assert.match(r.warnings.join('\n'), /"odd": "remote" ignored/);
+  assert.deepEqual(saveBot(dir, { remote: 'auto' }, { agents: AGENTS }), {});
+  assert.equal(load(root).bots.qa.remote, 'auto');
+  assert.deepEqual(saveBot(dir, { remote: 'ask' }, { agents: AGENTS }), {});
+  assert.ok(!('remote' in JSON.parse(fs.readFileSync(path.join(dir, 'bot.json'), 'utf8'))), 'default left out');
+  assert.ok(saveBot(dir, { remote: 'always' }, { agents: AGENTS }).errors.remote);
+  // A request without the remote commands: only the local ones are given to Claude.
+  const bot = { ...BOT, allow: ['git commit', 'git push'] };
+  const without = invocationFor({ agent: AGENTS.claude, mode: 'edit', prompt: 'x', turns: [], bot, allow: bot.allow.filter((c) => !isRemote(c)) });
+  const rules = without.argv[without.argv.indexOf('--allowedTools') + 1];
+  assert.ok(rules.includes('Bash(git commit)') && !rules.includes('git push'));
+});
+
+test('remote actions: "always for this folder" remembered per bot and command', () => {
+  const d = tmp();
+  const file = path.join(d, 'trusted.json');
+  const project = path.join(d, 'proj');
+  fs.mkdirSync(project);
+  let store = new sec.TrustStore(file);
+  store.add(project);
+  assert.equal(store.isRemoteTrusted(project, 'qa', ['git push']), false);
+  store.addRemote(project, 'qa', ['git push']);
+  store = new sec.TrustStore(file); // read again from the file
+  assert.ok(store.isTrusted(project), 'folders kept');
+  assert.equal(store.isRemoteTrusted(project, 'qa', ['git push']), true);
+  assert.equal(store.isRemoteTrusted(path.join(project, 'sub'), 'qa', ['git push']), true, 'subfolders too');
+  assert.equal(store.isRemoteTrusted(project, 'qa', ['git push', 'gh pr create']), false, 'every command');
+  assert.equal(store.isRemoteTrusted(project, 'other', ['git push']), false, 'per bot');
+  if (POSIX) assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });

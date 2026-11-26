@@ -39,13 +39,29 @@ const NEVER_FIRST = new Set([
   'python', 'python3', 'perl', 'ruby', 'php', 'deno', 'bun', 'osascript',
 ]);
 const NEEDS_SUBCOMMAND = new Set(['git', 'npm', 'pnpm', 'yarn', 'docker', 'kubectl', 'gh', 'cargo', 'go', 'make']);
-const NEVER_GIT = new Set(['push', 'reset', 'clean', 'rebase', 'filter-branch', 'filter-repo', 'config', 'remote', 'gc', 'update-ref', 'reflog', 'replace']);
+// "git push" is allowed as a remote action (see isRemote); forced pushes and
+// remote deletions stay denied (ALWAYS_DENIED in agents.js).
+const NEVER_GIT = new Set(['reset', 'clean', 'rebase', 'filter-branch', 'filter-repo', 'config', 'remote', 'gc', 'update-ref', 'reflog', 'replace']);
 const MAX_ALLOW = 10;
 // gh: never its raw API nor anything that deletes; a workflow is always named
 // ("gh workflow run deploy-qa.yml", never "gh workflow run": that would allow
 // any workflow, production included), and the other groups need their action.
 const NEVER_GH = new Set(['api', 'auth', 'secret', 'variable', 'ssh-key', 'gpg-key', 'extension', 'alias', 'config']);
 const GH_NEEDS = { workflow: 4, run: 3, pr: 3, release: 3, repo: 3, issue: 3, cache: 3 };
+
+// A remote action changes something outside the machine: it publishes (push,
+// release, package), starts a workflow or a deploy, or writes on GitHub. It
+// follows the bot's "remote" policy: "ask" (confirmed at each request, by
+// default) or "auto". Reading (gh run watch, gh pr view) is not one.
+const GH_WRITES = new Set(['create', 'edit', 'comment', 'ready', 'review', 'run', 'rerun', 'cancel', 'upload', 'close', 'reopen', 'lock', 'unlock', 'transfer', 'pin']);
+function isRemote(cmd) {
+  const [first, second, third] = String(cmd).split(' ');
+  if (first === 'git') return second === 'push';
+  if (['npm', 'pnpm', 'yarn', 'cargo'].includes(first)) return second === 'publish';
+  if (first === 'docker') return second === 'push';
+  if (first === 'gh') return GH_WRITES.has(third);
+  return false;
+}
 
 /** { allow: the commands kept, refused: the others } (see above). */
 function cleanAllow(list) {
@@ -55,12 +71,16 @@ function cleanAllow(list) {
     const c = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
     const words = c.split(' ');
     const [first, second] = words;
-    const ghOk = first !== 'gh' || (!NEVER_GH.has(second) && words.length >= (GH_NEEDS[second] || 2) && !words.includes('delete') && !(second === 'workflow' && words[2] !== 'run' && words[2] !== 'view'));
+    // Never merged by a bot: a pull request is merged by a human.
+    const ghOk =
+      first !== 'gh' ||
+      (!NEVER_GH.has(second) && words.length >= (GH_NEEDS[second] || 2) && !words.includes('delete') &&
+        !(second === 'workflow' && words[2] !== 'run' && words[2] !== 'view') && !(second === 'pr' && words[2] === 'merge'));
     // The subcommand is a plain word: never an option ("git -c core.pager=…" runs anything).
     const ok =
       ALLOW_RE.test(c) && (second === undefined || /^[a-z0-9][a-z0-9._-]*$/.test(second)) &&
       !NEVER_FIRST.has(first) && (second || !NEEDS_SUBCOMMAND.has(first)) &&
-      !(first === 'git' && NEVER_GIT.has(second)) && !(first === 'npm' && second === 'publish') && ghOk;
+      !(first === 'git' && NEVER_GIT.has(second)) && ghOk;
     if (ok && !allow.includes(c) && allow.length < MAX_ALLOW) allow.push(c);
     else if (!ok) refused.push(String(raw));
   }
@@ -118,6 +138,7 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
     maxMode: 'read',
     cwd: null,
     allow: [],
+    remote: 'ask', // remote actions: confirmed at each request, or 'auto'
     avatar: {},
     soul: '',
     memory: '',
@@ -170,6 +191,8 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
     bot.allow = r.allow;
     if (!Array.isArray(u.allow) || r.refused.length) warn('allowRefused', { commands: r.refused.join(', ') || String(u.allow) });
   }
+  if (u.remote === 'auto') bot.remote = 'auto';
+  else if (u.remote !== undefined && u.remote !== 'ask') bad('remote');
 
   if (u.avatar !== undefined) {
     const a = u.avatar;
@@ -261,6 +284,11 @@ function saveBot(dir, values, { agents = {}, allowAutoMode = false } = {}) {
     if (!Array.isArray(v.allow) || r.refused.length) errors.allow = t('bots.edit.allow', { commands: r.refused.join(', ') });
     else if (r.allow.length) raw.allow = r.allow;
     else delete raw.allow;
+  }
+  if ('remote' in v) {
+    if (v.remote === 'ask') delete raw.remote; // by default
+    else if (v.remote === 'auto') raw.remote = 'auto';
+    else errors.remote = t('bots.edit.remote');
   }
   if ('mode' in v) {
     // The ceiling, read as loadBots reads it.
@@ -633,12 +661,14 @@ function botBlock(bot) {
  * excess(inv): how far the command goes beyond the system's limit (see fitInvocation);
  * canPass(args): whether these arguments can be passed at all.
  */
-function invocationFor({ agent, mode, prompt, turns, bot = null, model, resume = null, excess = () => 0, canPass = () => true }) {
+function invocationFor({ agent, mode, prompt, turns, bot = null, model, resume = null, excess = () => 0, canPass = () => true, allow }) {
+  // allow: the commands granted for this request (remote ones left out when not confirmed); by default the bot's.
+  const granted = allow !== undefined ? allow : bot ? bot.allow : [];
   const persona = bot ? systemText(bot) : '';
   const build = (asSystem) => (maxChars) => {
     const preamble = persona && !asSystem && !resume ? botBlock(bot) : '';
     const text = resume ? prompt : buildContextPrompt(turns, prompt, maxChars, preamble);
-    return buildInvocation(agent, mode, text, { model, resume, trusted: true, system: asSystem ? persona : undefined, allow: bot ? bot.allow : [] });
+    return buildInvocation(agent, mode, text, { model, resume, trusted: true, system: asSystem ? persona : undefined, allow: granted });
   };
   if (persona && agent.systemFlag && canPass([agent.systemFlag, persona])) {
     try {
@@ -712,4 +742,4 @@ function fingerprint(text) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-module.exports = { draftPrompt, parseDraft, DESCRIPTION_MAX, cleanAllow, loadBots, saveBot, createBot, deleteBot, idFromLabel, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
+module.exports = { isRemote, draftPrompt, parseDraft, DESCRIPTION_MAX, cleanAllow, loadBots, saveBot, createBot, deleteBot, idFromLabel, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };

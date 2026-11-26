@@ -1110,6 +1110,50 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.keyboard.press('Escape');
     await page.waitForSelector('#settings', { state: 'hidden' });
 
+    // ---------- remote actions: confirmed before the request ----------
+    assert.ok((await page.evaluate(() => window.aska.saveBot('trad', { allow: ['git add', 'git push'] }))).bots);
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('aska:new-conversation'));
+    await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
+    await page.waitForTimeout(200);
+    await send('@trad');
+    await page.waitForFunction(() => document.getElementById('bot-name').textContent === 'Traducteur 2');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.textContent('#mode-name'), 'Édition');
+    const remoteAsk = async (text, folderKey = 'Enter') => {
+      await send(text);
+      await page.waitForSelector('#confirm:not([hidden])');
+      if (!/hors de cet ordinateur/.test(await page.textContent('#confirm-text'))) {
+        await page.keyboard.press(folderKey); // the folder first
+        await page.waitForFunction(() => /hors de cet ordinateur/.test(document.getElementById('confirm-text').textContent));
+      }
+    };
+    await remoteAsk('Pousse la branche');
+    assert.match(await page.textContent('#confirm-text'), /Traducteur 2 pourra agir hors de cet ordinateur[\s\S]*sans demander : git push/);
+    assert.equal(await page.isVisible('#trust-without'), true);
+    await page.click('#trust-without');
+    await settled('done');
+    let pushCall = calls().at(-1);
+    let allowed = pushCall.args[pushCall.args.indexOf('--allowedTools') + 1];
+    assert.ok(allowed.includes('Bash(git add)') && !allowed.includes('git push'), 'without the remote command');
+    assert.ok(pushCall.args.includes('--disallowedTools'));
+    // Always for this folder: asked once, then remembered.
+    await remoteAsk('Pousse encore', 'Shift+Enter');
+    await page.keyboard.press('Shift+Enter');
+    await settled('done');
+    pushCall = calls().at(-1);
+    allowed = pushCall.args[pushCall.args.indexOf('--allowedTools') + 1];
+    assert.ok(allowed.includes('Bash(git push)'));
+    const trustedFile = JSON.parse(fs.readFileSync(P.trust, 'utf8'));
+    assert.ok(Object.values(trustedFile.remote || {}).some((byBot) => (byBot.trad || []).includes('git push')), 'remembered for the folder');
+    const remoteCallsFrom = calls().length;
+    await send('Et une troisième fois');
+    await settled('done');
+    assert.equal(calls().length, remoteCallsFrom + 1, 'no question this time');
+    assert.equal(await page.isHidden('#confirm'), true);
+    const lastAudit = fs.readFileSync(P.audit, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).at(-1);
+    assert.deepEqual(lastAudit.remote, ['git push'], 'the audit log names the remote actions granted');
+    await page.keyboard.press('Shift+Tab'); // back to read-only for what follows
+
     // ---------- a bot with its own folder: picking it moves the tab there ----------
     const botProject = path.join(home, 'botproject');
     fs.mkdirSync(botProject);

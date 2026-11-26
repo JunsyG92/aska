@@ -677,11 +677,13 @@
    * denied actions), which leaves the field as it is. A "/" command is run by the
    * window and never reaches the agent (see commands.js).
    */
-  async function submit(trust, direct) {
+  async function submit(trust, direct, remote) {
     let prompt;
     let typed; // as typed, for the recall with ↑
     let model; // model for this request only (command of the config), undefined: the chosen one
     if (pendingTrust) ({ prompt, typed, model, direct } = pendingTrust);
+    // A remote question comes after the folder one: the folder answer is kept.
+    if (pendingTrust && pendingTrust.kind === 'remote' && trust === undefined) trust = pendingTrust.trust;
     else if (direct) prompt = typed = direct;
     else {
       typed = input.value.trim();
@@ -737,11 +739,24 @@
     const b = bot();
     if (model === undefined && modelOverride !== undefined) model = modelOverride;
     const req = { tabId: convId, agentId, mode, prompt, trust };
+    if (remote) req.remote = remote;
     if (b) req.botId = b.id;
     if (model !== undefined) req.model = model;
     const res = await api.run(req);
+    if (res.needsRemote) {
+      // Remote actions of the bot (push, PR, workflow…): once, always here, or without them.
+      pendingTrust = { prompt, typed, model, direct, trust, kind: 'remote' };
+      confirmBox.dataset.mode = 'remote';
+      $('trust-without').hidden = false;
+      $('confirm-text').textContent = t('trust.remote', { bot: res.bot, cwd: res.cwd, commands: res.commands.join(', ') });
+      confirmBox.hidden = false;
+      $('trust-once').focus();
+      setKeys();
+      return;
+    }
     if (res.needsTrust) {
-      pendingTrust = { prompt, typed, model, direct };
+      pendingTrust = { prompt, typed, model, direct, kind: 'folder' };
+      $('trust-without').hidden = true;
       confirmBox.dataset.mode = res.mode;
       const what = t(res.mode === 'auto' ? 'trust.editAndRun' : 'trust.editFiles');
       $('confirm-text').textContent = t(res.reason === 'content' ? 'trust.content' : 'trust.allow', { agent: res.agent, cwd: res.cwd, what });
@@ -1274,7 +1289,7 @@
     }
     if (pendingTrust) {
       if (e.key === 'Escape') { e.preventDefault(); closeConfirm(); }
-      else if (e.key === 'Enter') { e.preventDefault(); submit(e.shiftKey ? 'always' : 'once'); }
+      else if (e.key === 'Enter') { e.preventDefault(); answerConfirm(e.shiftKey ? 'always' : 'once'); }
       else if (e.key !== 'Tab') e.preventDefault();
       return;
     }
@@ -1384,8 +1399,11 @@
     e.preventDefault();
     if (!running) api.resetDir().then(applyState);
   });
-  $('trust-once').addEventListener('click', () => submit('once'));
-  $('trust-always').addEventListener('click', () => submit('always'));
+  // The same buttons answer the folder question or the remote one.
+  const answerConfirm = (choice) => (pendingTrust && pendingTrust.kind === 'remote' ? submit(undefined, undefined, choice) : submit(choice));
+  $('trust-once').addEventListener('click', () => answerConfirm('once'));
+  $('trust-always').addEventListener('click', () => answerConfirm('always'));
+  $('trust-without').addEventListener('click', () => answerConfirm('without'));
   $('trust-cancel').addEventListener('click', closeConfirm);
   $('mini-btn').addEventListener('click', () => setMini(!mini));
   $('close-btn').addEventListener('click', () => api.hide());

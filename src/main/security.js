@@ -280,9 +280,22 @@ class TrustStore {
   constructor(file) {
     this.file = file;
     this.dirs = new Set();
+    // Remote actions allowed "always for this folder": folder -> bot id -> commands.
+    this.remote = new Map();
     const r = readOwnedJson(file);
     if (r.data && Array.isArray(r.data.dirs)) {
       for (const d of r.data.dirs) if (typeof d === 'string' && path.isAbsolute(d)) this.dirs.add(d);
+    }
+    const rem = r.data && r.data.remote;
+    if (rem && typeof rem === 'object' && !Array.isArray(rem)) {
+      for (const [d, bots] of Object.entries(rem)) {
+        if (!path.isAbsolute(d) || !bots || typeof bots !== 'object') continue;
+        const byBot = new Map();
+        for (const [id, cmds] of Object.entries(bots)) {
+          if (/^[a-z][a-z0-9_-]{0,31}$/.test(id) && Array.isArray(cmds)) byBot.set(id, new Set(cmds.filter((c) => typeof c === 'string')));
+        }
+        this.remote.set(d, byBot);
+      }
     }
   }
   isTrusted(real) {
@@ -291,7 +304,23 @@ class TrustStore {
   }
   add(real) {
     this.dirs.add(real);
-    writePrivate(this.file, JSON.stringify({ dirs: [...this.dirs] }, null, 2));
+    this.save();
+  }
+  /** Were all these remote commands allowed for this bot in this folder (or a parent)? */
+  isRemoteTrusted(real, botId, cmds) {
+    const granted = new Set();
+    for (const [d, byBot] of this.remote) if (within(real, d) && byBot.has(botId)) for (const c of byBot.get(botId)) granted.add(c);
+    return cmds.every((c) => granted.has(c));
+  }
+  addRemote(real, botId, cmds) {
+    if (!this.remote.has(real)) this.remote.set(real, new Map());
+    const byBot = this.remote.get(real);
+    byBot.set(botId, new Set([...(byBot.get(botId) || []), ...cmds]));
+    this.save();
+  }
+  save() {
+    const remote = Object.fromEntries([...this.remote].map(([d, byBot]) => [d, Object.fromEntries([...byBot].map(([id, cmds]) => [id, [...cmds]]))]));
+    writePrivate(this.file, JSON.stringify({ dirs: [...this.dirs], ...(this.remote.size ? { remote } : {}) }, null, 2));
   }
 }
 
