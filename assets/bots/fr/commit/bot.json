@@ -1,0 +1,6 @@
+{
+  "label": "Message de commit",
+  "description": "Propose un message de commit (Conventional Commits) pour les changements",
+  "mode": "read",
+  "maxMode": "read"
+}

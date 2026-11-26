@@ -224,6 +224,50 @@ Select some text anywhere (a page, an error in a terminal, a mail), then press `
 - The text is cleaned (control characters and terminal colors dropped) and cut at 20,000 characters.
 - `"selectionShortcut"` in the configuration (or the settings) changes it; `false` removes it. `aska --selection` does the same from a script or a desktop shortcut.
 
+## Bots
+
+A bot is an agent with a personality: a name, instructions, and settings of its own. Type `@` in the field to list them, `@trad hello` to switch the tab to the bot and send the rest (`@trad` alone just switches). Each tab keeps its own bot, shown by its avatar before the agent, in the answers and on the tab; `@` then `Enter`, or **No bot** in the list, goes back to the agent alone. `/agent` changes the agent and keeps the bot. `@@text` sends `@text` as is, and `@` is only read at the start of a message.
+
+At the first launch, Aska copies five example bots, in the interface's language and for your default agent: translator, proofreader, explainer, commit message and code reviewer. They are yours: edit them, delete them or turn them off. Aska never copies them again, so an update never touches them.
+
+Each bot is a folder in `~/.aska/bots/<id>/` (`%USERPROFILE%\.aska\bots\<id>\` on Windows); the folder name is what you type after `@`:
+
+```text
+~/.aska/bots/trad/
+  bot.json    settings
+  SOUL.md     personality: instructions in plain text (required)
+  MEMORY.md   things to remember, one per line, newest last (optional)
+```
+
+```json
+{
+  "label": "Translator",
+  "description": "Into English, or into French",
+  "agent": "claude",
+  "model": "haiku",
+  "mode": "read",
+  "maxMode": "read",
+  "avatar": { "variant": 2 }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `agent` | agent it runs on (required; it must be installed and enabled) |
+| `label`, `description` | name shown (24 characters) and description in the `@` list |
+| `model` | model used on its own agent (a model picked by hand holds for the tab only) |
+| `mode`, `maxMode` | starting mode and ceiling, `read` by default; `auto` needs `"allowAutoMode": true` and is never the starting mode |
+| `cwd` | working folder (absolute path), checked as any folder |
+| `color` | `#rrggbb`; by default the color of its avatar |
+| `avatar` | `variant` (another robot for the same name), `shape` and `emblem` (`auto`, `none` or a name; `auto` guesses it from the bot's name) |
+| `enabled` | `false` turns the bot off |
+
+- **Claude** gets the personality as a system prompt (`--append-system-prompt`). The other agents get it as a `<bot>` block before the conversation. A custom agent can name its own option with `"systemFlag"`.
+- `SOUL.md` is sent with every request: a warning over 4,000 characters, the bot is refused over 8,000. `MEMORY.md` is cut to its newest entries (6,000 characters), with a warning; it is never cut silently.
+- A Claude session is only resumed with the same bot and the same text: after editing `SOUL.md` or `MEMORY.md`, the conversation goes on with its history sent again.
+- Bots are read at startup and by `aska --reload`. Like the configuration, a file that belongs to another user or that others can write is refused; problems show in the window and in `aska --help`, which also lists the bots.
+- `~/.aska` is a protected folder: no agent can write there, so a bot cannot change its own `maxMode`.
+
 ## Settings
 
 `Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in two tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcuts (show / hide, ask about the selection), the shortcuts inside the window (press the keys to record one), and the fixed keys. **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.

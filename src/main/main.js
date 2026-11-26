@@ -10,7 +10,7 @@ const { ConversationStore, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
-const { loadBots, systemText, fingerprint, invocationFor } = require('./bots');
+const { loadBots, seedBots, systemText, fingerprint, invocationFor } = require('./bots');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
@@ -111,6 +111,11 @@ function loadEverything() {
     }
   }
   // After the agents: a bot's agent must exist.
+  // First launch: the example bots, in the interface's language, for the
+  // default agent (else the first one installed). Never again afterwards.
+  const usable = Object.values(agents).filter((x) => x.binPath);
+  const seedAgent = (agents[cfg.defaultAgent] && agents[cfg.defaultAgent].binPath ? agents[cfg.defaultAgent] : usable[0] || agents.claude || {}).id;
+  if (seedAgent) seedBots(P.bots, { lang: getLanguage(), agent: seedAgent });
   const b = loadBots(P.bots, { agents, allowAutoMode: cfg.allowAutoMode });
   bots = b.bots;
   warnings.push(...b.warnings);

@@ -1,0 +1,6 @@
+{
+  "label": "Explain",
+  "description": "Explains a text, a concept or a piece of code in simple words",
+  "mode": "read",
+  "maxMode": "read"
+}
