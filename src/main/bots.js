@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { readOwnedJson, readOwnedText, checkWorkdir } = require('./security');
+const { readOwnedJson, readOwnedText, checkWorkdir, writePrivate, ensurePrivateDir } = require('./security');
 const { MODE_ORDER, isModel, buildInvocation, fitInvocation } = require('./agents');
 const { avatarColor, SHAPES, EMBLEMS } = require('../renderer/avatar');
 const { buildContextPrompt, HISTORY_CHARS } = require('./conversations');
@@ -193,6 +193,41 @@ function loadBots(dir, { agents = {}, allowAutoMode = false, home = os.homedir()
   return { bots, warnings };
 }
 
+const EXAMPLES = path.join(__dirname, '..', '..', 'assets', 'bots');
+const SEEDED = '.seeded';
+
+/**
+ * Copies the example bots into dir, once (marker file ".seeded"), in the
+ * interface's language, for the default agent. Never overwrites a folder that
+ * exists, and does nothing once done: a bot deleted by the user stays deleted,
+ * and an update of Aska never touches them.
+ * Returns the ids copied ([] when nothing was done).
+ */
+function seedBots(dir, { lang = 'en', agent = 'claude', source = EXAMPLES } = {}) {
+  if (fs.existsSync(path.join(dir, SEEDED))) return [];
+  const from = fs.existsSync(path.join(source, lang)) ? path.join(source, lang) : path.join(source, 'en');
+  const copied = [];
+  let ids = [];
+  try {
+    ids = fs.readdirSync(from).filter((id) => ID_RE.test(id));
+  } catch {
+    return copied; // no examples (partial install): nothing to copy
+  }
+  try {
+    ensurePrivateDir(dir);
+    for (const id of ids) {
+      const target = path.join(dir, id);
+      if (fs.existsSync(target)) continue;
+      const json = JSON.parse(fs.readFileSync(path.join(from, id, 'bot.json'), 'utf8'));
+      writePrivate(path.join(target, 'bot.json'), JSON.stringify({ ...json, agent }, null, 2) + '\n');
+      writePrivate(path.join(target, 'SOUL.md'), fs.readFileSync(path.join(from, id, 'SOUL.md'), 'utf8'));
+      copied.push(id);
+    }
+    writePrivate(path.join(dir, SEEDED), `${new Date().toISOString()}\n`);
+  } catch { /* read-only home…: the bots are optional, Aska starts anyway */ }
+  return copied;
+}
+
 /**
  * What a bot adds to each request: its personality, then its memory. The same
  * text goes into the system prompt (agent with systemFlag) or before the prompt.
@@ -236,4 +271,4 @@ function fingerprint(text) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-module.exports = { loadBots, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
+module.exports = { loadBots, seedBots, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };

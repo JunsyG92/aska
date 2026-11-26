@@ -1,0 +1,6 @@
+{
+  "label": "Traducteur",
+  "description": "Traduit en anglais, ou en français si le texte est déjà en anglais",
+  "mode": "read",
+  "maxMode": "read"
+}

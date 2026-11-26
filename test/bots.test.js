@@ -414,3 +414,56 @@ test('avatars: name escaped, emblem guessed or initial, no badge at small sizes'
   // An unknown shape falls back to the one drawn from the name.
   assert.equal(AV.avatar('Zorglub', { shape: 'nope' }), AV.avatar('Zorglub'));
 });
+
+// ---------- example bots (ticket 06) ----------
+
+const { seedBots } = require('../src/main/bots');
+
+test('example bots: copied once, valid, in the language of the interface', () => {
+  for (const lang of ['fr', 'en']) {
+    const dir = path.join(tmp(), 'bots');
+    const ids = seedBots(dir, { lang, agent: 'codex' });
+    assert.equal(ids.length, 5, lang);
+    assert.ok(fs.existsSync(path.join(dir, '.seeded')));
+    const r = load(dir);
+    assert.deepEqual(r.warnings, [], `${lang}: no warning`);
+    assert.deepEqual(Object.keys(r.bots).sort(), [...ids].sort());
+    for (const b of Object.values(r.bots)) {
+      assert.equal(b.agent, 'codex', 'the default agent at copy time');
+      assert.equal(b.mode, 'read');
+      assert.equal(b.maxMode, 'read');
+      assert.ok(b.soul.length > 200 && b.soul.length < 1500, `${b.id}: short personality`);
+      assert.ok(b.description);
+    }
+    if (POSIX) assert.equal(fs.statSync(path.join(dir, ids[0], 'SOUL.md')).mode & 0o777, 0o600);
+  }
+  assert.ok(load(seededDir('fr')).bots.trad, 'French ids for French users');
+  assert.ok(load(seededDir('en')).bots.translate);
+  assert.ok(load(seededDir('de')).bots.translate, 'another language: the English bots');
+});
+
+function seededDir(lang) {
+  const dir = path.join(tmp(), 'bots');
+  seedBots(dir, { lang });
+  return dir;
+}
+
+test('example bots: never again, nothing overwritten, a deleted bot stays deleted', () => {
+  const dir = path.join(tmp(), 'bots');
+  // A bot of the user with the same id as an example: kept as it is.
+  makeBot(dir, 'trad', { agent: 'claude', label: 'Mine' }, 'My own soul.');
+  const first = seedBots(dir, { lang: 'fr' });
+  assert.equal(first.length, 4);
+  assert.ok(!first.includes('trad'));
+  assert.equal(fs.readFileSync(path.join(dir, 'trad', 'SOUL.md'), 'utf8'), 'My own soul.');
+  assert.equal(load(dir).bots.trad.label, 'Mine');
+  // Deleted by the user, then a new launch: not copied again.
+  fs.rmSync(path.join(dir, 'commit'), { recursive: true });
+  const soul = path.join(dir, 'explique', 'SOUL.md');
+  fs.writeFileSync(soul, 'Edited.', { mode: 0o600 });
+  assert.deepEqual(seedBots(dir, { lang: 'fr' }), []);
+  assert.ok(!fs.existsSync(path.join(dir, 'commit')));
+  assert.equal(fs.readFileSync(soul, 'utf8'), 'Edited.', 'edits kept');
+  // No examples shipped: nothing done, no error.
+  assert.deepEqual(seedBots(path.join(tmp(), 'b2'), { source: path.join(tmp(), 'none') }), []);
+});

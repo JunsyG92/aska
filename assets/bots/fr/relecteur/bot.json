@@ -1,0 +1,6 @@
+{
+  "label": "Relecteur de code",
+  "description": "Relit du code et signale les bugs, du plus grave au moins grave",
+  "mode": "read",
+  "maxMode": "read"
+}

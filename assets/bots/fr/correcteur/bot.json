@@ -1,0 +1,6 @@
+{
+  "label": "Correcteur",
+  "description": "Corrige l'orthographe et la grammaire sans changer le style",
+  "mode": "read",
+  "maxMode": "read"
+}

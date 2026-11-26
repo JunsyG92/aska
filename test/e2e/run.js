@@ -99,6 +99,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   fs.mkdirSync(botDir, { recursive: true });
   fs.writeFileSync(path.join(botDir, 'bot.json'), JSON.stringify({ agent: 'claude', label: 'Translator', model: 'haiku' }), { mode: 0o600 });
   fs.writeFileSync(path.join(botDir, 'SOUL.md'), 'You translate into English.', { mode: 0o600 });
+  // Example bots already copied once: this test only sees its own bot.
+  fs.writeFileSync(path.join(P.bots, '.seeded'), '', { mode: 0o600 });
   const args = [ROOT];
   if (process.env.ASKA_E2E_NO_SANDBOX === '1') args.unshift('--no-sandbox');
   const app = await electron.launch({ executablePath: require(path.join(ROOT, 'node_modules', 'electron')), args, env, cwd: ROOT });

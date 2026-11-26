@@ -1,0 +1,6 @@
+{
+  "label": "Code reviewer",
+  "description": "Reviews code and reports bugs, most severe first",
+  "mode": "read",
+  "maxMode": "read"
+}

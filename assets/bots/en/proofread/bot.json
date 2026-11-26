@@ -1,0 +1,6 @@
+{
+  "label": "Proofreader",
+  "description": "Fixes spelling and grammar without changing the style",
+  "mode": "read",
+  "maxMode": "read"
+}

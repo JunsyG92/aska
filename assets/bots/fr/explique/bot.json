@@ -1,0 +1,6 @@
+{
+  "label": "Explique-moi",
+  "description": "Explique simplement un texte, un concept ou un bout de code",
+  "mode": "read",
+  "maxMode": "read"
+}
