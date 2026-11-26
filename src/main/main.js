@@ -10,7 +10,7 @@ const { ConversationStore, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
-const { loadBots, saveBot, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
+const { loadBots, saveBot, createBot, deleteBot, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
@@ -38,6 +38,7 @@ let win = null;
 let cfg = null;
 let agents = {};
 let bots = {}; // custom bots (~/.aska/bots), read at startup and on reload
+let offBots = {}; // bots turned off ("enabled": false): only listed in the settings
 let warnings = [];
 let trust = null;
 let cwd = null; // folder of the active tab (and of new tabs)
@@ -118,6 +119,7 @@ function loadEverything() {
   if (seedAgent) seedBots(P.bots, { lang: getLanguage(), agent: seedAgent });
   const b = loadBots(P.bots, { agents, allowAutoMode: cfg.allowAutoMode });
   bots = b.bots;
+  offBots = b.off;
   warnings.push(...b.warnings);
   trust = new sec.TrustStore(P.trust);
   sec.ensurePrivateDir(P.workspace);
@@ -716,7 +718,7 @@ function startRun(req) {
       if (ev.type !== 'session') send({ id, tabId: tab.id, ...ev });
     }
   );
-  tab.run = { id, handle: handleRun, label: who };
+  tab.run = { id, handle: handleRun, label: who, botId: bot ? bot.id : null };
   pushTabs();
 
   handleRun.done.then((res) => {
@@ -1014,15 +1016,38 @@ function registerIpc() {
   // Saves what the settings changed (see saveBot: the fields kept in the files stay).
   handle('aska:bot-save', (req) => {
     const id = req && typeof req.id === 'string' ? req.id : null;
-    const bot = id && Object.hasOwn(bots, id) ? bots[id] : null;
+    // A bot turned off can be turned on again from here.
+    const bot = id && Object.hasOwn(bots, id) ? bots[id] : id && Object.hasOwn(offBots, id) ? offBots[id] : null;
     if (!bot) return { errors: { _: t('errors.unknownBot') } };
+    if (req.values && req.values.enabled === false && botBusy(id)) return { errors: { enabled: t('bots.busy', { bot: bot.label }) } };
     const r = saveBot(bot.dir, req.values, { agents, allowAutoMode: cfg.allowAutoMode });
     if (r.errors) return r;
     reloadBots();
     return { bots: botsList(), state: publicState() };
   });
+  // New bot: for the default agent (else the first one installed), read-only.
+  handle('aska:bot-create', (label) => {
+    const usable = Object.values(agents).filter((a) => a.binPath);
+    const agent = (agents[cfg.defaultAgent] && agents[cfg.defaultAgent].binPath ? agents[cfg.defaultAgent] : usable[0] || agents.claude || {}).id;
+    if (!agent) return { errors: { _: t('errors.unknownAgent') } };
+    const taken = [...Object.values(bots), ...Object.values(offBots)].map((b) => b.label);
+    const r = createBot(P.bots, { label, agent, taken });
+    if (r.errors) return r;
+    reloadBots();
+    return { id: r.id, bots: botsList(), state: publicState() };
+  });
+  // Deleted for good is too much for a slip: the folder goes to the trash when the system has one.
+  handle('aska:bot-delete', async (id) => {
+    const bot = typeof id === 'string' && Object.hasOwn(bots, id) ? bots[id] : typeof id === 'string' && Object.hasOwn(offBots, id) ? offBots[id] : null;
+    if (!bot) return { error: t('errors.unknownBot') };
+    if (botBusy(id)) return { error: t('bots.busy', { bot: bot.label }) };
+    // ASKA_NO_TRASH: the tests never fill the trash of the machine that runs them.
+    const r = await deleteBot(P.bots, id, { trash: process.env.ASKA_NO_TRASH ? null : (p) => shell.trashItem(p) });
+    reloadBots();
+    return r.error ? { error: r.error, bots: botsList(), state: publicState() } : { bots: botsList(), state: publicState() };
+  });
   handle('aska:bot-open-folder', (id) => {
-    const bot = typeof id === 'string' && Object.hasOwn(bots, id) ? bots[id] : null;
+    const bot = typeof id === 'string' && Object.hasOwn(bots, id) ? bots[id] : typeof id === 'string' && Object.hasOwn(offBots, id) ? offBots[id] : null;
     if (bot) shell.openPath(bot.dir);
   });
   handle('aska:bot-avatar-clear', (id) => {
@@ -1055,13 +1080,19 @@ function botsList() {
       image: b.image,
       soul: b.soul,
       cwd: b.cwd ? tilde(b.cwd) : null,
+      enabled: true,
     };
-  });
+  }).concat(Object.values(offBots).map((o) => ({ id: o.id, label: o.label, description: o.description, enabled: false })));
 }
+
+// A bot answering in a tab: it can be neither deleted nor turned off.
+const botBusy = (id) => tabs.list.some((x) => x.run && x.run.botId === id);
 
 // Bots read again after a change made from the window (their warnings were shown at startup).
 function reloadBots() {
-  bots = loadBots(P.bots, { agents, allowAutoMode: cfg.allowAutoMode }).bots;
+  const r = loadBots(P.bots, { agents, allowAutoMode: cfg.allowAutoMode });
+  bots = r.bots;
+  offBots = r.off;
   pushTabs();
 }
 

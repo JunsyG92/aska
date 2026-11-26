@@ -54,7 +54,7 @@ test('bots: a valid bot is loaded with its defaults', () => {
 
 test('bots: missing folder, files, hidden entries and invalid names', () => {
   const root = tmp();
-  assert.deepEqual(load(path.join(root, 'nope')), { bots: {}, warnings: [] }, 'no bots/ folder: no error');
+  assert.deepEqual(load(path.join(root, 'nope')), { bots: {}, warnings: [], off: {} }, 'no bots/ folder: no error');
   fs.writeFileSync(path.join(root, 'README.md'), 'not a bot');
   fs.writeFileSync(path.join(root, '.seeded'), '');
   fs.mkdirSync(path.join(root, '.hidden'));
@@ -596,4 +596,62 @@ test('saveBot: refused values, and then nothing is written', () => {
   assert.ok(saveBot(cur, { mode: 'edit' }, { agents: AGENTS }).errors.mode, 'Cursor has no edit mode');
   fs.writeFileSync(path.join(dir, 'bot.json'), '{ broken', { mode: 0o600 });
   assert.match(saveBot(dir, { label: 'x' }, { agents: AGENTS }).errors._, /invalid JSON/);
+});
+
+// ---------- settings: create, delete, turn off (ticket 08b) ----------
+
+const { createBot, deleteBot, idFromLabel } = require('../src/main/bots');
+
+test('createBot: folder named after the bot, unique, valid at once', () => {
+  const root = path.join(tmp(), 'bots');
+  assert.equal(idFromLabel('Traducteur 2', root), 'traducteur-2');
+  assert.equal(idFromLabel('Écrivain Pro!', root), 'ecrivain-pro');
+  assert.equal(idFromLabel('42 réponses', root), 'bot-42-reponses', 'starts with a letter');
+  assert.equal(idFromLabel('???', root), 'bot');
+  assert.equal(idFromLabel('x'.repeat(40), root).length, 28);
+  const r = createBot(root, { label: '  Traducteur 2 ', agent: 'codex', taken: ['Translator'] });
+  assert.deepEqual(r, { id: 'traducteur-2' });
+  const loaded = load(root);
+  assert.deepEqual(loaded.warnings, []);
+  const b = loaded.bots['traducteur-2'];
+  assert.equal(b.label, 'Traducteur 2');
+  assert.equal(b.agent, 'codex');
+  assert.equal(b.maxMode, 'read');
+  assert.match(b.soul, /Traducteur 2/);
+  if (POSIX) assert.equal(fs.statSync(path.join(root, 'traducteur-2')).mode & 0o777, 0o700);
+  // Same name as another bot: refused; same folder name: another suffix.
+  assert.match(createBot(root, { label: 'translator', agent: 'claude', taken: ['Translator'] }).errors.label, /already called "translator"/);
+  assert.deepEqual(createBot(root, { label: 'Traducteur-2', agent: 'claude', taken: ['Traducteur 2'] }), { id: 'traducteur-2-2' });
+  assert.ok(createBot(root, { label: '', agent: 'claude' }).errors.label);
+  assert.ok(createBot(root, { label: 'x'.repeat(25), agent: 'claude' }).errors.label);
+});
+
+test('deleteBot: to the trash when possible, only a bot folder', async () => {
+  const root = tmp();
+  makeBot(root, 'a');
+  makeBot(root, 'b');
+  const trashed = [];
+  assert.deepEqual(await deleteBot(root, 'a', { trash: async (p) => { trashed.push(p); fs.rmSync(p, { recursive: true }); } }), {});
+  assert.deepEqual(trashed, [path.join(root, 'a')]);
+  // No trash (headless Linux…): deleted for good.
+  assert.deepEqual(await deleteBot(root, 'b', { trash: async () => { throw new Error('no trash'); } }), {});
+  assert.ok(!fs.existsSync(path.join(root, 'b')));
+  for (const bad of ['..', '../x', 'A', '', '.seeded']) assert.ok((await deleteBot(root, bad)).error, bad);
+  assert.ok(fs.existsSync(root));
+});
+
+test('turned off: listed apart, on again from the settings', () => {
+  const root = tmp();
+  const dir = makeBot(root, 'off', { agent: 'claude', label: 'Sleepy', description: 'Zzz', enabled: false });
+  let r = load(root);
+  assert.deepEqual(r.bots, {});
+  assert.deepEqual(r.off, { off: { id: 'off', dir, label: 'Sleepy', description: 'Zzz' } });
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(saveBot(dir, { enabled: true }, { agents: AGENTS }), {});
+  assert.ok(!('enabled' in JSON.parse(fs.readFileSync(path.join(dir, 'bot.json'), 'utf8'))), 'on by default: left out');
+  r = load(root);
+  assert.ok(r.bots.off);
+  assert.deepEqual(saveBot(dir, { enabled: false }, { agents: AGENTS }), {});
+  assert.ok(load(root).off.off);
+  assert.ok(saveBot(dir, { enabled: 'no' }, { agents: AGENTS }).errors.enabled);
 });

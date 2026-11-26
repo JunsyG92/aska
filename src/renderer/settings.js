@@ -106,16 +106,22 @@
   }
   // ---------- bots ----------
 
-  // What the form edits, from a bot of the list.
-  const botFields = (b) => ({
-    label: b.label,
-    description: b.description,
-    color: b.color,
-    model: b.model,
-    mode: b.mode,
-    soul: b.soul,
-    avatar: { variant: b.avatar.variant || 0, shape: b.avatar.shape || 'auto', emblem: b.avatar.emblem || 'auto' },
-  });
+  // What the form edits, from a bot of the list (a bot turned off: only whether it is on).
+  const botFields = (b) =>
+    b.enabled === false
+      ? { enabled: false }
+      : {
+          enabled: true,
+          label: b.label,
+          description: b.description,
+          color: b.color,
+          model: b.model,
+          mode: b.mode,
+          soul: b.soul,
+          avatar: { variant: b.avatar.variant || 0, shape: b.avatar.shape || 'auto', emblem: b.avatar.emblem || 'auto' },
+        };
+  let creating = null; // { label, error } while a new bot is being named
+  let removeArmed = null; // bot whose deletion waits for a second click
   const botList = () => (botData ? botData.bots : []);
   const draftOf = (b) => (botDrafts[b.id] = botDrafts[b.id] || botFields(b));
   function botChanged(b) {
@@ -126,7 +132,43 @@
     return patch;
   }
   const botPatches = () => botList().map((b) => [b.id, botChanged(b)]).filter(([, p]) => Object.keys(p).length);
-  const avatarUrl = (b, d) => b.image || window.AskaAvatar.avatarDataUrl(d.label || b.id, d.avatar);
+  const avatarUrl = (b, d) => b.image || window.AskaAvatar.avatarDataUrl(d.label || b.label || b.id, d.avatar || {});
+
+  async function createNow() {
+    const r = await opts.api.createBot(creating.label);
+    if (r.errors) {
+      creating.error = r.errors.label || r.errors._;
+      render();
+      return;
+    }
+    creating = null;
+    botData = { ...botData, bots: r.bots };
+    botSel = r.id;
+    opts.onSaved(r.state);
+    render();
+    setMessage(t('settings.bots.created', { id: r.id }), 'ok');
+    const soul = root.querySelector('[data-focus-key="bot-soul"]');
+    if (soul) soul.focus();
+  }
+
+  // Two clicks: the first one arms, the second one deletes (to the trash).
+  async function removeNow(b) {
+    if (removeArmed !== b.id) {
+      removeArmed = b.id;
+      render();
+      setMessage(t('settings.bots.removeConfirm', { bot: b.label }), 'warn');
+      return;
+    }
+    removeArmed = null;
+    const r = await opts.api.deleteBot(b.id);
+    delete botDrafts[b.id];
+    delete botErrors[b.id];
+    if (r.bots) botData = { ...botData, bots: r.bots };
+    if (r.state) opts.onSaved(r.state);
+    if (!botList().some((x) => x.id === botSel)) botSel = botList()[0] ? botList()[0].id : null;
+    render();
+    setMessage(r.error || t('settings.bots.removed'), r.error ? 'err' : 'ok');
+  }
 
   async function refreshBots() {
     botData = await opts.api.listBots();
@@ -170,29 +212,83 @@
 
   function botsPage() {
     const list = botList();
-    if (!list.length) return [el('p', 'set-note', t('settings.bots.empty', { folder: botData ? botData.folder : '' }))];
-    const b = list.find((x) => x.id === botSel) || list[0];
-    botSel = b.id;
-    const d = draftOf(b);
-    const errs = botErrors[b.id] || {};
+    const b = creating ? null : list.find((x) => x.id === botSel) || list[0] || null;
+    botSel = b ? b.id : null;
 
-    // The bots, as a row of chips: avatar, name, @id.
+    // The bots, as a row of chips: avatar, name, @id; then "New bot".
     const nav = el('div', 'set-bots');
     for (const x of list) {
       const dx = botDrafts[x.id] || botFields(x);
-      const chip = el('button', 'set-bot' + (x.id === b.id ? ' active' : '') + (Object.keys(botChanged(x)).length ? ' dirty' : '') + (botErrors[x.id] ? ' has-error' : ''));
+      const on = dx.enabled !== false;
+      const chip = el('button', 'set-bot' + (b && x.id === b.id ? ' active' : '') + (on ? '' : ' off') + (Object.keys(botChanged(x)).length ? ' dirty' : '') + (botErrors[x.id] ? ' has-error' : ''));
       chip.type = 'button';
       chip.dataset.bot = x.id;
-      chip.setAttribute('aria-pressed', String(x.id === b.id));
+      chip.setAttribute('aria-pressed', String(!!b && x.id === b.id));
       const img = el('img', 'set-bot-av');
       img.alt = '';
       img.src = avatarUrl(x, dx);
-      chip.append(img, el('span', 'set-bot-name', dx.label || x.id), el('span', 'set-bot-id', '@' + x.id));
+      chip.append(img, el('span', 'set-bot-name', dx.label || x.label || x.id), el('span', 'set-bot-id', on ? '@' + x.id : t('settings.bots.off')));
       chip.addEventListener('click', () => {
         botSel = x.id;
+        creating = null;
+        removeArmed = null;
         render();
       });
       nav.append(chip);
+    }
+    const add = el('button', 'set-bot new' + (creating ? ' active' : ''), '+ ' + t('settings.bots.newBot'));
+    add.type = 'button';
+    add.addEventListener('click', () => {
+      creating = creating || { label: '', error: null };
+      removeArmed = null;
+      render();
+      const input = root.querySelector('[data-focus-key="bot-new"]');
+      if (input) input.focus();
+    });
+    nav.append(add);
+
+    const button = (text, onClick, cls = 'set-btn small') => {
+      const btn = el('button', cls, text);
+      btn.type = 'button';
+      btn.addEventListener('click', onClick);
+      return btn;
+    };
+
+    // Naming a new bot: its folder (the @id) comes from the name.
+    if (creating) {
+      const name = textInput(creating.label, (v) => { creating.label = v; }, { focusKey: 'bot-new', max: 24 });
+      name.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          createNow();
+        }
+      });
+      const box = el('div', 'set-inline wrap');
+      box.append(name, button(t('settings.bots.create'), createNow, 'set-btn small primary'), button(t('settings.cancel'), () => {
+        creating = null;
+        render();
+      }));
+      return [nav, section(t('settings.bots.newBot'), field(t('settings.bots.newName'), box, { error: creating.error }))];
+    }
+    if (!b) return [nav, el('p', 'set-note', t('settings.bots.empty', { folder: botData ? botData.folder : '' }))];
+
+    const d = draftOf(b);
+    const errs = botErrors[b.id] || {};
+    const removeButton = button(
+      removeArmed === b.id ? t('settings.bots.removeConfirm', { bot: b.label }) : t('settings.bots.remove'),
+      () => removeNow(b),
+      'set-btn small danger' + (removeArmed === b.id ? ' armed' : '')
+    );
+    const onRow = field(t('settings.bots.enabled'), toggle(d.enabled, (v) => {
+      d.enabled = v;
+      render();
+    }), { hint: t('settings.bots.enabledHint'), error: errs.enabled });
+
+    // A bot turned off: only turn it on again, open its folder, or delete it.
+    if (b.enabled === false) {
+      const tools = el('div', 'set-inline wrap');
+      tools.append(button(t('settings.bots.openFolder'), () => opts.api.openBotFolder(b.id)), removeButton);
+      return [nav, section(b.label, onRow, field('', tools))];
     }
 
     // Avatar: preview, another variant, shape, emblem, a picture of your own.
@@ -205,12 +301,6 @@
     };
     const avatarBox = el('div', 'set-bot-avatar');
     const tools = el('div', 'set-inline wrap');
-    const button = (text, onClick, cls = 'set-btn small') => {
-      const btn = el('button', cls, text);
-      btn.type = 'button';
-      btn.addEventListener('click', onClick);
-      return btn;
-    };
     if (!b.image) {
       tools.append(
         button(t('settings.bots.variant'), () => {
@@ -311,6 +401,7 @@
       nav,
       section(
         d.label || b.id,
+        onRow,
         wide(field(t('settings.bots.avatar'), avatarBox, { error: errs.avatar })),
         field(t('settings.bots.name'), name, { error: errs.label }),
         field(t('settings.bots.description'), description, { error: errs.description }),
@@ -318,7 +409,8 @@
         field(t('settings.bots.model'), modelBox, { error: errs.model }),
         field(t('settings.bots.mode'), modeSelect, { hint: t('settings.bots.modeHint', { max: opts.modeLabel(b.maxMode) }), error: errs.mode }),
         wide(field(t('settings.bots.soul'), soulBox, { hint: t('settings.bots.soulHint'), error: errs.soul })),
-        field(t('settings.bots.filesHint'), filesBox)
+        field(t('settings.bots.filesHint'), filesBox),
+        field('', removeButton)
       ),
     ];
   }
@@ -659,6 +751,8 @@
     errors = {};
     botDrafts = {};
     botErrors = {};
+    creating = null;
+    removeArmed = null;
     message = { text: '', kind: '' };
     opts.onClose();
   }
@@ -677,6 +771,8 @@
     errors = {};
     botDrafts = {};
     botErrors = {};
+    creating = null;
+    removeArmed = null;
     if (!botList().some((b) => b.id === botSel)) botSel = botList()[0] ? botList()[0].id : null;
     capture = null;
     armedClose = false;

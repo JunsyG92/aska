@@ -54,7 +54,11 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
   if (j.error) return refuse('fileError', { error: j.error });
   const u = j.data;
   if (!u || typeof u !== 'object' || Array.isArray(u)) return refuse('notAnObject');
-  if (u.enabled === false) return {};
+  // Turned off: not loaded, only listed (the settings show it greyed, to turn it on again).
+  if (u.enabled === false) {
+    const label = typeof u.label === 'string' && u.label.trim() ? u.label.trim().slice(0, 24) : id;
+    return { off: { id, dir, label, description: typeof u.description === 'string' ? u.description.trim().slice(0, 120) : '' } };
+  }
   const bad = (field) => warn('badField', { field });
 
   const agent = typeof u.agent === 'string' && Object.hasOwn(agents, u.agent) ? agents[u.agent] : null;
@@ -219,6 +223,11 @@ function saveBot(dir, values, { agents = {}, allowAutoMode = false } = {}) {
       else delete raw.avatar;
     }
   }
+  if ('enabled' in v) {
+    if (typeof v.enabled !== 'boolean') errors.enabled = t('bots.edit.enabled');
+    else if (v.enabled) delete raw.enabled; // on by default
+    else raw.enabled = false;
+  }
   let soul;
   if ('soul' in v) {
     soul = typeof v.soul === 'string' ? v.soul.trim() : null;
@@ -239,16 +248,18 @@ function saveBot(dir, values, { agents = {}, allowAutoMode = false } = {}) {
 /**
  * Loads every bot of dir. agents: the resolved agents (a bot's agent must
  * exist and be enabled). A missing folder is not an error.
- * Returns { bots: { id: bot }, warnings }.
+ * Returns { bots: { id: bot }, warnings, off: { id: { id, dir, label, description } } }
+ * (off: the bots turned off with "enabled": false).
  */
 function loadBots(dir, { agents = {}, allowAutoMode = false, home = os.homedir() } = {}) {
   const bots = {};
+  const off = {};
   const warnings = [];
   let entries;
   try {
     entries = fs.readdirSync(dir).filter((n) => !n.startsWith('.')).sort();
   } catch {
-    return { bots, warnings };
+    return { bots, warnings, off };
   }
   for (const id of entries) {
     const botDir = path.join(dir, id);
@@ -270,8 +281,70 @@ function loadBots(dir, { agents = {}, allowAutoMode = false, home = os.homedir()
     };
     const r = loadBot(botDir, id, { agents, allowAutoMode, home }, warn);
     if (r.bot) bots[id] = r.bot;
+    else if (r.off) off[id] = r.off;
   }
-  return { bots, warnings };
+  return { bots, warnings, off };
+}
+
+/**
+ * Folder name (the "@id") from a bot's name: lowercase letters and digits
+ * without accents, words joined by "-", starting with a letter, unique in dir.
+ */
+function idFromLabel(label, dir) {
+  const words = String(label)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  let base = /^[a-z]/.test(words) ? words : `bot-${words}`.replace(/-+$/, '');
+  base = base.slice(0, 28).replace(/-+$/, '');
+  let id = base;
+  for (let n = 2; fs.existsSync(path.join(dir, id)); n++) id = `${base}-${n}`;
+  return id;
+}
+
+/**
+ * Creates a bot from the settings: its folder (exclusive), a bot.json for the
+ * given agent, read-only, and a short personality to edit. The name must not
+ * be taken by another bot (on or off). Returns { id } or { errors }.
+ */
+function createBot(dir, { label, agent, taken = [] }) {
+  const name = typeof label === 'string' ? label.trim() : '';
+  if (!name || name.length > 24) return { errors: { label: t('bots.edit.label', { max: 24 }) } };
+  if (taken.some((x) => x.toLowerCase() === name.toLowerCase())) return { errors: { label: t('bots.edit.duplicate', { label: name }) } };
+  try {
+    ensurePrivateDir(dir);
+    const id = idFromLabel(name, dir);
+    fs.mkdirSync(path.join(dir, id), { mode: 0o700 }); // exclusive: never an existing folder
+    writePrivate(path.join(dir, id, 'bot.json'), JSON.stringify({ label: name, agent, mode: 'read', maxMode: 'read' }, null, 2) + '\n');
+    writePrivate(path.join(dir, id, 'SOUL.md'), t('bots.newSoul', { label: name }) + '\n');
+    return { id };
+  } catch (e) {
+    return { errors: { _: e.message } };
+  }
+}
+
+/**
+ * Deletes a bot's folder: to the system's trash when trash() is given and
+ * works, else for good. Only a folder of dir with a valid bot name.
+ */
+async function deleteBot(dir, id, { trash } = {}) {
+  if (!ID_RE.test(id)) return { error: t('errors.unknownBot') };
+  const target = path.join(dir, id);
+  if (path.dirname(path.resolve(target)) !== path.resolve(dir)) return { error: t('errors.unknownBot') };
+  try {
+    if (trash) {
+      try {
+        await trash(target);
+        return {};
+      } catch { /* no trash (headless Linux…): deleted for good */ }
+    }
+    fs.rmSync(target, { recursive: true, force: true });
+    return {};
+  } catch (e) {
+    return { error: e.message };
+  }
 }
 
 // ---------- avatar added by hand (avatar.png or avatar.svg in the bot's folder) ----------
@@ -515,4 +588,4 @@ function fingerprint(text) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-module.exports = { loadBots, saveBot, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
+module.exports = { loadBots, saveBot, createBot, deleteBot, idFromLabel, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
