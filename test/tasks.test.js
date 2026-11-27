@@ -217,3 +217,86 @@ test('task check: repositories of the folder, known bots, modes up to their ceil
   assert.match(checkTask({ goal: '', root, subtasks: [] }, deps).error, /Describe the task/);
   assert.match(checkTask({ goal: 'x', root: 'relative', subtasks: [] }, deps).error, /Choose the folder/);
 });
+
+// ---------- ticket 14: temporary bots ----------
+
+const { checkTempBot, writeTempBot, loadTempBot, keepTempBot } = require('../src/main/tasks/bots');
+const { loadBots } = require('../src/main/bots');
+
+function installedAgents() {
+  const { agents } = resolveAgents({});
+  for (const a of Object.values(agents)) a.binPath = '/bin/' + a.id; // as if installed
+  return agents;
+}
+
+test('temporary bots: a copy with other rights, or a bot made for the task, checked as any bot', () => {
+  const agents = installedAgents();
+  const src = tmp();
+  fs.writeFileSync(path.join(src, 'avatar.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>');
+  const bots = { up: { id: 'up', label: 'Updater', description: 'Bumps', agent: 'codex', model: 'gpt-5', maxMode: 'read', allow: [], soul: 'You update.', avatar: { variant: 2 }, ownColor: false, color: '#111111', dir: src } };
+  const deps = { bots, agents, defaultAgent: 'claude' };
+  // A copy: same personality, agent and look; other rights.
+  const copy = checkTempBot({ copyOf: 'up', maxMode: 'edit', allow: ['git add', 'git commit'] }, 1, deps).temp;
+  assert.deepEqual([copy.label, copy.agent, copy.model, copy.soul, copy.maxMode, copy.allow, copy.copyOf], ['Updater', 'codex', 'gpt-5', 'You update.', 'edit', ['git add', 'git commit'], 'up']);
+  // Made for the task: the default agent unless given.
+  const made = checkTempBot({ label: 'Node bumper', soul: 'You bump Node.', maxMode: 'edit', allow: ['npm test'], emblem: 'terminal' }, 2, deps).temp;
+  assert.deepEqual([made.agent, made.avatar, made.copyOf], ['claude', { emblem: 'terminal' }, undefined]);
+  const bad = (spec, re) => assert.match(checkTempBot(spec, 3, deps).error, re);
+  bad({ copyOf: 'nope' }, /Subtask 3: unknown bot/);
+  bad({ copyOf: 'up', allow: ['rm'] }, /Subtask 3: bot refused \(Refused: rm/);
+  bad({ copyOf: 'up', maxMode: 'auto' }, /bot refused/);
+  bad({ label: '', soul: 'x' }, /bot refused/);
+  bad({ label: 'x', soul: '' }, /bot refused/);
+  bad({ label: 'x', soul: 'y', agent: 'nope' }, /agent of x is not available/);
+  assert.ok(checkTempBot({ copyOf: 'up', maxMode: 'auto' }, 1, { ...deps, allowAutoMode: true }).temp);
+});
+
+test('temporary bots: written with the safety rules, loaded, kept into ~/.aska/bots', () => {
+  const agents = installedAgents();
+  const src = tmp();
+  fs.writeFileSync(path.join(src, 'avatar.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>');
+  const bots = { up: { id: 'up', label: 'Updater', agent: 'claude', maxMode: 'read', allow: [], soul: 'You update.', avatar: {}, dir: src } };
+  const deps = { bots, agents, defaultAgent: 'claude' };
+  const dir = path.join(tmp(), 'tasks', 'abc', 'bots', '1');
+  writeTempBot(dir, checkTempBot({ copyOf: 'up', maxMode: 'edit', allow: ['git commit'] }, 1, deps).temp);
+  if (POSIX) assert.equal(fs.statSync(path.join(dir, 'bot.json')).mode & 0o777, 0o600);
+  const bot = loadTempBot(dir, 1, { agents });
+  assert.equal(bot.id, 'tmp-1');
+  assert.equal(bot.maxMode, 'edit');
+  assert.equal(bot.mode, 'edit', 'starts where it works');
+  assert.deepEqual(bot.allow, ['git commit']);
+  assert.match(bot.soul, /^You update\.\n\n## Safety\n/, 'safety rules added');
+  assert.match(bot.image, /^data:image\/svg\+xml/, 'the picture of the copied bot');
+  // A personality that already has its safety section keeps it as written.
+  const own = path.join(tmp(), 'b2');
+  writeTempBot(own, checkTempBot({ label: 'X', soul: 'Do x.\n\n## Sécurité\n\n- Mes règles.' }, 2, deps).temp);
+  assert.equal(loadTempBot(own, 2, { agents }).soul, 'Do x.\n\n## Sécurité\n\n- Mes règles.');
+  // Kept: a real bot, offered with "@".
+  const botsDir = path.join(tmp(), 'bots');
+  const kept = keepTempBot(dir, { botsDir, taken: [], agents });
+  assert.deepEqual(kept, { id: 'updater' });
+  const loaded = loadBots(botsDir, { agents }).bots.updater;
+  assert.equal(loaded.maxMode, 'edit');
+  assert.deepEqual(loaded.allow, ['git commit']);
+  assert.match(loaded.soul, /## Safety/);
+  assert.ok(fs.existsSync(path.join(botsDir, 'updater', 'avatar.svg')));
+  assert.match(keepTempBot(dir, { botsDir, taken: ['Updater'], agents }).errors.label, /already called "Updater"/);
+});
+
+test('task check and store: a subtask with a temporary bot, removed with its task', { skip: !hasGit && 'git not installed' }, () => {
+  const root = tmp();
+  const repo = makeRepo(path.join(root, 'app'));
+  const agents = installedAgents();
+  const ok = checkTask({ goal: 'x', root, subtasks: [{ repo, bot: { label: 'Bumper', soul: 'You bump.', maxMode: 'edit', allow: ['git commit'] }, prompt: 'Bump' }] }, { bots: {}, agents, gitBin: GIT, home: os.homedir(), defaultAgent: 'claude' });
+  assert.equal(ok.subtasks[0].botId, 'tmp-1');
+  assert.equal(ok.subtasks[0].mode, 'edit');
+  assert.deepEqual(ok.subtasks[0].allow, ['git commit']);
+  assert.equal(ok.subtasks[0].temp.label, 'Bumper');
+  const store = new TaskStore(path.join(root, 'state'));
+  const task = store.create(ok);
+  const dir = path.join(store.botsDir(task.id), '1');
+  writeTempBot(dir, ok.subtasks[0].temp);
+  store.save(task);
+  store.remove(task.id);
+  assert.ok(!fs.existsSync(path.join(root, 'state', task.id)), 'its temporary bots go with it');
+});

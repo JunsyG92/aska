@@ -1223,6 +1223,35 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(fs.readdirSync(path.join(P.dataDir, 'worktrees', created.task.id)).length, 0, 'worktrees removed');
     assert.ok(gitIn(path.join(taskRoot, 'web'), 'rev-parse', '--verify', 'aska/passer-a-node-26/2').status === 0, 'branches kept');
 
+    // Temporary bots: a copy of a bot with fewer rights, and a bot made for the task; one kept.
+    const tempTask = (await page.evaluate((root) => window.aska.createTask({
+      goal: 'Audit des versions',
+      root,
+      subtasks: [
+        { repo: root + '/api', bot: { copyOf: 'trad', allow: ['git commit'] }, prompt: 'Audite' },
+        { repo: root + '/web', bot: { label: 'Auditeur', soul: 'Tu audites les versions.', maxMode: 'edit', emblem: 'search' }, prompt: 'Audite' },
+      ],
+    }), taskRoot)).task;
+    assert.deepEqual(tempTask.subtasks.map((s) => [s.botId, s.bot.label, s.temporary]), [['tmp-1', 'Traducteur 2', true], ['tmp-2', 'Auditeur', true]]);
+    assert.ok(!(await page.evaluate(() => window.aska.getState())).bots.some((b) => b.id.startsWith('tmp-')), 'not offered with "@"');
+    const tempCallsFrom = calls().length;
+    await page.evaluate((id) => window.aska.startTask(id), tempTask.id);
+    for (let i = 0; i < 100 && (await page.evaluate(() => window.aska.listTasks())).tasks.find((x) => x.id === tempTask.id).status !== 'done'; i++) await page.waitForTimeout(100);
+    const tempCalls = calls().slice(tempCallsFrom).sort((a, b) => a.cwd.localeCompare(b.cwd));
+    assert.equal(tempCalls.length, 2);
+    const copyCall = tempCalls.find((c) => c.cwd.endsWith('1'));
+    const madeCall = tempCalls.find((c) => c.cwd.endsWith('2'));
+    assert.equal(copyCall.args[copyCall.args.indexOf('--allowedTools') + 1], 'Bash(git commit),Bash(git commit *)', 'the copy with fewer rights');
+    const madeSoul = madeCall.args[madeCall.args.indexOf('--append-system-prompt') + 1];
+    assert.match(madeSoul, /Tu audites les versions\.\n\n## Sécurité\n/, 'safety rules added to a bot made for the task');
+    const keptRes = await page.evaluate((id) => window.aska.keepTaskBot(id, 2), tempTask.id);
+    assert.equal(keptRes.botId, 'auditeur');
+    assert.ok(keptRes.state.bots.some((b) => b.id === 'auditeur'), 'kept: offered with "@" now');
+    assert.match((await page.evaluate((id) => window.aska.keepTaskBot(id, 2), tempTask.id)).error, /déjà gardé sous @auditeur/);
+    assert.deepEqual(await page.evaluate((id) => window.aska.cleanupTask(id), tempTask.id), { ok: true });
+    assert.ok(!fs.existsSync(path.join(P.stateDir, 'tasks', tempTask.id)), 'the temporary bots go with the task');
+    assert.ok(fs.existsSync(path.join(P.bots, 'auditeur', 'SOUL.md')), 'the kept one stays');
+
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
     const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));

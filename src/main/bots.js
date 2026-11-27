@@ -339,6 +339,16 @@ function saveBot(dir, values, { agents = {}, allowAutoMode = false } = {}) {
 }
 
 /**
+ * One bot from its own folder (the temporary bots of a task): the same checks
+ * as loadBots. Returns { bot } or { warnings } (refused).
+ */
+function loadBotFrom(dir, id, { agents = {}, allowAutoMode = false, home = os.homedir() } = {}) {
+  const warnings = [];
+  const r = loadBot(dir, id, { agents, allowAutoMode, home }, (key, vars = {}) => warnings.push(t(`bots.${key}`, { id, ...vars })));
+  return r.bot ? { bot: r.bot, warnings } : { warnings };
+}
+
+/**
  * Loads every bot of dir. agents: the resolved agents (a bot's agent must
  * exist and be enabled). A missing folder is not an error.
  * Returns { bots: { id: bot }, warnings, off: { id: { id, dir, label, description } } }
@@ -742,4 +752,4 @@ function fingerprint(text) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-module.exports = { isRemote, draftPrompt, parseDraft, DESCRIPTION_MAX, cleanAllow, loadBots, saveBot, createBot, deleteBot, idFromLabel, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
+module.exports = { loadBotFrom, COLOR_RE, isRemote, draftPrompt, parseDraft, DESCRIPTION_MAX, cleanAllow, loadBots, saveBot, createBot, deleteBot, idFromLabel, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
