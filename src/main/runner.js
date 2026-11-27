@@ -3,6 +3,7 @@
 // (cancellation, timeout, output too large).
 
 const { spawn, execFile } = require('child_process');
+const { t } = require('../i18n');
 
 const WIN = process.platform === 'win32';
 const { StringDecoder } = require('string_decoder');
@@ -132,6 +133,53 @@ function createTextParser(emit) {
 }
 
 /**
+ * Output of "ollama run": plain text, preceded for thinking models by a
+ * "Thinking... ... ...done thinking." block. That block is not shown as the answer:
+ * it becomes the "Thinking…" activity. (--hidethinking would do the same, but older
+ * Ollama versions refuse it.)
+ */
+function createOllamaParser(emit) {
+  const START = 'Thinking...';
+  const END = '...done thinking.';
+  let state = 'head'; // head: not known yet; think: thinking block; answer
+  let buf = '';
+  const answer = (s) => {
+    if (s) emit({ type: 'text', text: s });
+  };
+  return {
+    push(chunk) {
+      const s = clean(chunk);
+      if (!s) return;
+      if (state === 'answer') return answer(s);
+      buf += s;
+      if (state === 'head') {
+        const start = buf.replace(/^\s+/, '');
+        if (start.length < START.length && START.startsWith(start)) return; // not decided yet
+        if (!start.startsWith(START)) {
+          state = 'answer';
+          answer(buf);
+          buf = '';
+          return;
+        }
+        state = 'think';
+        emit({ type: 'activity', text: t('launch.thinking') });
+      }
+      const i = buf.indexOf(END);
+      if (i < 0) {
+        buf = buf.slice(-END.length); // keep just enough to recognise the end
+        return;
+      }
+      state = 'answer';
+      answer(buf.slice(i + END.length).replace(/^\s+/, ''));
+      buf = '';
+    },
+    end() {
+      if (state === 'head') answer(buf);
+    },
+  };
+}
+
+/**
  * @returns {{ cancel: () => void, done: Promise<object> }}
  */
 function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600000, maxBytes = 2 * 1024 * 1024, verbatim = false }, onEvent) {
@@ -192,7 +240,10 @@ function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600
   };
 
   const timeout = setTimeout(() => stop('timeout'), timeoutMs);
-  const parser = output === 'stream-json' ? createStreamJsonParser(emit) : createTextParser(emit);
+  const parser =
+    output === 'stream-json' ? createStreamJsonParser(emit)
+    : output === 'ollama' ? createOllamaParser(emit)
+    : createTextParser(emit);
   const outDec = new StringDecoder('utf8');
   const errDec = new StringDecoder('utf8');
 
@@ -231,4 +282,4 @@ function runAgent({ bin, argv, cwd, env, stdin, output = 'text', timeoutMs = 600
   return { cancel: () => stop('cancel'), done };
 }
 
-module.exports = { runAgent, createStreamJsonParser, createTextParser, clean, describeTool };
+module.exports = { runAgent, createStreamJsonParser, createTextParser, createOllamaParser, clean, describeTool };

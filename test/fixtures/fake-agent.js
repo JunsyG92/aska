@@ -16,6 +16,11 @@ if (args[0] === '--list-models') {
   process.stdout.write('Available models\n\nauto - Auto (current)\n\x1b[1mgpt-5.2-codex\x1b[0m - GPT-5.2 Codex\nsonnet-4.6-thinking - Claude Sonnet 4.6 Thinking\n\nTip: use --model <id>\n');
   process.exit(0);
 }
+// Fake "ollama": model list, and an answer preceded by a thinking block.
+if (process.env.FAKE_MODE === 'ollama' && args[0] === 'list') {
+  process.stdout.write('NAME                ID              SIZE      MODIFIED\nqwen3:8b            500a1f067a9f    5.2 GB    2 days ago\nllama3.2:latest     a80c4f17acd5    2.0 GB    3 weeks ago\n');
+  process.exit(0);
+}
 let stdin = '';
 process.stdin.on('data', (d) => (stdin += d));
 process.stdin.on('end', async () => {
@@ -29,7 +34,13 @@ process.stdin.on('end', async () => {
     const entry = { args, stdin, cwd: process.cwd(), env: Object.keys(process.env) };
     require('fs').appendFileSync(process.env.FAKE_LOG, JSON.stringify(entry) + '\n');
   }
-  if (mode === 'echo') {
+  if (mode === 'ollama') {
+    const out = ['Thinking...\n', 'The model thinks out loud.\n', '...done thinking.\n\n', `Local answer from ${args[1]}.\n`];
+    for (const c of out) {
+      process.stdout.write(c);
+      await sleep(Number(process.env.FAKE_DELAY || 15) * 4);
+    }
+  } else if (mode === 'echo') {
     process.stdout.write(JSON.stringify({ args, stdin, env: Object.keys(process.env).sort(), cwd: process.cwd() }));
   } else if (mode === 'hang') {
     process.on('SIGTERM', () => {}); // ignore SIGTERM: only SIGKILL stops it

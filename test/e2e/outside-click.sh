@@ -27,7 +27,7 @@ check() { # $1 = nom, $2 = config.json, $3 = état (pinned) ou vide, $4 = attend
   for _ in $(seq 1 40); do visible && break; sleep 0.25; done
   visible || { echo "  ✗ $1 : la fenêtre ne s'est pas affichée"; FAILS=$((FAILS+1)); pkill -f "$ELECTRON"; sleep 1; return; }
   sleep 1
-  xdotool mousemove 100 60 click 1; sleep 1.5
+  xdotool mousemove 100 60 click 1; sleep 2.5 # the chat fades, then hides after 1.5 s
   local got=reste; visible || got=masque
   if [ "$got" = "$4" ]; then echo "  ✓ $1 : $got"; else echo "  ✗ $1 : attendu « $4 », obtenu « $got »"; FAILS=$((FAILS+1)); fi
   env HOME="$home" "$ELECTRON" "${FLAGS[@]}" "$ROOT" --quit >/dev/null 2>&1; sleep 1; pkill -f "$ELECTRON"; sleep 0.5

@@ -10,7 +10,7 @@
     "start": "electron .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "node --test test/core.test.js test/bots.test.js test/tasks.test.js",
+    "test": "node --test test/core.test.js test/bots.test.js test/tasks.test.js test/pr-guard.test.js",
     "test:e2e": "node test/e2e/run.js && node test/e2e/instances.js",
     "test:click": "bash test/e2e/outside-click.sh",
     "check": "npm run lint && npm test"

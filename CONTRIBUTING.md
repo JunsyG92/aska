@@ -121,14 +121,54 @@ Every PR runs:
 | --- | --- |
 | **Lint** | ESLint |
 | **PR title** | Conventional Commits format |
-| **Tests (ubuntu-latest)** | unit tests, end-to-end test |
+| **Dependencies** | refuses an added dependency with a known vulnerability |
+| **Tests (ubuntu-latest)** | unit tests, end-to-end test, installation |
 | **Tests (windows-latest)** | unit tests, end-to-end test, installation |
+| **Tests (macos-latest)** | unit tests, end-to-end test, installation |
 | **CI** | summary of the checks above: this is the required check |
 | **CodeQL** | code security analysis |
+| **Guards (no AI)** | signals of malicious code, see below |
+| **AI review** | plain explanation of the PR and risks to data, see below |
 
 Screenshots from the end-to-end test can be downloaded from the
 **Actions** tab, on each run. Dependabot opens dependency and action updates
 every week (all pinned to a specific commit).
+
+## Security review of PRs
+
+Aska runs on computers that hold sensitive data. So every PR, including from a
+fork, gets two automatic comments, updated on every new commit
+(`.github/workflows/pr-review.yml`):
+
+- **Guards** (`scripts/ci/pr-guard.js`, no AI): fixed rules on the added lines.
+  They flag new network access (Aska makes none), reading secrets, the
+  environment, the clipboard or the screen, obfuscated code or `eval`,
+  invisible characters, a weaker Electron setup, a dependency or an
+  `npm install` script, and any change to CI, install scripts or the files at
+  the core of security.
+- **AI review** ([Claude](https://github.com/anthropics/claude-code-action)):
+  explains the PR in plain English and rates the risk to the user's data. It only
+  reads the diff, with no write tool and no file access. It also reports PR text
+  that tries to manipulate it.
+
+A **critical** signal puts a red cross on the PR. Both checks help the review,
+they do not replace it: an AI can be fooled, and fixed rules can be worked
+around. They run from the main branch, never from the PR's code, which therefore
+cannot switch them off for itself.
+
+To turn on the AI review (maintainers), create a key in the
+[Anthropic console](https://console.anthropic.com/), ideally in a dedicated
+workspace with a spending limit, then:
+
+```sh
+gh secret set ANTHROPIC_API_KEY --repo JunsyG92/aska
+```
+
+Without this secret, only the guards run.
+
+> **Never run a PR's branch on a computer that holds sensitive data** before it is
+> reviewed and merged: `npm install` and the tests run its code. Use a released
+> version, or a test machine or container.
 
 ## Versions and releases
 

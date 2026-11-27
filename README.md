@@ -6,7 +6,7 @@
 
 **One shortcut, one field, and your AI agents answer.**
 
-Claude Code, Codex, GitHub Copilot and Cursor in a single small window,<br>
+Claude Code, Codex, GitHub Copilot, Cursor and Ollama in a single small window,<br>
 driven by their official CLIs. Linux, macOS and Windows.
 
 [![CI](https://github.com/JunsyG92/aska/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JunsyG92/aska/actions/workflows/ci.yml)
@@ -31,6 +31,7 @@ driven by their official CLIs. Linux, macOS and Windows.
 - 🛡️ **Read-only by default**: the agent changes nothing until you switch modes, and never without your approval for the folder.
 - 📌 **Out of the way or always there**: a click outside hides the chat; pinned, it stays on top where you put it. Minimized to a pill, it shows you how the agent is doing.
 - 🔔 **Notified as soon as the AI answers**: a system notification (agent and start of the answer) when the chat is hidden or minimized; one click brings you back to the conversation.
+- 📎 **Your documents as context**: drop files or links on the window (or `Ctrl+D`, `/add`); they show above the field and their text goes to the agent with your requests.
 - ⌨️ **`/` commands**: `/model`, `/mode`, `/cd`, `/codex …` from the field, and your own prompts as commands (`/trad bonjour`).
 - 🌗 **Light or dark**, following your system theme.
 - 🌐 **English or French**: the interface follows your system language (`"language"` in the config to force one).
@@ -103,6 +104,7 @@ You need **Node.js ≥ 20** and at least one agent CLI installed and signed in:
 | Codex | `npm i -g @openai/codex` |
 | GitHub Copilot | `npm i -g @github/copilot` |
 | Cursor | see [cursor.com/cli](https://cursor.com/cli) |
+| Ollama (local models) | see [ollama.com/download](https://ollama.com/download), then `ollama pull <model>` |
 
 ### Linux
 
@@ -175,10 +177,12 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Ctrl+1` … `Ctrl+9` | go to tab 1 to 8, `Ctrl+9`: the last one |
 | `Ctrl+H` | history: type to search, `Enter` to open, `Del` twice to delete |
 | `Ctrl+O` | working folder (right-click the folder: back to the scratch space) |
+| `Ctrl+D` | [documents and links](#documents-and-links) given to the agent in this conversation |
 | `↑` / `↓` | recall a message already sent |
 | `Ctrl+Shift+C` | copy the last answer |
 | `Ctrl+R` | after denied actions: run the request again in the next mode (the button of the last answer) |
 | `Ctrl+M` | minimize to a pill / expand |
+| `Ctrl+E` | large view (70% of the screen) / normal size |
 | `Ctrl+P` | pin: the chat stays visible when you click elsewhere |
 | `Ctrl+,` | settings |
 | `Ctrl+Shift+T` | [tasks](#tasks): one goal for several bots |
@@ -187,7 +191,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 
 The shortcuts that use `Ctrl` can be changed in the [settings](#settings) or with `"keybindings"` in the [configuration](#configuration); the tooltips and `aska --help` show the ones you chose.
 
-A click outside the chat hides it; the agent keeps working. To keep it visible, pin it (📌 or `Ctrl+P`): the choice is remembered. Minimized to a pill, it always stays visible. The window is moved with the handle on the left or the bottom bar, and its position is remembered.
+A click outside the chat hides it (it fades first, then disappears after 1.5 s: time to drag a file onto it from another window); the agent keeps working. To keep it visible, pin it (📌 or `Ctrl+P`): the choice is remembered. Minimized to a pill, it always stays visible. The window is moved with the handle on the left or the bottom bar, and its position is remembered. As soon as the AI answers, the window switches to a **large view**, 70% of the screen and centered, to read comfortably. The ⤡ button (or `Ctrl+E`) brings it back to its normal size, and that choice holds for the conversation; a new or empty tab starts at the normal size.
 
 While Aska is running, its icon stays in the system tray (top right on GNOME).
 A green dot is added while a request is running, and the tooltip says which
@@ -209,6 +213,8 @@ Type `/` in the field: a list of commands opens above it (`↑` `↓` to choose,
 | `/mode read` · `edit` · `auto` | change the permission mode |
 | `/model sonnet` | pick the model (`/model default`: the CLI's own; `/model` alone opens the picker) |
 | `/cd ~/project` | change the working folder (`~` and relative paths accepted; `/cd` alone opens the picker) |
+| `/add ~/notes/brief.md`, `/add https://…` | give a [document or a link](#documents-and-links) to the agent (`/add` alone opens the file picker) |
+| `/sources` | documents and links of the conversation |
 | `/retry` | send the last request of the conversation again |
 | `/copy`, `/history`, `/settings`, `/pin`, `/mini` | same as their shortcuts |
 | `/tasks` (or `/tache`) | open the [tasks](#tasks) |
@@ -337,6 +343,19 @@ requests at most, 8 tabs).
 - **Switching agents along the way**: so Codex can carry on a discussion started with Claude.
 - **History**: each conversation is saved as a private file (200 at most) and reopens in its original working folder. `"savePrompts": false` disables all saving.
 
+### Documents and links
+
+A conversation can carry **documents and links**: a brief, meeting notes, a spec, a page of your wiki. Aska reads them itself and sends their text to the agent before your request, so the answers take them into account. It works with every agent and in read-only mode, since the agent needs no tool to get them.
+
+- **Drag and drop** files from your file manager, or a link from your browser, onto the window. The documents show as chips above the field: click one to see what was read, × to remove it.
+- `Ctrl+D` or the 📎 button opens the list: paste a link or a file path and press `Enter`, or press `Enter` on the empty field to choose files. `Del` removes the selected one. From the field, `/add ~/notes/brief.md` or `/add https://…` does the same.
+- **Files**: any text file (Markdown, code, CSV, JSON, HTML…). PDFs are read through `pdftotext` when it is installed (`poppler-utils` on Linux, `brew install poppler` on macOS). For any other format, the agent only gets the path, to read it with its own tools if it can.
+- **Links**: `http(s)` pages, fetched by Aska without cookies, as text (HTML is reduced to its text). A page is fetched again after ten minutes, or with the ↻ button.
+- Documents belong to the conversation: they are saved with it, and each tab has its own. They are read again when they change.
+- 20 documents at most. Their text is sent with each request (once per session with Claude, which keeps it), within a budget: about 240,000 characters when the request goes through stdin (Claude, Codex), 40,000 when it is passed as an argument (Copilot, Cursor; 8,000 on Windows). Beyond it, the longest documents are truncated, and the agent is told.
+
+What you attach is sent to the agent's provider, like the text of your requests. Files in `~/.ssh`, `~/.gnupg`, `~/.aws` and similar folders are refused.
+
 ## Models
 
 The model is chosen per agent and the choice is remembered. "CLI default" lets the agent decide. The list comes from the CLI itself, so it reflects your account and your version:
@@ -347,6 +366,7 @@ The model is chosen per agent and the choice is remembered. "CLI default" lets t
 | Cursor | `cursor-agent --list-models` (you must be signed in: `cursor-agent login`) |
 | Copilot | the list its ACP mode gives when a session opens (`copilot --acp`, in Aska's empty folder, nothing is sent) |
 | Codex | the catalog Codex caches in `~/.codex/` |
+| Ollama | `ollama list`: the models installed on the machine. Ollama needs one: without a choice, Aska uses the first one |
 
 Claude Code only names aliases: next to each one, and next to "CLI default", the picker shows the full name the CLI reported in its answers (`opus` · `claude-opus-5-5`), once you have used it.
 
@@ -359,14 +379,19 @@ The ↻ button queries the CLI again. If a CLI returns nothing, the picker says 
 As in Claude Code, each request runs in an explicit mode,
 shown at the bottom of the panel. Aska always starts in **Read-only**.
 
-| Mode | Claude | Codex | Copilot | Cursor |
-| --- | --- | --- | --- | --- |
-| **Read-only** | `--permission-mode plan --setting-sources user` | `--sandbox read-only` | `--deny-tool shell --deny-tool write` | `--mode ask` |
-| **Edit** | `--permission-mode acceptEdits` | `--sandbox workspace-write` | `--allow-tool write --deny-tool shell` | - |
-| **Autonomous** (disabled by default) | `--permission-mode auto` | `workspace-write` + network | `--allow-all-tools` + deny list | `--force` |
+| Mode | Claude | Codex | Copilot | Cursor | Ollama |
+| --- | --- | --- | --- | --- | --- |
+| **Read-only** | `--permission-mode plan --setting-sources user` | `--sandbox read-only` | read commands only (`ls`, `cat`, `grep`, `git status`…), `--deny-tool write` | `--mode ask` | no tools |
+| **Edit** | `--permission-mode acceptEdits` | `--sandbox workspace-write` | `--allow-tool write` + read commands, `git log/diff/show` | - | - |
+| **Autonomous** (disabled by default) | `--permission-mode auto` | `workspace-write` + network | `--allow-all-tools` + deny list | `--force` | - |
 
 - Each CLI's own permission settings (e.g. `~/.claude/settings.json`)
   still apply: Aska only adds restrictions.
+- Copilot reads files mostly through the shell, so it gets a closed list of read
+  commands rather than no shell at all. Commands that can write or run something
+  else (`find -exec`, `sed -i`, `rm`, `git push`…) stay refused, compound ones too.
+- Ollama only answers: local models have no tools and no file access. Their
+  thinking block, if any, shows as "Thinking…" and not in the answer.
 - **Autonomous** mode only shows up if `"allowAutoMode": true`. For Copilot and
   Cursor it is not isolated by a sandbox: keep it for throwaway folders.
 - No mode uses `--dangerously-skip-permissions`, `--yolo` or the like,
@@ -409,6 +434,16 @@ In short: **no shell** ever sees the text of your requests, the agent only recei
 - Writing to a folder needs your approval ("once" or "always").
 - Writing is refused in `/`, your whole `~`, system folders and sensitive
   folders (`~/.ssh`, `~/.config`, `~/.gnupg`...).
+
+**Documents and links**
+- Read by Aska itself, never by a shell: a file must exist and be a regular file,
+  and files in folders of secrets (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`...) are refused.
+- Links are `http(s)` only, fetched without cookies or credentials, with a time
+  limit and a size cap; only text content is kept.
+- Their text is placed in a delimited block that tells the agent it is reference
+  material, not instructions. As with any content an agent reads, a hostile page
+  can still try to influence the answer: only attach what you trust.
+- The audit log lists what was sent along with each request.
 
 **Application**
 - Sandboxed UI, without Node (`contextIsolation`, `sandbox`), strict CSP,
@@ -500,10 +535,12 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 | `nextTab` / `prevTab` | `Ctrl+Tab`, `Ctrl+PageDown` / `Ctrl+Shift+Tab`, `Ctrl+PageUp` |
 | `history` | `Ctrl+H` |
 | `pickDir` | `Ctrl+O` |
+| `sources` | `Ctrl+D` |
 | `modelMenu` | `Ctrl+Shift+M` |
 | `copyAnswer` | `Ctrl+Shift+C` |
 | `rerun` | `Ctrl+R` |
 | `toggleMini` | `Ctrl+M` |
+| `toggleWide` | `Ctrl+E` |
 | `togglePin` | `Ctrl+P` |
 | `tasks` | `Ctrl+Shift+T` |
 | `settings` | `Ctrl+,` |

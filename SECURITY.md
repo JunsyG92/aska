@@ -30,6 +30,14 @@ If possible, include:
 Vulnerabilities in the agent CLIs themselves (Claude Code, Codex, Copilot, Cursor) should be
 reported to their vendors; let us know too if Aska can limit their impact.
 
+## Contributions
+
+Every PR goes through automatic guards and an AI review that flag code likely to
+spy on the user or send their data away (see
+[CONTRIBUTING.md](CONTRIBUTING.md#security-review-of-prs)), on top of the review
+required from a maintainer. If you think you can slip malicious code past them,
+that is a vulnerability: report it as above.
+
 ## Our commitment
 
 | Step | Target time |
