@@ -1077,7 +1077,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(said[0].riff, true);
     assert.equal(said[0].rate, 16000);
     assert.ok(said[0].seconds > 1 && said[0].seconds < 5, `utterance of ${said[0].seconds} s`);
-    assert.ok(!said[0].env.includes('SECRET_TOKEN'), 'the transcriber gets the filtered environment');
+    assert.equal(said[0].leaked, false, 'the transcriber gets the filtered environment');
     const heardCall = calls().filter((c) => /this was just said/.test(c.stdin)).at(-1);
     assert.match(heardCall.stdin, /<transcript>\n\[\d\d:\d\d\] When do we launch\?/);
     assert.match(heardCall.stdin, /this was just said:\n"When do we launch\?"/);

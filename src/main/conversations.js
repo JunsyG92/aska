@@ -63,7 +63,7 @@ class ConversationStore {
 
   create(cwd) {
     const now = new Date().toISOString();
-    return { id: crypto.randomBytes(8).toString('hex'), title: '', createdAt: now, updatedAt: now, cwd, turns: [], sessions: {}, sources: [], heard: [] };
+    return { id: crypto.randomBytes(8).toString('hex'), title: '', createdAt: now, updatedAt: now, cwd, turns: [], sessions: {}, sources: [] };
   }
 
   file(id) {

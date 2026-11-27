@@ -15,7 +15,7 @@ if (process.env.FAKE_STT_LOG) {
     riff: !!wav && wav.toString('latin1', 0, 4) === 'RIFF' && wav.toString('latin1', 8, 12) === 'WAVE',
     rate: wav ? wav.readUInt32LE(24) : 0,
     seconds: wav ? (wav.length - 44) / 32000 : 0,
-    env: Object.keys(process.env),
+    leaked: 'SECRET_TOKEN' in process.env,
   };
   fs.appendFileSync(process.env.FAKE_STT_LOG, JSON.stringify(entry) + '\n');
 }
