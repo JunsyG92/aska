@@ -82,6 +82,13 @@ process.stdin.on('end', async () => {
       '```',
       '',
     ].join('\n'));
+  } else if (mode === 'stream' && prompt.includes('<memory>')) {
+    // A bot's memory to compact (settings): only its last entry is kept.
+    j({ type: 'system', subtype: 'init', model: 'fake-model-1', session_id: 'sess-0006-memory' });
+    const entries = ((prompt.match(/<memory>\n([\s\S]*?)\n<\/memory>/) || [])[1] || '').split('\n');
+    await sleep(Number(process.env.FAKE_DELAY || 15) * 10);
+    j({ type: 'assistant', message: { content: [{ type: 'text', text: JSON.stringify({ memory: entries[entries.length - 1] }) }] } });
+    j({ type: 'result', subtype: 'success', is_error: false, result: 'fin' });
   } else if (mode === 'stream' && prompt.includes('<results>')) {
     // A next wave (tasks): nothing more at the last wave; otherwise new rights if the goal says so.
     j({ type: 'system', subtype: 'init', model: 'fake-model-1', session_id: 'sess-0005-wave' });
