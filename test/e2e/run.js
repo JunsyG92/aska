@@ -1332,9 +1332,11 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForSelector('.tk-sub[data-status="cancelled"]', { timeout: 20000 });
     await page.click('.tk-sub [data-action="rerun"]');
     await page.waitForSelector('.tk-sub[data-status="running"]', { timeout: 20000 });
+    // Started again for real (the fake agent logged its call) before everything is cancelled.
+    for (let i = 0; i < 200 && calls().length - viewCallsFrom < 2; i++) await page.waitForTimeout(50);
+    assert.equal(calls().length - viewCallsFrom, 2, 'run twice');
     await page.click('[data-action="cancel-all"]');
     await page.waitForSelector('.tk-sub[data-status="cancelled"]', { timeout: 20000 });
-    assert.equal(calls().length - viewCallsFrom, 2, 'run twice');
     // Keep its temporary bot, then clean up (two clicks): the branch stays.
     await page.click('.tk-sub [data-action="keep"]');
     await page.waitForFunction(() => /Bot gardé : @bumper/.test(document.querySelector('#tasks .set-message').textContent));
