@@ -1296,6 +1296,63 @@ function setupTaskIpc() {
   handle('aska:task-start', (req) => engineOr((e) => e.start(req && req.id, req && Array.isArray(req.numbers) ? req.numbers : null)));
   handle('aska:task-cancel', (req) => engineOr((e) => e.cancel(req && req.id, req && Number.isInteger(req.n) ? req.n : null)));
   handle('aska:task-cleanup', (id) => engineOr((e) => e.cleanup(id)));
+  // The orchestrator's plan: a bot (or the default agent), read-only in the
+  // task's folder. Nothing is created: the window shows the plan to review.
+  let planRun = null;
+  handle('aska:task-plan', async (req) => {
+    let e;
+    try {
+      e = tasksModule();
+    } catch (err) {
+      return { error: err.message };
+    }
+    const v = req && typeof req === 'object' ? req : {};
+    const goal = typeof v.goal === 'string' ? v.goal.trim() : '';
+    if (!goal || goal.length > 2000 || goal.includes('\0')) return { error: t('tasks.badGoal', { max: 2000 }) };
+    if (typeof v.root !== 'string' || !path.isAbsolute(v.root)) return { error: t('tasks.badRoot') };
+    const root = sec.checkWorkdir(v.root, 'read');
+    if (root.error) return { error: root.error };
+    if (planRun) return { error: t('tasks.planBusy') };
+    const { findRepos, realPath } = require('./tasks/worktree');
+    const rootPath = realPath(root.path);
+    const repos = findRepos(e.gitBin, rootPath);
+    if (!repos.length) return { error: t('tasks.noRepos', { root: tilde(rootPath) }) };
+    const orchestrator = typeof v.botId === 'string' && Object.hasOwn(bots, v.botId) ? bots[v.botId] : null;
+    const agent = orchestrator ? agents[orchestrator.agent] : draftAgent();
+    if (!agent || !agent.binPath) return { error: t('errors.unknownAgent') };
+    const { planPrompt, parsePlan } = require('./tasks/plan');
+    const publicBots = Object.values(bots).map((b) => ({ id: b.id, label: b.label, description: b.description, agent: b.agent, maxMode: b.maxMode, allow: b.allow }));
+    const prompt = planPrompt({ goal, repos: repos.map((r) => path.relative(rootPath, r).split(path.sep).join('/') || '.'), bots: publicBots, lang: getLanguage(), allowAutoMode: cfg.allowAutoMode });
+    const { excess, canPass } = commandFit(agent);
+    let inv;
+    try {
+      // Read-only, without the orchestrator's allowed commands: a plan changes nothing.
+      inv = invocationFor({ agent, mode: 'read', prompt, turns: [], bot: orchestrator, model: orchestrator && orchestrator.model !== undefined ? orchestrator.model : modelFor(agent), excess, canPass, allow: [] });
+    } catch (err) {
+      return { error: err.message };
+    }
+    let answer = '';
+    const startedAt = new Date().toISOString();
+    planRun = launchAgent(
+      agent,
+      inv.argv,
+      { cwd: rootPath, stdin: inv.stdin, output: agent.output, timeoutMs: cfg.timeoutSec * 1000, maxBytes: cfg.maxOutputKb * 1024 },
+      (ev) => {
+        if (ev.type === 'text' && answer.length < MAX_ANSWER) answer += ev.text;
+      }
+    );
+    const res = await planRun.done;
+    planRun = null;
+    sec.appendAudit(P.audit, { ts: startedAt, plan: true, agent: agent.id, bot: orchestrator ? orchestrator.id : undefined, mode: 'read', cwd: rootPath, argv: inv.logArgv, prompt: cfg.savePrompts ? goal : undefined, result: res.reason, durationMs: res.durationMs });
+    if (res.reason === 'cancel') return { cancelled: true };
+    if (!res.ok && !answer.trim()) return { error: t('bots.draft.failed', { agent: agent.label, error: res.error || (res.stderrTail || '').slice(-300) || res.reason }) };
+    const p = parsePlan(answer, { root: rootPath, repos, bots });
+    if (p.error) return { error: p.error };
+    return { plan: { goal, root: rootPath, ...p.plan, subtasks: p.plan.subtasks.map((s) => ({ ...s, repoLabel: path.relative(rootPath, s.repo) || '.' })) }, agent: agent.label };
+  });
+  handle('aska:task-plan-cancel', () => {
+    if (planRun) planRun.cancel();
+  });
   // Keeps a temporary bot: copied into ~/.aska/bots, offered with "@" from now on.
   handle('aska:task-keep-bot', (req) =>
     engineOr((e) => {

@@ -71,6 +71,20 @@ process.stdin.on('end', async () => {
       '```',
       '',
     ].join('\n'));
+  } else if (mode === 'stream' && prompt.includes('<goal>')) {
+    // The orchestrator's plan (tasks): the repositories it was given, one bot of each kind.
+    j({ type: 'system', subtype: 'init', model: 'fake-model-1', session_id: 'sess-0003-plan' });
+    const plan = {
+      summary: 'Deux dépôts à mettre à jour.',
+      subtasks: [
+        { repo: 'api', bot: 'trad', mode: 'read', instruction: 'Lis le README' },
+        { repo: 'web', bot: { label: 'Bumper', soul: 'Tu fais les bumps.', maxMode: 'edit', allow: ['git commit', 'rm'] }, mode: 'edit', instruction: 'Passe à Node 26 et committe' },
+        { repo: '../ailleurs', bot: 'trad', instruction: 'x' },
+      ],
+    };
+    await sleep(Number(process.env.FAKE_DELAY || 15) * 10);
+    j({ type: 'assistant', message: { content: [{ type: 'text', text: JSON.stringify(plan) }] } });
+    j({ type: 'result', subtype: 'success', is_error: false, result: 'fin' });
   } else if (mode === 'stream' && prompt.includes('<description>')) {
     // A bot drafted from a description (settings): a proposal as JSON, after a sentence.
     j({ type: 'system', subtype: 'init', model: 'fake-model-1', session_id: 'sess-0002-draft' });
