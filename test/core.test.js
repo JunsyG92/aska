@@ -642,6 +642,20 @@ test('aska --help: options, shortcuts, detected agents and files; --version', ()
     assert.ok(fr.includes(expected), `"${expected}" missing from the French help`);
   }
   assert.ok(!fr.includes('—'), 'no em dash in the help');
+
+  // Unfinished tasks: listed without touching their files ("running" while Aska is not: stopped).
+  const tasksDir = require('../src/main/config').paths(env, home).tasks;
+  fs.mkdirSync(tasksDir, { recursive: true, mode: 0o700 });
+  const writeTask = (id, task) => fs.writeFileSync(path.join(tasksDir, `${id}.json`), JSON.stringify({ id, root: path.join(home, 'apps'), ...task }), { mode: 0o600 });
+  const sub = (status) => ({ n: 1, status });
+  writeTask('aaaaaaaaaaaa', { goal: 'Node 26', status: 'running', updatedAt: '2026-11-27T10:00:00Z', subtasks: [sub('done'), sub('running')] });
+  writeTask('bbbbbbbbbbbb', { goal: 'Relire', status: 'done', updatedAt: '2026-11-27T11:00:00Z', subtasks: [sub('done')], proposal: { n: 2 } });
+  writeTask('cccccccccccc', { goal: 'Fini', status: 'done', updatedAt: '2026-11-27T12:00:00Z', subtasks: [sub('done')] });
+  const before = fs.readFileSync(path.join(tasksDir, 'aaaaaaaaaaaa.json'), 'utf8');
+  const withTasks = execFileSync(process.execPath, [cli, '--help'], { env: { ...env, LC_ALL: 'fr_FR.UTF-8' }, encoding: 'utf8' });
+  assert.match(withTasks, /Tâches en cours\n\s+vague à relire\s+Relire\s+1 sur 1 terminées · ~[\\/]apps\n\s+arrêtée\s+Node 26\s+1 sur 2 terminées/);
+  assert.ok(!withTasks.includes('Fini'), 'finished tasks are not listed');
+  assert.equal(fs.readFileSync(path.join(tasksDir, 'aaaaaaaaaaaa.json'), 'utf8'), before, 'the files stay as they are');
 });
 
 // ---------- notifications ----------
