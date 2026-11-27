@@ -1417,6 +1417,64 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForSelector('#tasks', { state: 'hidden' });
     for (const x of (await page.evaluate(() => window.aska.listTasks())).tasks) await page.evaluate((id) => window.aska.cleanupTask(id), x.id);
 
+    // ---------- next waves: by themselves within the approved rights, reviewed otherwise ----------
+    const newTask = async (goal) => {
+      await send('/tache');
+      await page.waitForSelector('#tasks:not([hidden])');
+      if (await page.isVisible('[data-action="new"]')) await page.click('[data-action="new"]');
+      await page.fill('.tk-goal', goal);
+      await page.fill('.tk-root', taskRoot);
+      await page.click('[data-action="propose"]');
+      await page.waitForSelector('.tk-plan-item', { timeout: 20000 });
+      await planItem(2).locator('.tk-check').uncheck(); // only "trad", read-only, in api
+      await page.check('.tk-auto input');
+    };
+    const waveCalls = () => calls().filter((c) => /<results>/.test(c.stdin || ''));
+    // Within the rights (same repository, read-only): wave 2 starts by itself, wave 3 is empty.
+    const wavesFrom = waveCalls().length;
+    await newTask('Relire les apps');
+    await page.click('[data-action="approve"]');
+    await page.waitForFunction(() => /Objectif atteint\./.test(document.querySelector('.tk-wave-note')?.textContent || ''), null, { timeout: 30000 });
+    assert.deepEqual(await page.locator('.tk-wave').allTextContents(), ['Vague 1', 'Vague 2']);
+    assert.deepEqual(await page.locator('.tk-sub').evaluateAll((rows) => rows.map((r) => r.dataset.status)), ['done', 'done']);
+    const asked = waveCalls().slice(wavesFrom);
+    assert.equal(asked.length, 2, 'asked after wave 1, then after wave 2');
+    assert.match(asked[0].stdin, /This would be wave 2 of 3[\s\S]*<results>\nResults of the task: 1 done[\s\S]*- 1\. api: done, branch aska\/relire-les-apps\/1/);
+    assert.ok(!asked[0].args.includes('--allowedTools') && asked[0].args.includes('plan'), 'the orchestrator only reads');
+    assert.match(asked[1].stdin, /This would be wave 3 of 3/);
+    const continued = calls().find((c) => /Relis le README encore/.test(c.stdin || ''));
+    assert.ok(continued && /[\\/]worktrees[\\/]\w+[\\/]2$/.test(continued.cwd), 'wave 2 in its own worktree');
+    assert.equal(gitIn(path.join(taskRoot, 'api'), 'rev-parse', 'aska/relire-les-apps/2^{commit}').stdout, gitIn(path.join(taskRoot, 'api'), 'rev-parse', 'aska/relire-les-apps/1^{commit}').stdout, 'continues from the branch of no. 1');
+    assert.equal(await page.locator('[data-action="wave"]').count(), 0, 'the goal is reached: no button for another wave');
+    assert.match(await page.locator('.tk-sub[data-n="2"] .tk-who').textContent(), /suite de la n°1/);
+    await shot('23-tasks-waves-light');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#tasks', { state: 'hidden' });
+    for (const x of (await page.evaluate(() => window.aska.listTasks())).tasks) await page.evaluate((id) => window.aska.cleanupTask(id), x.id);
+    // New rights (another repository, Edit, a command): reviewed, even with "Continue automatically".
+    const newFrom = calls().length;
+    await newTask('Tester les apps [newrights]');
+    await page.click('[data-action="approve"]');
+    await page.waitForSelector('.tk-proposal .tk-plan-item', { timeout: 30000 });
+    assert.equal(await page.locator('.tk-sub').count(), 1, 'nothing started');
+    assert.deepEqual(await page.locator('.tk-proposal .tk-badge').allTextContents(), ['droits nouveaux', 'écrit', 'lance']);
+    assert.match(await page.textContent('.tk-new-rights'), /un dépôt que la tâche n’avait pas ; le mode « Édition », plus large que ceux accordés ; des commandes non accordées : npm test/);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(150);
+    await shot('23-tasks-wave-review-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    assert.ok(!calls().slice(newFrom).some((c) => /Lance npm test/.test(c.stdin || '')), 'not run before the review');
+    await page.click('[data-action="approve-wave"]');
+    await page.waitForFunction(() => document.querySelectorAll('.tk-sub[data-status="done"]').length === 2, null, { timeout: 30000 });
+    const testerCall = calls().slice(newFrom).find((c) => /Lance npm test/.test(c.stdin || ''));
+    assert.equal(testerCall.args[testerCall.args.indexOf('--allowedTools') + 1], 'Bash(npm test),Bash(npm test *)', 'granted once approved');
+    await page.waitForSelector('.tk-wave-note', { timeout: 30000 });
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#tasks', { state: 'hidden' });
+    for (const x of (await page.evaluate(() => window.aska.listTasks())).tasks) await page.evaluate((id) => window.aska.cleanupTask(id), x.id);
+
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
     const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));
