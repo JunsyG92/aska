@@ -122,7 +122,23 @@ process.stdin.on('end', async () => {
       j({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: w } } });
       await sleep(Number(process.env.FAKE_DELAY || 15));
     }
-    j({ type: 'assistant', message: { content: [{ type: 'text', text: words.join('') }, { type: 'tool_use', name: 'Read', input: { file_path: 'src/main/main.js' } }] } });
+    // A subtask of a task (asked for a report): commits if told to, then reports.
+    let report = '';
+    if (prompt.includes('"followUp"')) {
+      const commits = [];
+      if (prompt.includes('[commit]')) {
+        const fs = require('fs');
+        const { spawnSync } = require('child_process');
+        const g = (...a) => spawnSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+        fs.writeFileSync('.nvmrc', '26\n');
+        g('add', '.nvmrc');
+        g('commit', '-q', '-m', 'chore: node 26');
+        commits.push(g('log', '-1', '--format=%h %s').stdout.trim());
+      }
+      report = '\n\n' + JSON.stringify({ status: 'done', summary: 'Node 26 en place. Les tests passent.', commits, followUp: '' });
+      j({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: report } } });
+    }
+    j({ type: 'assistant', message: { content: [{ type: 'text', text: words.join('') + report }, { type: 'tool_use', name: 'Read', input: { file_path: 'src/main/main.js' } }] } });
     await sleep(Number(process.env.FAKE_DELAY || 15) * 20);
     j({ type: 'result', subtype: 'success', is_error: false, result: 'fin', permission_denials: prompt.includes('deny') ? [{ tool_name: 'Bash' }, { tool_name: 'Edit' }] : [] });
   } else {

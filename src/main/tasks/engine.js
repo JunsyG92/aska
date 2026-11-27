@@ -7,7 +7,11 @@ const path = require('path');
 const { addWorktree, removeWorktree, summary } = require('./worktree');
 const { t } = require('../../i18n');
 
-const DONE = new Set(['done', 'failed', 'cancelled']);
+const { parseReport, statusFromReport } = require('./report');
+
+const DONE = new Set(['done', 'check', 'failed', 'cancelled']);
+// Run again on request: a subtask that did not end well.
+const AGAIN = new Set(['failed', 'cancelled', 'check']);
 
 class TaskEngine {
   /**
@@ -56,7 +60,7 @@ class TaskEngine {
     const task = this.get(id);
     if (!task) return { error: t('tasks.unknown') };
     for (const s of task.subtasks) {
-      const again = numbers && numbers.includes(s.n) && (s.status === 'failed' || s.status === 'cancelled');
+      const again = numbers && numbers.includes(s.n) && AGAIN.has(s.status);
       if (s.status === 'pending' || again) {
         s.status = 'queued';
         delete s.error;
@@ -88,7 +92,7 @@ class TaskEngine {
         branch: `aska/${task.slug}/${s.n}`,
       });
       if (w.error) return this.finish(task, s, { ok: false, reason: 'worktree', error: w.error });
-      Object.assign(s, { worktree: w.dir, branch: w.branch, base: w.base });
+      Object.assign(s, { worktree: w.dir, branch: w.branch, base: w.base, baseRef: w.baseRef });
     }
     s.status = 'running';
     s.startedAt = new Date().toISOString();
@@ -109,10 +113,19 @@ class TaskEngine {
 
   finish(task, s, res) {
     this.running.delete(`${task.id}/${s.n}`);
-    s.status = res.ok ? 'done' : res.reason === 'cancel' ? 'cancelled' : 'failed';
     s.durationMs = res.durationMs || 0;
     if (typeof res.answer === 'string') s.answer = res.answer;
-    if (!res.ok && res.reason !== 'cancel') s.error = res.error || t('tasks.failed', { reason: res.reason || '?' });
+    delete s.report;
+    if (res.ok) {
+      // Its report decides: done, failed, or to check (missing, partial).
+      s.report = parseReport(res.answer);
+      s.status = statusFromReport(s.report);
+      if (s.status === 'failed') s.error = t('tasks.reportFailed');
+    } else {
+      s.status = res.reason === 'cancel' ? 'cancelled' : 'failed';
+      if (res.reason !== 'cancel') s.error = res.error || t('tasks.failed', { reason: res.reason || '?' });
+    }
+    if (!s.report) delete s.report;
     if (s.worktree) s.summary = summary(this.gitBin, { dir: s.worktree, base: s.base });
     if (task.subtasks.every((x) => DONE.has(x.status) || x.status === 'pending')) task.status = 'done';
     this.changed(task);
