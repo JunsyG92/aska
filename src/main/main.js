@@ -357,7 +357,8 @@ function createWindow() {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // The position chosen by moving the window is kept.
   win.on('moved', () => {
-    if (wide && !mini) return; // the large view is centered: the anchor stays the compact one
+    // The large view is centered, and an animation passes through other places: the anchor stays the compact one.
+    if ((wide && !mini) || anim) return;
     const b = win.getBounds();
     savedPos = { x: b.x, bottom: b.y + b.height };
     clearTimeout(saveTimer);
@@ -412,19 +413,73 @@ function wideBounds() {
 // that is being hidden can end the X connection (and Aska with it).
 const canMove = () => !!win && win.isVisible() && !hideTimer;
 
-/** Applies the large view (or leaves it) to the shown window. */
-function applyLayout() {
-  if (!canMove() || mini) return;
-  if (wide) {
-    const b = win.getBounds();
-    if (!compactBounds) compactBounds = b;
-    const target = wideBounds();
-    if (b.x !== target.x || b.y !== target.y || b.width !== target.width || b.height !== target.height) setBoundsNow(target);
-  } else if (compactBounds) {
-    // Back where it was: the panel then sets its own height (bottom edge fixed).
-    setBoundsNow(compactBounds);
-    compactBounds = null;
+// ----- window animation between the normal size and the large view -----
+// The window itself moves and grows frame by frame (the panel fills it meanwhile),
+// so the edges, the shadow and the content stay in place: no jump.
+const ANIM_MS = 260;
+let anim = null; // { timer, resolve }
+
+const sameBounds = (a, b) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+// Fast at first, gentle at the end: the window "settles" in place.
+const easeOut = (t) => 1 - Math.pow(1 - t, 4);
+
+function stopAnim() {
+  if (!anim) return;
+  clearInterval(anim.timer);
+  if (win && !win.isDestroyed()) win.setResizable(false);
+  const done = anim.resolve;
+  anim = null;
+  done();
+}
+
+/** Animates the window to `to`; resolves at the end (or when interrupted). */
+function animateBounds(to, ms = ANIM_MS) {
+  stopAnim();
+  const from = win.getBounds();
+  if (sameBounds(from, to) || ms <= 0) {
+    if (!sameBounds(from, to)) setBoundsNow(to);
+    return Promise.resolve();
   }
+  return new Promise((resolve) => {
+    const start = Date.now();
+    win.setResizable(true);
+    const step = () => {
+      if (!canMove()) return stopAnim(); // hidden meanwhile: the next show places it
+      const k = easeOut(Math.min(1, (Date.now() - start) / ms));
+      const at = (a, b) => Math.round(a + (b - a) * k);
+      win.setBounds({ x: at(from.x, to.x), y: at(from.y, to.y), width: at(from.width, to.width), height: at(from.height, to.height) });
+      if (k >= 1) stopAnim();
+    };
+    anim = { timer: setInterval(step, 1000 / 60), resolve };
+    step();
+  });
+}
+
+/**
+ * Applies the large view (or leaves it) to the shown window. `compact` is the
+ * size the panel will have at the normal size (measured by the interface), so
+ * that the window lands right on it.
+ */
+function applyLayout({ compact = null, animate = false } = {}) {
+  if (!canMove() || mini) {
+    stopAnim();
+    return Promise.resolve();
+  }
+  const ms = animate ? ANIM_MS : 0;
+  if (wide) {
+    if (!compactBounds) compactBounds = win.getBounds();
+    return animateBounds(wideBounds(), ms);
+  }
+  if (!compactBounds) return Promise.resolve();
+  // Back where it was, bottom edge fixed: the input does not move from where it was.
+  const back = compactBounds;
+  compactBounds = null;
+  const wa = screen.getDisplayMatching(back).workArea;
+  const width = compact ? Math.round(Math.min(Math.max(compact.w, 120), wa.width - 16)) : back.width;
+  const height = compact ? Math.round(Math.min(Math.max(compact.h, 40), wa.height - 16)) : back.height;
+  const bottom = back.y + back.height;
+  const target = { x: Math.min(Math.max(back.x, wa.x), wa.x + wa.width - width), y: Math.max(wa.y, bottom - height), width, height };
+  return animateBounds(target, ms);
 }
 
 function cancelBlurHide() {
@@ -476,6 +531,7 @@ function showWindow() {
 let hideTimer = null;
 function hideWindow() {
   cancelBlurHide();
+  stopAnim();
   if (!win || !win.isVisible() || hideTimer) return;
   win.webContents.send('aska:will-hide');
   hideTimer = setTimeout(() => {
@@ -1073,10 +1129,16 @@ function registerIpc() {
     if (!mini && win && win.isVisible()) setUnread(0);
     if (!mini) applyLayout();
   });
-  handle('aska:set-wide', (v) => {
-    if (typeof v !== 'boolean' || v === wide) return;
-    wide = v;
-    applyLayout();
+  // Resolves once the window has its new size: the interface then changes its layout.
+  handle('aska:set-wide', async (req) => {
+    if (!req || typeof req !== 'object' || typeof req.wide !== 'boolean') return false;
+    const c = req.compact;
+    const compact = c && Number.isFinite(c.w) && Number.isFinite(c.h) ? { w: c.w, h: c.h } : null;
+    if (req.wide !== wide) {
+      wide = req.wide;
+      await applyLayout({ compact, animate: req.animate === true });
+    }
+    return true;
   });
   // Files or a link dragged over the window: it must not hide in the meantime.
   handle('aska:drag', (state) => {
@@ -1095,8 +1157,9 @@ function registerIpc() {
   // The window fits the panel: no transparent area blocks clicks around it.
   handle('aska:resize', (size) => {
     if (!size || !Number.isFinite(size.w) || !Number.isFinite(size.h)) return;
-    // In the large view the window has a fixed size: the panel fills it.
-    if (wide && !mini) return;
+    // In the large view the window has a fixed size: the panel fills it. During an
+    // animation the window leads, and the panel follows it.
+    if ((wide && !mini) || anim) return;
     const b = win.getBounds();
     const wa = screen.getDisplayMatching(b).workArea;
     const w = Math.round(Math.min(Math.max(size.w, 120), wa.width - 16));
