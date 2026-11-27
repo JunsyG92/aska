@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { writePrivate, ensurePrivateDir, readOwnedJson } = require('./security');
 const { sanitizeSources } = require('./sources');
+const { sanitizeHeard } = require('./listen');
 
 const ID_RE = /^[a-f0-9]{16}$/;
 const MAX_ANSWER = 200 * 1024;
@@ -94,6 +95,7 @@ class ConversationStore {
     }
     if (!c.sessions || typeof c.sessions !== 'object') c.sessions = {};
     c.sources = sanitizeSources(c.sources); // documents and links attached to the conversation
+    c.heard = sanitizeHeard(c.heard); // what was heard while listening
     return c;
   }
 

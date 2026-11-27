@@ -6,6 +6,7 @@ const { MODE_ORDER, BUILTIN } = require('./agents');
 const { COMMANDS } = require('../renderer/commands');
 const { t, setLanguage, resolveLanguage, LANGUAGES, setKeyLabels } = require('../i18n');
 const { resolveKeybindings, keyLabels } = require('./keys');
+const { resolveListen } = require('./listen');
 
 function paths(env = process.env, home = os.homedir(), platform = process.platform) {
   const abs = (v, fallback) => (v && path.isAbsolute(v) ? v : fallback);
@@ -31,6 +32,7 @@ function paths(env = process.env, home = os.homedir(), platform = process.platfo
     run: path.join(stateDir, 'run.json'),
     audit: path.join(stateDir, 'history.jsonl'),
     conversations: path.join(stateDir, 'conversations'),
+    listenDir: path.join(stateDir, 'listen'), // utterances being transcribed, removed right after
     workspace: path.join(dataDir, 'workspace'),
   };
 }
@@ -53,6 +55,7 @@ const DEFAULTS = {
   envPassthrough: [],
   language: 'auto', // auto (system language) | en | fr
   keybindings: {}, // shortcuts inside the window, by action (see keys.js)
+  listen: resolveListen(undefined).listen, // listening to the microphone (see listen.js)
   commands: {}, // "/" commands of the user: name -> { prompt, description, agent, mode, model }
   agents: {},
 };
@@ -173,6 +176,9 @@ function loadConfig(file, { systemLangs = null } = {}) {
     cfg.envPassthrough = u.envPassthrough.filter((s) => typeof s === 'string' && /^[A-Za-z_][A-Za-z0-9_]*\*?$/.test(s));
   }
   if (u.agents && typeof u.agents === 'object' && !Array.isArray(u.agents)) cfg.agents = u.agents;
+  const heard = resolveListen(u.listen);
+  cfg.listen = heard.listen;
+  warnings.push(...heard.warnings);
   const cmds = resolveCommands(u.commands, [...new Set([...Object.keys(BUILTIN), ...Object.keys(cfg.agents)])]);
   cfg.commands = cmds.commands;
   warnings.push(...cmds.warnings);

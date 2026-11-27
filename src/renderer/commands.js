@@ -18,6 +18,7 @@
     { name: 'cd', arg: 'path' },
     { name: 'add', arg: 'source' },
     { name: 'sources' },
+    { name: 'listen' },
     { name: 'retry' },
     { name: 'copy' },
     { name: 'history' },

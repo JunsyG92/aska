@@ -1000,6 +1000,37 @@ kbd {
 }
 .src-item .src-del:hover { background: var(--code-bg); color: var(--err); }
 
+/* ---------- listening ---------- */
+
+#listen-btn[aria-pressed='true'] { color: var(--err); background: color-mix(in oklab, var(--err) 14%, transparent); }
+.heard {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 4px 14px 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--code-bg);
+}
+.heard-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--err);
+  opacity: 0.55;
+  transform: scale(calc(1 + var(--level, 0) * 1.2));
+  transition: transform 0.1s linear, opacity 0.2s;
+}
+.heard.speaking .heard-dot { opacity: 1; }
+.heard-lines { min-width: 0; flex: 1; }
+.heard-lines p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; user-select: text; }
+.heard-lines p:last-child { color: var(--text); }
+.heard-lines p.ask { font-weight: 500; }
+.heard-lines p.wait { color: var(--faint); }
+.panel.mini .heard { display: none; }
+
 /* ---------- "/" commands ---------- */
 
 .cmd-menu {
