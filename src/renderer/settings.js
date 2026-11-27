@@ -33,6 +33,8 @@
   const RANK = ['read', 'edit', 'auto'];
   const SOUL_WARN = 4000;
   const SOUL_MAX = 8000;
+  const MEMORY_SENT = 6000; // newest entries sent with each request
+  const MEMORY_MAX = 50000;
 
   const t = (k, p) => opts.t(k, p);
 
@@ -121,6 +123,7 @@
           allow: (b.allow || []).join(', '),
           remote: b.remote || 'ask',
           soul: b.soul,
+          memory: b.memory || '',
           avatar: { variant: b.avatar.variant || 0, shape: b.avatar.shape || 'auto', emblem: b.avatar.emblem || 'auto' },
         };
   let creating = null; // { label, describe, busy, proposal, error } while a new bot is being made
@@ -493,6 +496,29 @@
     const soulBox = el('div', 'set-stack');
     soulBox.append(soul, count);
 
+    // Memory (MEMORY.md): one entry per line, the newest at the end; only the
+    // newest 6,000 characters go with each request. "/remember" adds to it.
+    const memory = el('textarea', 'set-textarea');
+    memory.rows = 6;
+    memory.spellcheck = false;
+    memory.value = d.memory;
+    memory.placeholder = t('settings.bots.memoryPlaceholder');
+    memory.dataset.focusKey = 'bot-memory';
+    const memCount = el('div', 'set-count');
+    const syncMemCount = () => {
+      const n = memory.value.trim().length;
+      memCount.textContent = t('settings.bots.memoryCount', { count: n.toLocaleString(), max: MEMORY_SENT.toLocaleString() }) + (n > MEMORY_SENT && n <= MEMORY_MAX ? ' · ' + t('settings.bots.memoryLong') : '');
+      memCount.dataset.kind = n > MEMORY_MAX ? 'err' : n > MEMORY_SENT ? 'warn' : '';
+    };
+    memory.addEventListener('input', () => {
+      d.memory = memory.value;
+      armedClose = false;
+      syncMemCount();
+    });
+    syncMemCount();
+    const memoryBox = el('div', 'set-stack');
+    memoryBox.append(memory, memCount);
+
     // What stays in the files: the agent, the ceiling, the folder.
     const filesBox = el('div', 'set-inline wrap');
     filesBox.append(
@@ -515,6 +541,7 @@
         field(t('settings.bots.allow'), allowInput, { hint: allowHint, error: errs.allow }),
         ...(d.maxMode === 'read' ? [] : [field(t('settings.bots.remote'), remoteSelect, { hint: t(d.remote === 'auto' ? 'settings.bots.remoteAutoHint' : 'settings.bots.remoteAskHint'), error: errs.remote })]),
         wide(field(t('settings.bots.soul'), soulBox, { hint: t('settings.bots.soulHint'), error: errs.soul })),
+        wide(field(t('settings.bots.memory'), memoryBox, { hint: t('settings.bots.memoryHint'), error: errs.memory })),
         field(t('settings.bots.filesHint'), filesBox),
         field('', removeButton)
       ),

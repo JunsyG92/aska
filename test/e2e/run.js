@@ -1240,6 +1240,15 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await send('Où suis-je ?');
     await settled('done');
     assert.ok(samePath(calls().at(-1).cwd, fs.realpathSync(botProject)), `working folder: ${calls().at(-1).cwd}`);
+    // /remember: a dated entry in the bot's MEMORY.md, written by Aska; the next request carries it.
+    await send('/retiens Réponds en une phrase');
+    await page.waitForFunction(() => /Projet retiendra ça/.test(document.getElementById('status').textContent));
+    assert.match(fs.readFileSync(path.join(projBot, 'MEMORY.md'), 'utf8'), /^- \d{4}-\d{2}-\d{2} : Réponds en une phrase\n$/);
+    await send('Et maintenant ?');
+    await settled('done');
+    const remembered = calls().at(-1);
+    assert.match(remembered.args[remembered.args.indexOf('--append-system-prompt') + 1], /remember[\s\S]*Réponds en une phrase/);
+    assert.ok(!remembered.args.includes('--resume'), 'the bot changed: its session starts again');
 
     // ---------- tasks (engine, through the API until the view comes) ----------
     const gitIn = (dir, ...args) => require('child_process').spawnSync('git', args, { cwd: dir, encoding: 'utf8' });

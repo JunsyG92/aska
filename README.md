@@ -218,6 +218,7 @@ Type `/` in the field: a list of commands opens above it (`↑` `↓` to choose,
 | `/retry` | send the last request of the conversation again |
 | `/copy`, `/history`, `/settings`, `/pin`, `/mini` | same as their shortcuts |
 | `/tasks` (or `/tache`) | open the [tasks](#tasks) |
+| `/remember <text>` (or `/retiens`) | the [bot](#bots) of the tab remembers it: a dated line added to its `MEMORY.md` |
 
 Your own commands go in `"commands"` in the [configuration](#configuration): a name and the prompt it sends, with `{input}` replaced by what you type after the name (`/trad bonjour` sends `Translate into English: bonjour`; without `{input}`, that text is added after a blank line). They show in the list with their `description`, or the first line of the prompt. An object can also pick the `agent` and the permission `mode` (switched in the window, as if you did it) and a `model` for that request only (`null`: the CLI's default). Names are lowercase letters, digits and `-`; a name taken by Aska's commands or by an agent is refused, and the window and `aska --help` say why.
 
@@ -274,6 +275,7 @@ Each bot is a folder in `~/.aska/bots/<id>/` (`%USERPROFILE%\.aska\bots\<id>\` o
 
 - **Claude** gets the personality as a system prompt (`--append-system-prompt`). The other agents get it as a `<bot>` block before the conversation. A custom agent can name its own option with `"systemFlag"`.
 - `SOUL.md` is sent with every request: a warning over 4,000 characters, the bot is refused over 8,000. `MEMORY.md` is cut to its newest entries (6,000 characters), with a warning; it is never cut silently.
+- **Memory**: `/remember <text>` (or `/retiens`) adds `- 2026-11-27 : text` at the end of the bot's `MEMORY.md`. Aska writes it, never the agent (`~/.aska` is out of reach of every write mode). One line, 500 characters at most. The settings show and edit the whole memory; only its newest 6,000 characters are sent. The next request carries it, and the CLI session starts again with the history, since the bot's text changed.
 - A Claude session is only resumed with the same bot and the same text: after editing `SOUL.md` or `MEMORY.md`, the conversation goes on with its history sent again.
 - Bots are read at startup and by `aska --reload`. Like the configuration, a file that belongs to another user or that others can write is refused; problems show in the window and in `aska --help`, which also lists the bots.
 - `~/.aska` is a protected folder: no agent can write there, so a bot cannot change its own `maxMode`.

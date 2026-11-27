@@ -1084,6 +1084,16 @@
       case 'tasks':
         done();
         return showTasks(true);
+      case 'remember': {
+        // Into the memory of the tab's bot: Aska writes it, the agent never does.
+        const b = bot();
+        if (!b) return setStatus(t('commands.rememberNoBot'), 'err');
+        const res = await api.remember(b.id, arg);
+        if (res.error) return setStatus(res.error, 'err');
+        done();
+        applyState(res.state);
+        return setStatus(t('commands.remembered', { bot: b.label }), 'ok');
+      }
       case 'pin':
         done();
         return setPinned(!pinned, true);

@@ -12,7 +12,7 @@ const { discoverModels } = require('./models');
 const src = require('./sources');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
-const { isRemote, loadBots, saveBot, createBot, deleteBot, draftPrompt, parseDraft, DESCRIPTION_MAX, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
+const { isRemote, addMemoryEntry, loadBots, saveBot, createBot, deleteBot, draftPrompt, parseDraft, DESCRIPTION_MAX, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
@@ -1274,6 +1274,17 @@ function registerIpc() {
     reloadBots();
     return { bots: botsList(), state: publicState() };
   });
+  // /remember: a dated entry at the end of the bot's MEMORY.md, written by Aska
+  // (never by the agent). The next request gets it; its session starts again
+  // with the history, since the bot's text changed.
+  handle('aska:bot-remember', (req) => {
+    const id = req && typeof req.botId === 'string' ? req.botId : null;
+    if (!id || !Object.hasOwn(bots, id)) return { error: t(id && Object.hasOwn(offBots, id) ? 'bots.memory.off' : 'bots.memory.noBot') };
+    const r = addMemoryEntry(bots[id].dir, req.text);
+    if (r.error) return { error: r.error };
+    reloadBots();
+    return { entry: r.entry, bot: bots[id] ? bots[id].label : id, state: publicState() };
+  });
   // New bot: for the default agent (else the first one installed), read-only.
   // With a proposal (drafted below, then reviewed by the user): its fields too,
   // checked by saveBot; if one is refused, the new folder is removed.
@@ -1382,6 +1393,7 @@ function botsList() {
       avatar: b.avatar,
       image: b.image,
       soul: b.soul,
+      memory: b.memoryAll || '',
       cwd: b.cwd ? tilde(b.cwd) : null,
       enabled: true,
     };

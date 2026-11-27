@@ -21,6 +21,7 @@
     { name: 'retry' },
     { name: 'copy' },
     { name: 'history' },
+    { name: 'remember', aliases: ['retiens'], arg: 'text', required: true },
     { name: 'tasks', aliases: ['tache'] },
     { name: 'settings' },
     { name: 'pin' },

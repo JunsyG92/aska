@@ -866,3 +866,29 @@ test('model of a request: the one of the bot on its own agent, else the one pick
   assert.equal(chooseModel(ollama, { picked: 'qwen3', fallback }), 'qwen3');
   assert.equal(chooseModel(ollama, { bot: { agent: 'ollama', model: 'mistral' }, fallback }), 'mistral');
 });
+
+test('memory: /remember adds a dated entry at the end; the settings edit the whole file', () => {
+  const { addMemoryEntry, saveBot: save, ENTRY_MAX } = require('../src/main/bots');
+  const root = tmp();
+  const dir = makeBot(root, 'trad');
+  const now = new Date(2026, 10, 27, 15, 30);
+  // No MEMORY.md yet: created, private.
+  assert.deepEqual(addMemoryEntry(dir, '  Je préfère\n des réponses courtes  ', now), { entry: '- 2026-11-27 : Je préfère des réponses courtes' });
+  assert.deepEqual(addMemoryEntry(dir, 'Tutoie-moi', new Date(2026, 10, 28)), { entry: '- 2026-11-28 : Tutoie-moi' });
+  const file = path.join(dir, 'MEMORY.md');
+  assert.equal(fs.readFileSync(file, 'utf8'), '- 2026-11-27 : Je préfère des réponses courtes\n- 2026-11-28 : Tutoie-moi\n');
+  if (POSIX) assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  // Read back with the bot, newest last, sent with its personality.
+  const bot = load(root).bots.trad;
+  assert.match(bot.memory, /courtes\n- 2026-11-28 : Tutoie-moi$/);
+  assert.equal(bot.memoryAll, bot.memory);
+  // Refused: empty, too long.
+  assert.match(addMemoryEntry(dir, '   ').error, /\/remember <text>/);
+  assert.match(addMemoryEntry(dir, 'x'.repeat(ENTRY_MAX + 1)).error, /500 characters at most/);
+  // The settings: the whole file, too big refused, emptied.
+  assert.deepEqual(save(dir, { memory: '- 2026-11-27 : Réponses courtes' }, { agents: AGENTS }), {});
+  assert.equal(fs.readFileSync(file, 'utf8'), '- 2026-11-27 : Réponses courtes\n');
+  assert.match(save(dir, { memory: 'x'.repeat(50001) }, { agents: AGENTS }).errors.memory, /Memory too long/);
+  assert.deepEqual(save(dir, { memory: '' }, { agents: AGENTS }), {});
+  assert.equal(load(root).bots.trad.memory, '');
+});

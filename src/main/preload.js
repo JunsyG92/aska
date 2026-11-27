@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('aska', {
   draftBot: (description) => ipcRenderer.invoke('aska:bot-draft', description),
   cancelBotDraft: () => ipcRenderer.invoke('aska:bot-draft-cancel'),
   deleteBot: (id) => ipcRenderer.invoke('aska:bot-delete', id),
+  remember: (botId, text) => ipcRenderer.invoke('aska:bot-remember', { botId, text }),
   pickBotAvatar: (botId) => ipcRenderer.invoke('aska:bot-avatar-pick', botId),
   clearBotAvatar: (botId) => ipcRenderer.invoke('aska:bot-avatar-clear', botId),
   listTasks: () => ipcRenderer.invoke('aska:tasks-list'),
