@@ -88,6 +88,8 @@ function sanitizeSources(list) {
     if (s.kind === 'url' && typeof s.url === 'string' && !normalizeUrl(s.url).error) item = { kind: 'url', url: normalizeUrl(s.url).url };
     else if (s.kind === 'file' && typeof s.path === 'string' && path.isAbsolute(s.path) && !s.path.includes('\0')) item = { kind: 'file', path: s.path };
     if (!item || seen.has(keyOf(item))) continue;
+    // Already sent with a message: no longer shown above the field, only in the thread.
+    if (s.sent === true) item.sent = true;
     seen.add(keyOf(item));
     out.push(item);
     if (out.length >= MAX_SOURCES) break;

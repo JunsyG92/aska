@@ -279,7 +279,7 @@ requests at most, 8 tabs).
 
 A conversation can carry **documents and links**: a brief, meeting notes, a spec, a page of your wiki. Aska reads them itself and sends their text to the agent before your request, so the answers take them into account. It works with every agent and in read-only mode, since the agent needs no tool to get them.
 
-- **Drag and drop** files from your file manager, or a link from your browser, onto the window. The documents show as chips above the field: click one to see what was read, × to remove it.
+- **Drag and drop** files from your file manager, or a link from your browser, onto the window. The documents show as chips above the field until you send your message (× removes one); they then show under that message in the thread. They stay in the conversation for the next requests: `Ctrl+D` lists them, and removes one.
 - `Ctrl+D` or the 📎 button opens the list: paste a link or a file path and press `Enter`, or press `Enter` on the empty field to choose files. `Del` removes the selected one. From the field, `/add ~/notes/brief.md` or `/add https://…` does the same.
 - **Files**: any text file (Markdown, code, CSV, JSON, HTML…). PDFs are read through `pdftotext` when it is installed (`poppler-utils` on Linux, `brew install poppler` on macOS). For any other format, the agent only gets the path, to read it with its own tools if it can.
 - **Links**: `http(s)` pages, fetched by Aska without cookies, as text (HTML is reduced to its text). A page is fetched again after ten minutes, or with the ↻ button.

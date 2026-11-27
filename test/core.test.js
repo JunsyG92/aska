@@ -1757,3 +1757,12 @@ test('selection: shortcut in the config, off with false', () => {
   assert.deepEqual(settings.mergeConfig({}, { selectionShortcut: 'Control+Alt+Shift+Space' }), {});
   assert.deepEqual(settings.mergeConfig({}, { selectionShortcut: false }), { selectionShortcut: false });
 });
+
+test('sources: a document already sent with a message stays marked as sent', () => {
+  const src = require('../src/main/sources');
+  const abs = path.resolve('/tmp/brief.md');
+  assert.deepEqual(src.sanitizeSources([{ kind: 'file', path: abs, sent: true }, { kind: 'url', url: 'https://example.com/a', sent: 'yes' }]), [
+    { kind: 'file', path: abs, sent: true },
+    { kind: 'url', url: 'https://example.com/a' },
+  ]);
+});
