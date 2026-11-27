@@ -553,6 +553,11 @@ test('task engine: a next wave, one subtask continuing another on its branch; to
   engine.start(task.id);
   assert.ok(task.startedAt);
   const s1 = task.subtasks[0];
+  if (POSIX) {
+    // Private: the task's worktrees folder and its file.
+    assert.equal(fs.statSync(path.dirname(s1.worktree)).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(path.join(root, 'state', `${task.id}.json`)).mode & 0o777, 0o600);
+  }
   fs.writeFileSync(path.join(s1.worktree, '.nvmrc'), '26\n');
   assert.ok(git(GIT, ['add', '.'], s1.worktree).ok);
   assert.ok(git(GIT, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'chore: node 26'], s1.worktree).ok);

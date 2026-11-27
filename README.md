@@ -284,6 +284,14 @@ A task splits one goal between several bots, each in one git repository of a fol
 5. **Next waves**: once every subtask is finished, the orchestrator may propose a next wave from their reports: fix a failure, finish what is left, often by continuing a subtask on its branch. "Propose wave n" asks for it; with **Continue automatically** (checked when approving the plan), Aska asks by itself, and a wave that stays within the rights already approved (same repositories, no wider mode, no other command) starts without asking. Any new right is shown and waits for your approval. At most 3 waves, 30 subtasks and 2 hours per task; cancelling everything stops the automatic waves.
 6. **Push and open the pull request**: for a finished subtask with commits, Aska itself (not the agent) runs `git push -u origin <branch>`, then `gh pr create` with the title and body from the report, after you confirm. No shell, never a forced push, never a merge; both commands are in the audit log. It needs an `origin` remote and the [GitHub CLI](https://cli.github.com) signed in (`gh auth login`); without `gh`, the branch is pushed and the window says so.
 
+Safeguards, in short:
+
+- Nothing runs before you approve the plan, and approving grants only what is shown. You can lower the rights, never raise them. A next wave with any new right comes back to you.
+- The orchestrator only reads. Each subtask works in its own worktree, with only its instruction; your working copy is never touched. The results it reads back (reports, files) are treated as data, not as instructions.
+- Commands are the bots' exact prefixes, under the same rules as in the chat. Forced pushes, merges, `gh api`, shells and deletions are always refused. Pushing and opening pull requests is done by Aska, after you confirm.
+- At most 4 requests at once (tabs and subtasks together), 3 waves, 30 subtasks and 2 hours per task. The tasks' files are private (`600`), like their worktrees' folder (`700`).
+- The Tasks module is only loaded when the view opens: Aska starts and uses as much memory as before. `aska --help` lists the unfinished tasks.
+
 ## Settings
 
 `Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in three tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcuts (show / hide, ask about the selection), the shortcuts inside the window (press the keys to record one), and the fixed keys. **Bots**: create, edit, turn off and delete the [bots](#bots). **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.

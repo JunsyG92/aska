@@ -339,6 +339,12 @@ module.exports = {
     install: 'installer : {hint}',
     seeCursor: 'voir https://cursor.com/cli',
     bots: 'Bots',
+    openTasks: {
+      title: 'Tâches en cours',
+      facts: '{done} sur {total} terminées · {root}',
+      status: { running: 'en cours', waiting: 'vague à relire', ready: 'prête', stopped: 'arrêtée' },
+    },
+    tasksFolder: 'Tâches',
     files: 'Fichiers',
     config: 'Configuration',
     botsFolder: 'Bots',

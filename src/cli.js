@@ -55,6 +55,36 @@ function sandboxProblem() {
   return t('cli.sandbox');
 }
 
+/**
+ * The tasks not finished yet (Tasks view), most recent first, read without
+ * changing anything: a task "running" while Aska is not is shown as stopped.
+ * status: running | waiting (a wave to review) | ready | stopped.
+ */
+function openTasks(dir, running, max = 5) {
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((n) => /^[a-f0-9]{12}\.json$/.test(n));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const n of names) {
+    const task = readOwnedJson(path.join(dir, n)).data;
+    if (!task || typeof task.goal !== 'string' || !Array.isArray(task.subtasks)) continue;
+    const status = task.proposal ? 'waiting' : task.status === 'running' ? (running ? 'running' : 'stopped') : task.status;
+    if (!['running', 'waiting', 'ready', 'stopped'].includes(status)) continue;
+    out.push({
+      status,
+      goal: task.goal.replace(/\s+/g, ' ').slice(0, 60),
+      done: task.subtasks.filter((s) => s.status === 'done').length,
+      total: task.subtasks.length,
+      root: String(task.root || ''),
+      updatedAt: String(task.updatedAt || ''),
+    });
+  }
+  return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, max);
+}
+
 function instanceLine(s, instance) {
   if (!instance) return t('cli.notRunning');
   if (instance.build && instance.build !== buildId()) return s.red(t('cli.staleInstance', { pid: instance.pid }));
@@ -153,11 +183,21 @@ function helpText(stream = process.stdout, env = process.env) {
     lines.push('', s.bold(t('cli.bots')));
     for (const x of bots) lines.push(row('@' + x.id, `${x.label}  ${s.dim([x.agent, MODES[x.mode].label, x.model].filter(Boolean).join(' · '))}`));
   }
+  // Tasks not finished yet (read only: the files stay as they are).
+  const open = openTasks(P.tasks, !!instance);
+  if (open.length) {
+    lines.push('', s.bold(t('cli.openTasks.title')));
+    for (const x of open) {
+      const facts = t('cli.openTasks.facts', { done: x.done, total: x.total, root: x.root.replace(os.homedir(), '~') });
+      lines.push(`  ${s.bold(t(`cli.openTasks.status.${x.status}`).padEnd(14))} ${x.goal}  ${s.dim(facts)}`);
+    }
+  }
   lines.push(
     '',
     s.bold(t('cli.files')),
     row(t('cli.config'), P.config),
     row(t('cli.botsFolder'), P.bots),
+    row(t('cli.tasksFolder'), P.tasks),
     row(t('cli.conversations'), P.conversations),
     row(t('cli.audit'), P.audit),
   );
