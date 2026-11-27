@@ -210,17 +210,22 @@ function dedupe(findings) {
   return out.sort((a, b) => rank(b.level) - rank(a.level) || a.file.localeCompare(b.file) || (a.line || 0) - (b.line || 0));
 }
 
+const ESC_TEXT = { '\\': '\\\\', '|': '\\|', '<': '&lt;', '>': '&gt;' };
+const ESC_CODE = { '\\': String.fromCharCode(0x29f5), '|': '\\|', '<': String.fromCharCode(0x2039), '>': String.fromCharCode(0x203a) };
+
 /**
  * Makes text that comes from the PR safe in a comment: no mention (@someone)
  * outside code, no fake marker, no hidden character, no broken table.
  */
 function clean(text, max = 140, { inCode = false } = {}) {
   let s = String(text == null ? '' : text)
+    // Escaped rather than removed (a removal can rebuild "<!--"): HTML (no fake
+    // marker), table cells and backslashes. In a code span, nothing is unescaped:
+    // look-alike characters instead.
+    .replace(/[\\|<>]/g, (c) => (inCode ? ESC_CODE : ESC_TEXT)[c])
     .replace(/[\u202A-\u202E\u2066-\u2069\u200B-\u200D\u2060\uFEFF\u00AD]/g, (c) => `<U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}>`)
-    .replace(/<!--|-->/g, '')
     .replace(/[\r\n\t]+/g, ' ')
     .replace(/@/g, inCode ? '@' : '@\u200B')
-    .replace(/\|/g, '\\|')
     .trim();
   if (s.length > max) s = s.slice(0, max - 1) + '…';
   return s;
