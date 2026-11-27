@@ -16,6 +16,13 @@ const modeInfo = (id) => ({
 const MODES = { read: modeInfo('read'), edit: modeInfo('edit'), auto: modeInfo('auto') };
 const MODE_ORDER = ['read', 'edit', 'auto'];
 
+// Read-only shell commands allowed to Copilot. None of them can write or run
+// anything else: find (-delete, -exec), sed (-i), sort (-o), tree (-o), rg (--pre)
+// and, in read-only mode, git log/diff/show (--output=file) are left out.
+const COPILOT_READ_SHELL = ['ls', 'cat', 'head', 'tail', 'grep', 'wc', 'pwd', 'file', 'stat', 'git status'];
+const COPILOT_EDIT_SHELL = [...COPILOT_READ_SHELL, 'git log', 'git diff', 'git show'];
+const allowShell = (cmds) => cmds.flatMap((c) => ['--allow-tool', `shell(${c})`]);
+
 const BUILTIN = {
   claude: {
     label: 'Claude',
@@ -68,8 +75,12 @@ const BUILTIN = {
     output: 'text',
     base: ['-s'],
     modes: {
-      read: ['--deny-tool', 'shell', '--deny-tool', 'write'],
-      edit: ['--allow-tool', 'write', '--deny-tool', 'shell'],
+      // Copilot mostly reads files through the shell: denying the whole shell
+      // ("--deny-tool shell", which beats any allow) left it blind. A closed list of
+      // read commands is allowed; any other command stays refused, compound
+      // commands included.
+      read: [...allowShell(COPILOT_READ_SHELL), '--deny-tool', 'write'],
+      edit: ['--allow-tool', 'write', ...allowShell(COPILOT_EDIT_SHELL)],
       // Copilot has no sandbox: everything is allowed except the deny list.
       auto: [
         '--allow-all-tools',
@@ -102,7 +113,25 @@ const BUILTIN = {
     env: ['CURSOR_*'],
     install: 'curl https://cursor.com/install -fsS | bash',
   },
+  ollama: {
+    label: 'Ollama',
+    color: '#8e8a83',
+    bin: ['ollama'],
+    // Local models: Ollama only answers, with no tool and no file access. Only the
+    // read-only mode makes sense.
+    prompt: 'stdin',
+    output: 'ollama',
+    base: ['run'],
+    modes: { read: [] },
+    modelPositional: true, // "ollama run <model>"
+    requiresModel: true,
+    env: ['OLLAMA_*'],
+    install: 'https://ollama.com/download',
+  },
 };
+
+/** Does the agent let you pick its model? */
+const canPickModel = (agent) => !!(agent.modelFlag || agent.modelPositional);
 
 // Flags rejected in `extraArgs`: they disable the CLI's safeguards.
 const DANGEROUS_ARG = [
@@ -213,9 +242,11 @@ function buildInvocation(agent, mode, prompt, { model, resume, trusted } = {}) {
   if (model != null && !isModel(model)) throw new Error(t('errors.invalidModel'));
   if (resume != null && !SESSION_RE.test(resume)) throw new Error(t('errors.invalidSession'));
 
-  const argv = [...(agent.base || []), ...modeArgs];
-  if (trusted && agent.trustFlag) argv.push(agent.trustFlag);
   const chosen = model === undefined ? agent.model : model; // null = the CLI's default model
+  if (!chosen && agent.requiresModel) throw new Error(t('errors.modelRequired', { agent: agent.label }));
+  // Positional model ("ollama run <model>"): right after the base command.
+  const argv = [...(agent.base || []), ...(chosen && agent.modelPositional ? [chosen] : []), ...modeArgs];
+  if (trusted && agent.trustFlag) argv.push(agent.trustFlag);
   if (chosen && agent.modelFlag) argv.push(agent.modelFlag, chosen);
   if (resume && agent.resumeFlag) argv.push(agent.resumeFlag, resume);
   argv.push(...(agent.extraArgs || []));
@@ -260,4 +291,4 @@ function fitInvocation(build, excess, maxChars) {
   }
 }
 
-module.exports = { MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, fitInvocation, isDangerousArg, isModel };
+module.exports = { MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, fitInvocation, isDangerousArg, isModel, canPickModel };

@@ -106,6 +106,7 @@ function helpText(stream = process.stdout, env = process.env) {
     row(key.pickDir, t('cli.workingFolder')),
     row(key.sources, t('cli.sources')),
     row(key.toggleMini, t('cli.collapse')),
+    row(key.toggleWide, t('cli.wide')),
     row(key.togglePin, t('cli.pin')),
     row(t('cli.keys.copy'), t('cli.copyLast')),
     row(key.rerun, t('cli.rerun')),

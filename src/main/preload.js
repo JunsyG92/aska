@@ -1,6 +1,6 @@
 'use strict';
 // The only bridge between the UI (sandboxed, no Node) and the main process.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const on = (channel) => (cb) => {
   const fn = (_e, payload) => cb(payload);
@@ -25,6 +25,17 @@ contextBridge.exposeInMainWorld('aska', {
   openUrl: (url) => ipcRenderer.invoke('aska:open-url', url),
   resize: (size) => ipcRenderer.invoke('aska:resize', size),
   setMini: (v) => ipcRenderer.invoke('aska:set-mini', v),
+  setWide: (v) => ipcRenderer.invoke('aska:set-wide', v === true),
+  // Something dragged over the window: 'over', then 'drop' or 'leave'.
+  drag: (state) => ipcRenderer.invoke('aska:drag', String(state)),
+  // Path of a dropped file (the UI has no access to paths otherwise); '' if it has none.
+  pathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file) || '';
+    } catch {
+      return '';
+    }
+  },
   newConversation: () => ipcRenderer.invoke('aska:conv-new'),
   listConversations: () => ipcRenderer.invoke('aska:conv-list'),
   openConversation: (id) => ipcRenderer.invoke('aska:conv-open', id),
@@ -40,6 +51,7 @@ contextBridge.exposeInMainWorld('aska', {
   onRunEvent: on('aska:run-event'),
   onShown: on('aska:shown'),
   onWillHide: on('aska:will-hide'),
+  onFading: on('aska:fading'),
   onNewConversation: on('aska:new-conversation'),
   onOpenSettings: on('aska:open-settings'),
   onSelection: on('aska:selection'),

@@ -132,6 +132,24 @@ function cliMessage(text) {
   return line ? line.replace(/^error:\s*/i, '').slice(0, 200) : null;
 }
 
+/**
+ * "ollama list": a table whose first column is the model name.
+ *   NAME               ID              SIZE      MODIFIED
+ *   llama3.2:latest    a80c4f17acd5    2.0 GB    3 weeks ago
+ */
+function parseOllamaList(text) {
+  const out = [];
+  for (const raw of clean(text).split('\n')) {
+    // A real table row: the name, then the id (12 hexadecimal characters).
+    const cols = raw.trim().split(/\s+/);
+    const name = cols[0];
+    if (cols.length < 3 || !/^[0-9a-f]{12}$/.test(cols[1]) || !isModel(name) || out.some((o) => o.id === name)) continue;
+    const size = (raw.match(/\b(\d+(?:\.\d+)?\s?[KMGT]B)\b/) || [])[1];
+    out.push({ id: name, label: size ? `${name.replace(/:latest$/, '')} · ${size}` : null });
+  }
+  return out;
+}
+
 // Where to find the models of each built-in agent.
 const SOURCES = {
   claude: { args: ['--help'], parse: (t) => parseHelpOption(t) },
@@ -141,6 +159,7 @@ const SOURCES = {
     file: (env) => path.join(env.CODEX_HOME && path.isAbsolute(env.CODEX_HOME) ? env.CODEX_HOME : path.join(os.homedir(), '.codex'), 'models_cache.json'),
     parse: parseCodexCache,
   },
+  ollama: { args: ['list'], parse: parseOllamaList },
 };
 
 /**
@@ -176,6 +195,7 @@ module.exports = {
   parseModelLines,
   parseHelpOption,
   parseCodexCache,
+  parseOllamaList,
   acpRequests,
   parseAcpSession,
   removeEmptyAcpSession,
