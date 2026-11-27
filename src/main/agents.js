@@ -153,6 +153,17 @@ const BUILTIN = {
 /** Does the agent let you pick its model? */
 const canPickModel = (agent) => !!(agent.modelFlag || agent.modelPositional);
 
+/**
+ * The model of a request: the bot's when it runs on its own agent (null: the
+ * CLI's default, unless the agent needs a model), else the one picked for the
+ * agent, else fallback() (Ollama: the first model installed).
+ */
+function chooseModel(agent, { bot = null, picked = null, fallback = () => null } = {}) {
+  const own = bot && bot.agent === agent.id ? bot.model : undefined;
+  if (own !== undefined && (own || !agent.requiresModel)) return own;
+  return picked || fallback();
+}
+
 // Flags rejected in `extraArgs`: they disable the CLI's safeguards.
 const DANGEROUS_ARG = [
   /^--dangerously/i,
@@ -323,4 +334,4 @@ function fitInvocation(build, excess, maxChars) {
   }
 }
 
-module.exports = { ALWAYS_DENIED, MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, fitInvocation, isDangerousArg, isModel, canPickModel };
+module.exports = { ALWAYS_DENIED, MODES, MODE_ORDER, BUILTIN, resolveAgents, buildInvocation, fitInvocation, isDangerousArg, isModel, canPickModel, chooseModel };
