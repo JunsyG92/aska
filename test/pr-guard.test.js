@@ -93,6 +93,11 @@ test('guards: the text of the PR does not break the comment', () => {
   const f = guard.analyze([file('src/main/a.js', 'fetch("`) | @owner")')]);
   const row = guard.renderGuard(f).body.split('\n').find((l) => l.includes('fetch'));
   assert.equal(row.split(/(?<!\\)\|/).length, 6, 'the table keeps its 4 columns');
+  // Escaped, not removed: a marker cannot be rebuilt, a backslash cannot free a "|".
+  assert.ok(!guard.clean('<<!--!---->').includes('<!--'), 'no marker rebuilt');
+  const bs = String.fromCharCode(92);
+  assert.equal(guard.clean(`a ${bs}| b`), `a ${bs}${bs}${bs}| b`, 'the backslash escaped too');
+  assert.ok(!guard.clean(`<b>${bs}|`, 100, { inCode: true }).match(/[<>]|\\\\/), 'in a code span: look-alike characters');
 });
 
 test('AI review: rendering, manipulation and invalid input', () => {
