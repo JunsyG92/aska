@@ -52,6 +52,15 @@ let pinned = null; // pinned: stays visible when clicking elsewhere (null = per 
 let unread = 0; // answers that arrived while the chat was out of sight
 let notifier = null;
 let savedPos = null; // anchor chosen by the user: left edge and BOTTOM edge of the window
+let wide = false; // large view: 70 % of the screen, centered, to read the answers
+let compactBounds = null; // window bounds just before the large view, to go back to them
+let pendingSize = null; // size asked while the window was hidden, applied when it shows
+let dragging = false; // something is being dragged over the window (documents to attach)
+let blurTimer = null;
+// Click outside: the chat fades, then hides after this delay. It leaves time to drag a
+// file from another window onto it: the click that starts the drag takes the focus away.
+const BLUR_GRACE_MS = 1500;
+const WIDE_RATIO = 0.7;
 let saveTimer = null;
 let store = null; // saved conversations
 let loader = null; // text of the documents and links attached to conversations (see sources.js)
@@ -302,11 +311,6 @@ function publicState() {
     historyEnabled: cfg.savePrompts,
     pinned,
     unread,
-    // Screen size: the interface derives the size of the widened panel from it.
-    display: (() => {
-      const wa = screen.getDisplayMatching(win ? win.getBounds() : screen.getPrimaryDisplay().workArea).workArea;
-      return { w: wa.width, h: wa.height };
-    })(),
   };
 }
 
@@ -341,6 +345,9 @@ function createWindow() {
       webSecurity: true,
       webviewTag: false,
       spellcheck: false,
+      // Answers keep arriving while the chat is hidden: a throttled hidden window could
+      // stall right after a resize (seen on X11), and the reply would never show.
+      backgroundThrottling: false,
       devTools: !app.isPackaged && process.env.ASKA_DEVTOOLS === '1',
     },
   });
@@ -350,6 +357,7 @@ function createWindow() {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // The position chosen by moving the window is kept.
   win.on('moved', () => {
+    if (wide && !mini) return; // the large view is centered: the anchor stays the compact one
     const b = win.getBounds();
     savedPos = { x: b.x, bottom: b.y + b.height };
     clearTimeout(saveTimer);
@@ -365,8 +373,15 @@ function createWindow() {
   // Click outside: the chat hides, unless it is pinned or collapsed into a pill
   // (whose whole point is to stay visible while you work).
   win.on('blur', () => {
-    if (!pinned && !mini && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
+    if (pinned || mini || dialogOpen || dragging || win.webContents.isDevToolsOpened() || !win.isVisible()) return;
+    clearTimeout(blurTimer);
+    win.webContents.send('aska:fading', true);
+    blurTimer = setTimeout(() => {
+      blurTimer = null;
+      if (win && !win.isDestroyed() && !dragging) hideWindow();
+    }, BLUR_GRACE_MS);
   });
+  win.on('focus', cancelBlurHide);
   win.on('show', refreshTray);
   win.on('hide', refreshTray);
   win.on('close', (e) => {
@@ -378,9 +393,64 @@ function createWindow() {
   win.loadFile(INDEX);
 }
 
+function setBoundsNow(b) {
+  win.setResizable(true);
+  win.setBounds(b);
+  win.setResizable(false);
+}
+
+/** Large view: 70 % of the screen the window is on, centered. */
+function wideBounds() {
+  const wa = screen.getDisplayMatching(win.getBounds()).workArea;
+  const size = (total, min) => Math.round(Math.min(total - 16, Math.max(min, total * WIDE_RATIO)));
+  const width = size(wa.width, 748);
+  const height = size(wa.height, 420);
+  return { x: Math.round(wa.x + (wa.width - width) / 2), y: Math.round(wa.y + (wa.height - height) / 2), width, height };
+}
+
+// The window is only moved or resized while it is shown: on X11, resizing a window
+// that is being hidden can end the X connection (and Aska with it).
+const canMove = () => !!win && win.isVisible() && !hideTimer;
+
+/** Applies the large view (or leaves it) to the shown window. */
+function applyLayout() {
+  if (!canMove() || mini) return;
+  if (wide) {
+    const b = win.getBounds();
+    if (!compactBounds) compactBounds = b;
+    const target = wideBounds();
+    if (b.x !== target.x || b.y !== target.y || b.width !== target.width || b.height !== target.height) setBoundsNow(target);
+  } else if (compactBounds) {
+    // Back where it was: the panel then sets its own height (bottom edge fixed).
+    setBoundsNow(compactBounds);
+    compactBounds = null;
+  }
+}
+
+function cancelBlurHide() {
+  clearTimeout(blurTimer);
+  blurTimer = null;
+  if (win && !win.isDestroyed()) win.webContents.send('aska:fading', false);
+}
+
 function showWindow() {
   if (!win) return;
-  if (!win.isVisible()) {
+  cancelBlurHide();
+  if (!win.isVisible() && wide && !mini) {
+    if (!compactBounds) compactBounds = win.getBounds();
+    setBoundsNow(wideBounds());
+  } else if (!win.isVisible()) {
+    if (compactBounds) {
+      // The large view was left while hidden.
+      setBoundsNow(compactBounds);
+      compactBounds = null;
+    }
+    if (pendingSize) {
+      win.setResizable(true);
+      win.setSize(pendingSize.w, pendingSize.h);
+      win.setResizable(false);
+      pendingSize = null;
+    }
     const [w, h] = win.getSize();
     let pos = null;
     if (savedPos) {
@@ -405,6 +475,7 @@ function showWindow() {
 
 let hideTimer = null;
 function hideWindow() {
+  cancelBlurHide();
   if (!win || !win.isVisible() || hideTimer) return;
   win.webContents.send('aska:will-hide');
   hideTimer = setTimeout(() => {
@@ -782,7 +853,7 @@ function startRun(req, loaded = []) {
       durationMs: res.durationMs,
     });
     // Answer arrived out of view (another tab, or hidden window): the tab flags it.
-    const onScreen = !!win && win.isVisible() && !hideTimer && !mini && tabs.activeId === tab.id;
+    const onScreen = !!win && win.isVisible() && !hideTimer && !blurTimer && !mini && tabs.activeId === tab.id;
     if (turn.status !== 'cancel' && !onScreen && tabs.get(tab.id)) tab.unread = true;
     saveState();
     send({
@@ -794,7 +865,7 @@ function startRun(req, loaded = []) {
       tabs: publicTabs(),
     });
     // A window that is hiding (exit animation) counts as hidden.
-    const seen = { visible: !!win && win.isVisible() && !hideTimer, focused: !!win && win.isFocused(), mini, status: turn.status };
+    const seen = { visible: !!win && win.isVisible() && !hideTimer && !blurTimer, focused: !!win && win.isFocused(), mini, status: turn.status };
     if (shouldNotify(cfg.notify, seen)) {
       const content = notificationContent({
         agentLabel: agent.label,
@@ -1000,25 +1071,45 @@ function registerIpc() {
   handle('aska:set-mini', (v) => {
     mini = v === true;
     if (!mini && win && win.isVisible()) setUnread(0);
+    if (!mini) applyLayout();
+  });
+  handle('aska:set-wide', (v) => {
+    if (typeof v !== 'boolean' || v === wide) return;
+    wide = v;
+    applyLayout();
+  });
+  // Files or a link dragged over the window: it must not hide in the meantime.
+  handle('aska:drag', (state) => {
+    if (state === 'over') {
+      dragging = true;
+      cancelBlurHide();
+    } else if (state === 'drop' || state === 'leave') {
+      dragging = false;
+      if (!win || !win.isVisible()) return;
+      if (state === 'drop') {
+        // Dropped: back to the window, to write the request (after this call returns).
+        if (!win.isFocused()) setImmediate(() => win && !win.isDestroyed() && win.focus());
+      } else if (!win.isFocused() && !pinned && !mini) hideWindow();
+    }
   });
   // The window fits the panel: no transparent area blocks clicks around it.
   handle('aska:resize', (size) => {
     if (!size || !Number.isFinite(size.w) || !Number.isFinite(size.h)) return;
+    // In the large view the window has a fixed size: the panel fills it.
+    if (wide && !mini) return;
     const b = win.getBounds();
     const wa = screen.getDisplayMatching(b).workArea;
     const w = Math.round(Math.min(Math.max(size.w, 120), wa.width - 16));
     const h = Math.round(Math.min(Math.max(size.h, 40), wa.height - 16));
+    if (!canMove()) {
+      pendingSize = { w, h };
+      return;
+    }
     if (b.width === w && b.height === h) return;
     // The bottom edge stays put: the input area does not move when the thread grows.
     const y = Math.max(wa.y, b.y + b.height - h);
-    // The panel that widens (or goes back to its size) stays centered; the mini
-    // pill folds to the left, where the panel starts.
-    let x = b.x;
-    if (b.width >= 600 && w >= 600) x = Math.round(b.x - (w - b.width) / 2);
-    x = Math.min(Math.max(x, wa.x), wa.x + wa.width - w);
-    win.setResizable(true);
-    win.setBounds({ x, y, width: w, height: h });
-    win.setResizable(false);
+    const x = Math.min(Math.max(b.x, wa.x), wa.x + wa.width - w);
+    setBoundsNow({ x, y, width: w, height: h });
   });
   handle('aska:copy', (text) => {
     if (typeof text === 'string' && text.length < 5_000_000) clipboard.writeText(text);

@@ -31,7 +31,7 @@ driven by their official CLIs. Linux, macOS and Windows.
 - 🛡️ **Read-only by default**: the agent changes nothing until you switch modes, and never without your approval for the folder.
 - 📌 **Out of the way or always there**: a click outside hides the chat; pinned, it stays on top where you put it. Minimized to a pill, it shows you how the agent is doing.
 - 🔔 **Notified as soon as the AI answers**: a system notification (agent and start of the answer) when the chat is hidden or minimized; one click brings you back to the conversation.
-- 📎 **Your documents as context**: attach files and links to a conversation, their text goes to the agent with your requests (`Ctrl+D`, or `/add`).
+- 📎 **Your documents as context**: drop files or links on the window (or `Ctrl+D`, `/add`); they show above the field and their text goes to the agent with your requests.
 - ⌨️ **`/` commands**: `/model`, `/mode`, `/cd`, `/codex …` from the field, and your own prompts as commands (`/trad bonjour`).
 - 🌗 **Light or dark**, following your system theme.
 - 🌐 **English or French**: the interface follows your system language (`"language"` in the config to force one).
@@ -182,6 +182,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Ctrl+Shift+C` | copy the last answer |
 | `Ctrl+R` | after denied actions: run the request again in the next mode (the button of the last answer) |
 | `Ctrl+M` | minimize to a pill / expand |
+| `Ctrl+E` | large view (70% of the screen) / normal size |
 | `Ctrl+P` | pin: the chat stays visible when you click elsewhere |
 | `Ctrl+,` | settings |
 | `/` | [commands](#commands): `/model sonnet`, `/cd ~/project`, `/codex …`, and your own |
@@ -189,7 +190,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 
 The shortcuts that use `Ctrl` can be changed in the [settings](#settings) or with `"keybindings"` in the [configuration](#configuration); the tooltips and `aska --help` show the ones you chose.
 
-A click outside the chat hides it; the agent keeps working. To keep it visible, pin it (📌 or `Ctrl+P`): the choice is remembered. Minimized to a pill, it always stays visible. The window is moved with the handle on the left or the bottom bar, and its position is remembered. As soon as the AI answers, the window widens (up to 1040 px, centered) for easier reading; a new or empty tab brings it back to its normal size.
+A click outside the chat hides it (it fades first, then disappears after 1.5 s: time to drag a file onto it from another window); the agent keeps working. To keep it visible, pin it (📌 or `Ctrl+P`): the choice is remembered. Minimized to a pill, it always stays visible. The window is moved with the handle on the left or the bottom bar, and its position is remembered. As soon as the AI answers, the window switches to a **large view**, 70% of the screen and centered, to read comfortably. The ⤡ button (or `Ctrl+E`) brings it back to its normal size, and that choice holds for the conversation; a new or empty tab starts at the normal size.
 
 While Aska is running, its icon stays in the system tray (top right on GNOME).
 A green dot is added while a request is running, and the tooltip says which
@@ -278,6 +279,7 @@ requests at most, 8 tabs).
 
 A conversation can carry **documents and links**: a brief, meeting notes, a spec, a page of your wiki. Aska reads them itself and sends their text to the agent before your request, so the answers take them into account. It works with every agent and in read-only mode, since the agent needs no tool to get them.
 
+- **Drag and drop** files from your file manager, or a link from your browser, onto the window. The documents show as chips above the field: click one to see what was read, × to remove it.
 - `Ctrl+D` or the 📎 button opens the list: paste a link or a file path and press `Enter`, or press `Enter` on the empty field to choose files. `Del` removes the selected one. From the field, `/add ~/notes/brief.md` or `/add https://…` does the same.
 - **Files**: any text file (Markdown, code, CSV, JSON, HTML…). PDFs are read through `pdftotext` when it is installed (`poppler-utils` on Linux, `brew install poppler` on macOS). For any other format, the agent only gets the path, to read it with its own tools if it can.
 - **Links**: `http(s)` pages, fetched by Aska without cookies, as text (HTML is reduced to its text). A page is fetched again after ten minutes, or with the ↻ button.
@@ -470,6 +472,7 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 | `copyAnswer` | `Ctrl+Shift+C` |
 | `rerun` | `Ctrl+R` |
 | `toggleMini` | `Ctrl+M` |
+| `toggleWide` | `Ctrl+E` |
 | `togglePin` | `Ctrl+P` |
 | `settings` | `Ctrl+,` |
 
