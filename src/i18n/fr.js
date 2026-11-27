@@ -224,6 +224,7 @@ module.exports = {
       notFinished: "La sous-tâche doit être terminée",
       busy: "Déjà en cours",
       noCommits: "Aucun commit sur {branch} : rien à proposer",
+      viaCmd: "ce gh ne se lance que par cmd.exe, ce qu’Aska refuse pour un titre libre",
     },
     prBody: {
       commits: "Commits",

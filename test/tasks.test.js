@@ -455,22 +455,19 @@ test('pull request: pushed to origin (never forced), opened with gh; no gh or no
   assert.deepEqual(noGh.steps.map((s) => s.argv), [['push', '-u', 'origin', 'aska/node-26/1']]);
 
   // A fake gh: its arguments and stdin are checked, its URL is kept.
-  const fakeGh = path.join(root, 'gh.js');
-  const ghLog = path.join(root, 'gh.json');
-  const writeGh = (body) => fs.writeFileSync(fakeGh, `let s = ''; process.stdin.on('data', (d) => (s += d)); process.stdin.on('end', () => { ${body} });`);
-  writeGh(`require('fs').writeFileSync(${JSON.stringify(ghLog)}, JSON.stringify({ args: process.argv.slice(2), stdin: s })); console.log('Creating pull request'); console.log('https://github.com/o/app/pull/12');`);
-  const gh = { command: process.execPath, prefix: [fakeGh], viaCmd: false };
-  const ok = await pushAndOpenPr({ ...base, gh });
-  assert.equal(ok.url, 'https://github.com/o/app/pull/12');
-  const call = JSON.parse(fs.readFileSync(ghLog, 'utf8'));
-  assert.deepEqual(call.args, ['pr', 'create', '--head', 'aska/node-26/1', '--title=Node 26 en place.', '--body-file', '-', '--base', 'main']);
-  assert.equal(call.stdin, 'Corps\nde la PR');
+  const ghLog = path.join(root, 'gh.jsonl');
+  const ghCalls = () => fs.readFileSync(ghLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const gh = { command: process.execPath, prefix: [path.join(__dirname, 'fixtures', 'fake-gh.js')], viaCmd: false };
+  const ok = await pushAndOpenPr({ ...base, gh, env: { ...env, FAKE_GH_LOG: ghLog } });
+  assert.equal(ok.url, 'https://github.com/example/web/pull/7');
+  assert.deepEqual(ghCalls()[0].args, ['pr', 'create', '--head', 'aska/node-26/1', '--title=Node 26 en place.', '--body-file', '-', '--base', 'main']);
+  assert.equal(ghCalls()[0].stdin, 'Corps\nde la PR');
   // A base origin does not have: gh picks the default branch.
-  await pushAndOpenPr({ ...base, gh, baseRef: 'feature/local' });
-  assert.ok(!JSON.parse(fs.readFileSync(ghLog, 'utf8')).args.includes('--base'));
-  // gh refusing: pushed, the error said.
-  writeGh("console.error('a pull request already exists'); process.exit(1);");
-  assert.match((await pushAndOpenPr({ ...base, gh })).error, /could not be opened: a pull request already exists/);
+  await pushAndOpenPr({ ...base, gh, baseRef: 'feature/local', env: { ...env, FAKE_GH_LOG: ghLog } });
+  assert.ok(!ghCalls()[1].args.includes('--base'));
+  // gh refusing: pushed, the error said. A gh that only runs through cmd.exe: refused.
+  assert.match((await pushAndOpenPr({ ...base, gh, env: { ...env, FAKE_GH_FAIL: 'a pull request already exists' } })).error, /could not be opened: a pull request already exists/);
+  assert.match((await pushAndOpenPr({ ...base, gh: { command: 'gh.bat', prefix: [], viaCmd: true } })).error, /only runs through cmd\.exe/);
 
   // A remote that cannot be reached; no remote; a branch that is not a task's.
   assert.ok(git(GIT, ['remote', 'set-url', 'origin', path.join(root, 'missing.git')], repo).ok);

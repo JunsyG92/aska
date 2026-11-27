@@ -7,20 +7,19 @@
 
 const { spawn } = require('child_process');
 const { git, BRANCH_RE } = require('./worktree');
-const { buildCommand } = require('../launch');
 const { t } = require('../../i18n');
 
 const TIMEOUT_MS = 120000;
 const URL_RE = /https:\/\/[^\s"'<>]+/g;
 
 /** Runs a program, no shell; { ok, code, out, err }. Never prompts for credentials. */
-function run(command, args, { cwd, env, stdin = '', verbatim = false, timeoutMs = TIMEOUT_MS }) {
+function run(command, args, { cwd, env, stdin = '', timeoutMs = TIMEOUT_MS }) {
   return new Promise((resolve) => {
     let out = '';
     let err = '';
     let child;
     try {
-      child = spawn(command, args, { cwd, env, windowsHide: true, windowsVerbatimArguments: verbatim });
+      child = spawn(command, args, { cwd, env, shell: false, windowsHide: true });
     } catch (e) {
       resolve({ ok: false, code: null, out: '', err: e.message });
       return;
@@ -67,14 +66,10 @@ async function pushAndOpenPr({ gitBin, gh, ghError, dir, branch, baseRef, title,
     ? git(gitBin, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${baseRef}`], dir).ok
     : false;
   if (known) prArgv.push('--base', baseRef);
-  let cmd;
-  try {
-    cmd = buildCommand(gh, prArgv);
-  } catch (e) {
-    return { pushed: true, error: t('tasks.pr.failed', { error: e.message }), steps };
-  }
-  const pr = await run(cmd.command, cmd.args, { cwd: dir, env, stdin: body, verbatim: cmd.verbatim });
-  steps.push({ bin: cmd.command, argv: ['pr', 'create', '--head', branch, ...(known ? ['--base', baseRef] : [])], ok: pr.ok });
+  // gh.exe, or node on an npm launcher's script: never through cmd.exe (the title is free text).
+  if (gh.viaCmd) return { pushed: true, error: t('tasks.pr.noGh', { branch, error: t('tasks.pr.viaCmd') }), steps };
+  const pr = await run(gh.command, [...gh.prefix, ...prArgv], { cwd: dir, env, stdin: body });
+  steps.push({ bin: gh.command, argv: ['pr', 'create', '--head', branch, ...(known ? ['--base', baseRef] : [])], ok: pr.ok });
   const urls = (pr.out.match(URL_RE) || []).filter((u) => /\/pull\/\d+/.test(u));
   if (!pr.ok || !urls.length) return { pushed: true, error: t('tasks.pr.failed', { error: tail(pr.err || pr.out) || pr.code }), steps };
   return { pushed: true, url: urls[urls.length - 1], steps };

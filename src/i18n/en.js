@@ -226,6 +226,7 @@ module.exports = {
       notFinished: "The subtask must be finished",
       busy: "Already running",
       noCommits: "No commit on {branch}: nothing to propose",
+      viaCmd: "this gh only runs through cmd.exe, which Aska refuses for a free-text title",
     },
     prBody: {
       commits: "Commits",

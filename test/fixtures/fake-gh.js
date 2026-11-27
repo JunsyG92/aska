@@ -8,6 +8,10 @@ process.stdin.on('end', () => {
   if (process.env.FAKE_GH_LOG) {
     require('fs').appendFileSync(process.env.FAKE_GH_LOG, JSON.stringify({ args, stdin, cwd: process.cwd() }) + '\n');
   }
+  if (process.env.FAKE_GH_FAIL) {
+    process.stderr.write(process.env.FAKE_GH_FAIL + '\n');
+    process.exit(1);
+  }
   if (args[0] === 'pr' && args[1] === 'create') {
     process.stdout.write('\nCreating pull request for aska into main\n\nhttps://github.com/example/web/pull/7\n');
     return;
