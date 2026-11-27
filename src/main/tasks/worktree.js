@@ -78,7 +78,9 @@ function addWorktree(gitBin, { repo, dir, branch, base = 'HEAD' }) {
   fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
   const r = git(gitBin, ['worktree', 'add', '-b', branch, dir, head.out], top);
   if (!r.ok) return { error: t('tasks.worktreeFailed', { repo, error: r.err.slice(-300) }) };
-  return { dir: realPath(dir), branch, base: head.out };
+  // The branch it starts from (the base of its pull request), when there is one.
+  const ref = base === 'HEAD' ? git(gitBin, ['symbolic-ref', '--quiet', '--short', 'HEAD'], top) : { ok: false };
+  return { dir: realPath(dir), branch, base: head.out, baseRef: ref.ok && ref.out ? ref.out : null };
 }
 
 /**

@@ -29,6 +29,7 @@
   let armed = null; // action waiting for a second click: 'cleanup'
   let message = { text: '', kind: '' };
   let busy = false;
+  let prBusy = null; // "<task>/<n>" being pushed
 
   const t = (k, p) => opts.t(k, p);
   const task = () => tasks.find((x) => x.id === current) || null;
@@ -340,6 +341,27 @@
     return r;
   }
 
+  // Two steps: the first click shows what will run, the second runs it.
+  async function prNow(x, s) {
+    const key = `${x.id}/${s.n}`;
+    if (armed !== `pr:${key}`) {
+      armed = `pr:${key}`;
+      render();
+      return setMessage('');
+    }
+    if (prBusy) return;
+    armed = null;
+    prBusy = key;
+    render();
+    setMessage(t('tasks.prRunning'));
+    const r = await opts.api.openTaskPr(x.id, s.n);
+    prBusy = null;
+    if (r && r.task) upsert(r.task);
+    render();
+    if (r && r.url) setMessage(t('tasks.prOpened', { url: r.url }), 'ok');
+    else setMessage((r && r.error) || '', 'err');
+  }
+
   async function cleanupNow(x) {
     if (armed !== 'cleanup') {
       armed = 'cleanup';
@@ -380,7 +402,27 @@
     if (facts.length) row.append(el('div', 'tk-facts', facts.join(' · ')));
     if (s.error) row.append(el('div', 'set-error', s.error));
 
+    // Its report (the agent's text, shown as text), or why it is to check.
+    if (s.report) {
+      const rep = el('div', 'tk-report');
+      rep.append(el('div', 'tk-log-title', t('tasks.report')));
+      if (s.report.summary) rep.append(el('p', 'tk-summary', s.report.summary));
+      if (s.report.status === 'partial') rep.append(el('p', 'set-hint', t('tasks.partial')));
+      if (s.report.followUp) rep.append(el('p', 'set-hint', t('tasks.followUp', { text: s.report.followUp })));
+      row.append(rep);
+    } else if (s.status === 'check') row.append(el('div', 'set-hint', t('tasks.noReport')));
+
     const bar = el('div', 'tk-sub-actions');
+    const finished = s.status === 'done' || s.status === 'check';
+    const commits = s.summary && s.summary.commits ? s.summary.commits.length : 0;
+    if (s.pr && s.pr.url) {
+      bar.append(button(t('tasks.viewPr'), () => opts.api.openUrl(s.pr.url), 'set-btn small primary', 'view-pr'));
+    } else if (finished && s.branch && commits) {
+      const pending = prBusy === key;
+      const pr = button(t(pending ? 'tasks.prRunning' : 'tasks.openPr'), () => prNow(x, s), 'set-btn small primary', 'pr');
+      pr.disabled = pending;
+      bar.append(pr);
+    }
     const logOpen = openLogs.has(key);
     const log = button(t(logOpen ? 'tasks.hideLog' : 'tasks.showLog'), () => {
       if (openLogs.has(key)) openLogs.delete(key);
@@ -390,11 +432,27 @@
     log.setAttribute('aria-expanded', String(logOpen));
     bar.append(log);
     if (RUNNING.has(s.status)) bar.append(button(t('tasks.cancel'), () => act(() => opts.api.cancelTask(x.id, s.n)), 'set-btn small', 'cancel'));
-    if (s.status === 'failed' || s.status === 'cancelled') bar.append(button(t('tasks.rerun'), () => act(() => opts.api.startTask(x.id, [s.n])), 'set-btn small', 'rerun'));
+    if (s.status === 'failed' || s.status === 'cancelled' || s.status === 'check') bar.append(button(t('tasks.rerun'), () => act(() => opts.api.startTask(x.id, [s.n])), 'set-btn small', 'rerun'));
     if (s.temporary && !s.kept && !RUNNING.has(s.status)) {
       bar.append(button(t('tasks.keepBot'), () => act(() => opts.api.keepTaskBot(x.id, s.n)).then((r) => r && r.botId && setMessage(t('tasks.kept', { bot: r.botId }), 'ok')), 'set-btn small', 'keep'));
     }
     row.append(bar);
+
+    // The confirmation: what Aska is about to run, outside the machine.
+    if (armed === `pr:${key}`) {
+      const box = el('div', 'tk-confirm');
+      box.setAttribute('role', 'alertdialog');
+      box.append(el('p', null, t('tasks.prConfirm', { branch: s.branch, title: s.prTitle || '' })));
+      const go = button(t('tasks.prConfirmButton'), () => prNow(x, s), 'set-btn small primary', 'pr-confirm');
+      const no = button(t('settings.cancel'), () => {
+        armed = null;
+        render();
+      }, 'set-btn small', 'pr-cancel');
+      const line = el('div', 'tk-sub-actions');
+      line.append(go, no);
+      box.append(line);
+      row.append(box);
+    }
 
     if (logOpen) {
       const box = el('div', 'tk-log');
@@ -415,6 +473,9 @@
     title.append(el('b', 'tk-goal-text', x.goal), el('span', `tk-status ${x.status}`, t(`tasks.taskStatus.${x.status}`)));
     const done = x.subtasks.filter((s) => s.status === 'done').length;
     head.append(title, el('p', 'set-hint', t('tasks.boardFacts', { root: x.root, done, total: x.subtasks.length })));
+    // The whole task at a glance, once nothing runs any more.
+    const o = x.overview;
+    if (o && !o.running && !o.pending) head.append(el('p', 'tk-overview', t('tasks.overview', { done: o.done, check: o.check, failed: o.failed, prs: o.prs.length })));
     const list = el('div', 'tk-plan');
     for (const s of x.subtasks) list.append(subRow(x, s));
     const running = x.subtasks.some((s) => RUNNING.has(s.status));

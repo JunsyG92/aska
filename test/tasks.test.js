@@ -136,10 +136,12 @@ test('task engine: one worktree each, the request limit shared, cancel, run agai
   assert.equal(s1.branch, 'aska/node-26/1');
   assert.ok(fs.existsSync(s1.worktree));
   // A subtask ends: the next one starts.
-  runs[0].end({ ok: true, durationMs: 5, answer: 'Done.' });
+  const report = ['Fait.', '{"status": "done", "summary": "Node 26 en place.", "commits": [], "followUp": ""}'].join('\n');
+  runs[0].end({ ok: true, durationMs: 5, answer: report });
   await tick();
-  assert.equal(s1.status, 'done');
-  assert.equal(s1.answer, 'Done.');
+  assert.equal(s1.status, 'done', 'its report says done');
+  assert.equal(s1.answer, report);
+  assert.deepEqual(s1.report, { status: 'done', summary: 'Node 26 en place.', commits: [], followUp: '' });
   assert.deepEqual(s1.summary, { commits: [], changes: '', uncommitted: 0 });
   assert.equal(task.subtasks[3].status, 'running');
   // The tab finishes too: room for one more when the engine is pumped.
@@ -166,6 +168,7 @@ test('task engine: one worktree each, the request limit shared, cancel, run agai
   for (const r of runs.slice(3)) r.end({ ok: true, durationMs: 1, answer: '' });
   await tick();
   assert.equal(task.status, 'done');
+  assert.equal(task.subtasks[3].status, 'check', 'no report: to check');
   assert.ok(updates.length > 5);
   assert.deepEqual(engine.cleanup(task.id), { ok: true });
   for (const s of task.subtasks) if (s.worktree) assert.ok(!fs.existsSync(s.worktree));
@@ -381,4 +384,97 @@ test('plan review: each subtask with its modes, its commands and the remote ones
   assert.equal(rightsOf({ botId: 'cur' }, 1, deps).rights.commands, false);
   assert.match(rightsOf({ botId: 'nope' }, 4, deps).error, /Subtask 4: unknown bot/);
   assert.match(rightsOf({ bot: { copyOf: 'up', allow: ['rm'] } }, 5, deps).error, /Subtask 5: bot refused/);
+});
+
+// ---------- ticket 17: reports and pull requests ----------
+
+const { reportInstruction, parseReport, statusFromReport, taskSummary, orchestratorReport, prText } = require('../src/main/tasks/report');
+const { pushAndOpenPr } = require('../src/main/tasks/pr');
+
+test('report: the last JSON object of the answer, cleaned; missing or broken: to check', () => {
+  assert.match(reportInstruction('fr'), /"status": "done" or "partial" or "failed"/);
+  assert.match(reportInstruction('fr'), /in French/);
+  const answer = [
+    'J’ai changé `{ "engines": {} }` dans package.json :',
+    '```json',
+    '{ "status": "nope" }',
+    '```',
+    '{"status": "partial", "summary": "Node 26 dans .nvmrc.", "commits": ["abc123 chore: node 26", 42, ""], "followUp": "Mettre à jour la CI", "extra": true}',
+  ].join('\n');
+  assert.deepEqual(parseReport(answer), { status: 'partial', summary: 'Node 26 dans .nvmrc.', commits: ['abc123 chore: node 26'], followUp: 'Mettre à jour la CI' });
+  assert.equal(parseReport('Fini, tout va bien.'), null, 'missing');
+  assert.equal(parseReport('{"status": "done", "summary": '), null, 'broken');
+  assert.equal(parseReport('{"status": "great"}'), null, 'unknown status');
+  assert.equal(parseReport(`{"status": "done", "summary": "${'x'.repeat(5000)}"}`).summary.length, 1000);
+  assert.deepEqual([statusFromReport(null), statusFromReport({ status: 'done' }), statusFromReport({ status: 'partial' }), statusFromReport({ status: 'failed' })], ['check', 'done', 'check', 'failed']);
+});
+
+test('report: the task at a glance, for the board and for the orchestrator; the pull request text', () => {
+  const task = {
+    goal: 'Passer à Node 26',
+    subtasks: [
+      { n: 1, repo: '/r/api', status: 'done', branch: 'aska/node/1', report: { status: 'done', summary: 'Node 26 en place. Tests verts.', commits: ['a1 chore: node 26'], followUp: '' }, pr: { url: 'https://github.com/o/api/pull/3' }, summary: { commits: ['a1 chore: node 26', 'b2 test: ci'] } },
+      { n: 2, repo: '/r/web', status: 'check', branch: 'aska/node/2' },
+      { n: 3, repo: '/r/docs', status: 'failed', error: 'tests failed' },
+    ],
+  };
+  assert.deepEqual(taskSummary(task), { total: 3, done: 1, check: 1, failed: 1, cancelled: 0, running: 0, pending: 0, prs: [{ n: 1, url: 'https://github.com/o/api/pull/3' }] });
+  const text = orchestratorReport(task, (s) => path.basename(s.repo));
+  assert.match(text, /1 done, 1 to check, 1 failed, 0 cancelled, 1 pull request\(s\) opened/);
+  assert.match(text, /- 1\. api: done, branch aska\/node\/1, pull request https:\/\/github\.com\/o\/api\/pull\/3\. Node 26 en place/);
+  assert.match(text, /- 2\. web: check, branch aska\/node\/2\. No report\./);
+  assert.match(text, /- 3\. docs: failed\. tests failed/);
+  const pr = prText(task, task.subtasks[0]);
+  assert.equal(pr.title, 'Node 26 en place.');
+  assert.match(pr.body, /^Node 26 en place\. Tests verts\.\n\n## Commits\n\n- a1 chore: node 26\n- b2 test: ci\n/);
+  assert.match(pr.body, /Opened by Aska, for the task "Passer à Node 26"/);
+  assert.equal(prText(task, task.subtasks[1]).title, 'Passer à Node 26', 'no report: the goal');
+});
+
+test('pull request: pushed to origin (never forced), opened with gh; no gh or no remote: said', { skip: !hasGit && 'git not installed' }, async () => {
+  const root = tmp();
+  const remote = path.join(root, 'origin.git');
+  assert.ok(git(GIT, ['init', '-q', '--bare', remote], root).ok);
+  const repo = makeRepo(path.join(root, 'app'));
+  assert.ok(git(GIT, ['remote', 'add', 'origin', remote], repo).ok);
+  assert.ok(git(GIT, ['push', '-q', 'origin', 'main'], repo).ok);
+  assert.ok(git(GIT, ['fetch', '-q', 'origin'], repo).ok);
+  const w = addWorktree(GIT, { repo, dir: path.join(root, 'wt', '1'), branch: 'aska/node-26/1' });
+  assert.equal(w.baseRef, 'main', 'the branch it starts from');
+  fs.writeFileSync(path.join(w.dir, '.nvmrc'), '26\n');
+  assert.ok(git(GIT, ['add', '.'], w.dir).ok);
+  assert.ok(git(GIT, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'chore: node 26'], w.dir).ok);
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  const base = { gitBin: GIT, dir: w.dir, branch: w.branch, baseRef: 'main', title: 'Node 26 en place.', body: 'Corps\nde la PR', env };
+
+  // gh missing: the branch is pushed, and the message says what to do.
+  const noGh = await pushAndOpenPr({ ...base, gh: null, ghError: 'not in PATH' });
+  assert.equal(noGh.pushed, true);
+  assert.match(noGh.error, /gh \(GitHub CLI\) was not found/);
+  assert.ok(git(GIT, ['rev-parse', '--verify', 'refs/heads/aska/node-26/1'], remote).ok, 'on the remote');
+  assert.deepEqual(noGh.steps.map((s) => s.argv), [['push', '-u', 'origin', 'aska/node-26/1']]);
+
+  // A fake gh: its arguments and stdin are checked, its URL is kept.
+  const ghLog = path.join(root, 'gh.jsonl');
+  const ghCalls = () => fs.readFileSync(ghLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const gh = { command: process.execPath, prefix: [path.join(__dirname, 'fixtures', 'fake-gh.js')], viaCmd: false };
+  const ok = await pushAndOpenPr({ ...base, gh, env: { ...env, FAKE_GH_LOG: ghLog } });
+  assert.equal(ok.url, 'https://github.com/example/web/pull/7');
+  assert.deepEqual(ghCalls()[0].args, ['pr', 'create', '--head', 'aska/node-26/1', '--title=Node 26 en place.', '--body-file', '-', '--base', 'main']);
+  assert.equal(ghCalls()[0].stdin, 'Corps\nde la PR');
+  // A base origin does not have: gh picks the default branch.
+  await pushAndOpenPr({ ...base, gh, baseRef: 'feature/local', env: { ...env, FAKE_GH_LOG: ghLog } });
+  assert.ok(!ghCalls()[1].args.includes('--base'));
+  // gh refusing: pushed, the error said. A gh that only runs through cmd.exe: refused.
+  assert.match((await pushAndOpenPr({ ...base, gh, env: { ...env, FAKE_GH_FAIL: 'a pull request already exists' } })).error, /could not be opened: a pull request already exists/);
+  assert.match((await pushAndOpenPr({ ...base, gh: { command: 'gh.bat', prefix: [], viaCmd: true } })).error, /only runs through cmd\.exe/);
+
+  // A remote that cannot be reached; no remote; a branch that is not a task's.
+  assert.ok(git(GIT, ['remote', 'set-url', 'origin', path.join(root, 'missing.git')], repo).ok);
+  const down = await pushAndOpenPr({ ...base, gh });
+  assert.equal(down.pushed, false);
+  assert.match(down.error, /git push failed/);
+  assert.ok(git(GIT, ['remote', 'remove', 'origin'], repo).ok);
+  assert.match((await pushAndOpenPr({ ...base, gh })).error, /no "origin" remote/);
+  assert.match((await pushAndOpenPr({ ...base, gh, branch: 'main' })).error, /Invalid branch name/);
 });

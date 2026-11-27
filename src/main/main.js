@@ -1223,7 +1223,9 @@ function launchSubtask(task, s) {
   if (dir.error) return { error: dir.error };
   const { excess, canPass } = commandFit(agent);
   const model = bot.model !== undefined ? bot.model : modelFor(agent);
-  const inv = invocationFor({ agent, mode: s.mode, prompt: s.prompt, turns: [], bot, model, excess, canPass, allow: s.allow });
+  // Its instruction, then how to report (read when it ends, see tasks/report.js).
+  const prompt = [s.prompt, require('./tasks/report').reportInstruction(getLanguage())].join('\n\n');
+  const inv = invocationFor({ agent, mode: s.mode, prompt, turns: [], bot, model, excess, canPass, allow: s.allow });
   let answer = '';
   const startedAt = new Date().toISOString();
   // The journal of the subtask, shown live in the Tasks view (saved when it ends).
@@ -1270,12 +1272,16 @@ function launchSubtask(task, s) {
 
 // What the window sees of a task (the bots by their public fields).
 function publicTask(task) {
+  const { taskSummary, prText } = require('./tasks/report');
   return {
     ...task,
+    overview: taskSummary(task),
     subtasks: task.subtasks.map((s) => {
       const b = subtaskBot(s);
       const { botDir, ...rest } = s;
       if (typeof rest.answer === 'string' && rest.answer.length > 8000) rest.answer = rest.answer.slice(-8000);
+      // What the "Push and open the pull request" confirmation shows.
+      if (s.branch && !s.pr) rest.prTitle = prText(task, s).title;
       return { ...rest, temporary: !!botDir, repo: tilde(s.repo), worktree: s.worktree ? tilde(s.worktree) : null, bot: b ? { id: b.id, label: b.label, color: b.color, avatar: b.avatar, image: b.image } : { id: s.botId, label: s.botLabel || s.botId } };
     }),
     root: tilde(task.root),
@@ -1402,6 +1408,58 @@ function setupTaskIpc() {
   });
   handle('aska:task-plan-cancel', () => {
     if (planRun) planRun.cancel();
+  });
+  // "Push and open the pull request" (confirmed in the window): Aska runs git
+  // push and gh pr create itself, without a shell; never forced, never merged.
+  const prRunning = new Set();
+  handle('aska:task-pr', async (req) => {
+    let e;
+    try {
+      e = tasksModule();
+    } catch (err) {
+      return { error: err.message };
+    }
+    const task = req && typeof req.id === 'string' ? e.get(req.id) : null;
+    const s = task && Number.isInteger(req.n) ? task.subtasks.find((x) => x.n === req.n) : null;
+    if (!s || !s.worktree || !s.branch) return { error: t('tasks.unknown') };
+    if (s.pr) return { error: t('tasks.pr.already', { url: s.pr.url }) };
+    if (!['done', 'check'].includes(s.status) || e.running.has(`${task.id}/${s.n}`)) return { error: t('tasks.pr.notFinished') };
+    const key = `${task.id}/${s.n}`;
+    if (prRunning.has(key)) return { error: t('tasks.pr.busy') };
+    const { summary } = require('./tasks/worktree');
+    s.summary = summary(e.gitBin, { dir: s.worktree, base: s.base });
+    if (!s.summary.commits.length) return { error: t('tasks.pr.noCommits', { branch: s.branch }) };
+    const { prText } = require('./tasks/report');
+    const { title, body } = prText(task, s);
+    const found = sec.resolveBinary(['gh'], { envPath: searchPath() });
+    const gh = found.error ? null : resolveLaunch(found.path, { envPath: searchPath() });
+    prRunning.add(key);
+    const startedAt = new Date().toISOString();
+    let r;
+    try {
+      // The user's own environment (their git and gh credentials), never prompting.
+      const env = sec.setEnvVar({ ...process.env, GIT_TERMINAL_PROMPT: '0', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' }, 'PATH', searchPath());
+      r = await require('./tasks/pr').pushAndOpenPr({
+        gitBin: e.gitBin,
+        gh: gh && !gh.error ? gh : null,
+        ghError: found.error || (gh && gh.error),
+        dir: s.worktree,
+        branch: s.branch,
+        baseRef: s.baseRef,
+        title,
+        body,
+        env,
+      });
+    } finally {
+      prRunning.delete(key);
+    }
+    for (const step of r.steps) {
+      sec.appendAudit(P.audit, { ts: startedAt, task: task.id, subtask: s.n, action: 'push-pr', cwd: s.worktree, bin: step.bin, argv: step.argv, result: step.ok ? 'ok' : 'error' });
+    }
+    if (r.pushed) s.pushed = true;
+    if (r.url) s.pr = { url: r.url, at: new Date().toISOString() };
+    e.changed(task);
+    return { task: publicTask(task), url: r.url, pushed: r.pushed, error: r.error };
   });
   // Keeps a temporary bot: copied into ~/.aska/bots, offered with "@" from now on.
   handle('aska:task-keep-bot', (req) =>
