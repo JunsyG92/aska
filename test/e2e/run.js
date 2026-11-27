@@ -1258,7 +1258,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(planned.error, undefined, planned.error);
     const planCall = calls()[planCallsFrom];
     assert.ok(planCall.args.includes('plan') && !planCall.args.includes('--allowedTools'), 'the orchestrator only reads');
-    assert.ok(samePath(planCall.cwd, fs.realpathSync(taskRoot)), 'in the task’s folder');
+    assert.ok(samePath(planCall.cwd, fs.realpathSync.native(taskRoot)), 'in the task’s folder');
     assert.match(planCall.stdin, /Repositories \(relative to the folder\):\n- api\n- web/);
     assert.match(planCall.stdin, /- trad: Traducteur 2/);
     assert.match(planCall.stdin, /<goal>\nPasser les apps à Node 26\n<\/goal>/);
