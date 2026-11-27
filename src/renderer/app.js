@@ -10,6 +10,7 @@
   const thread = $('thread');
   const historyBox = $('history');
   const settingsBox = $('settings');
+  const tasksBox = $('tasks');
   const activity = $('activity');
   const notice = $('notice');
   const confirmBox = $('confirm');
@@ -37,7 +38,7 @@
   let warnings = [];
   let mini = false;
   let activityText = '';
-  let view = 'chat'; // 'chat' | 'history' | 'settings'
+  let view = 'chat'; // 'chat' | 'history' | 'settings' | 'tasks'
   let menuOpen = false;
   let pinned = false;
   let unread = 0;
@@ -117,7 +118,7 @@
   // ---------- footer, status, pill ----------
 
   function setKeys() {
-    const items = view === 'settings'
+    const items = view === 'settings' || view === 'tasks'
       ? [[t('keys.esc'), t('footer.back')]]
       : cmdOpen()
       ? [['↑ ↓', t('footer.select')], ['Tab', t('footer.complete')], ['⏎', t('footer.run')], [t('keys.esc'), t('footer.close')]]
@@ -1018,6 +1019,9 @@
       case 'settings':
         done();
         return showSettings(true);
+      case 'tasks':
+        done();
+        return showTasks(true);
       case 'pin':
         done();
         return setPinned(!pinned, true);
@@ -1134,9 +1138,34 @@
 
   // ---------- settings (see settings.js) ----------
 
+  // ---------- tasks (see tasks.js) ----------
+
+  async function showTasks(on) {
+    if (on && view === 'tasks') return;
+    if (on && view === 'history') await showHistory(false);
+    if (on && view === 'settings' && !window.AskaSettings.requestClose()) return; // unsaved settings: they stay
+    view = on ? 'tasks' : 'chat';
+    refreshPalette();
+    tasksBox.hidden = !on;
+    thread.hidden = on;
+    // Like the settings: no tabs or chips; the view is wider (the window follows).
+    panel.classList.toggle('in-settings', on);
+    panel.classList.toggle('in-tasks', on);
+    if (on) {
+      setStatus('');
+      await window.AskaTasks.open();
+    } else {
+      scrollEnd(true);
+      input.focus();
+    }
+    syncOpen();
+    setKeys();
+  }
+
   async function showSettings(on) {
     if (on && view === 'settings') return;
     if (on && view === 'history') await showHistory(false);
+    if (on && view === 'tasks') await showTasks(false);
     view = on ? 'settings' : 'chat';
     refreshPalette();
     $('settings-btn').setAttribute('aria-pressed', String(on));
@@ -1261,9 +1290,23 @@
       }
       return;
     }
+    // Tasks: the view keeps the keyboard; Esc goes back (board → list → chat).
+    if (view === 'tasks') {
+      if (e.key === 'Escape' || is('tasks')) {
+        e.preventDefault();
+        if (is('tasks')) showTasks(false);
+        else window.AskaTasks.requestClose();
+      }
+      return;
+    }
     if (is('settings') && !mini && !pendingTrust && !menuOpen) {
       e.preventDefault();
       showSettings(true);
+      return;
+    }
+    if (is('tasks') && !mini && !pendingTrust && !menuOpen) {
+      e.preventDefault();
+      showTasks(true);
       return;
     }
     if (!mini && !pendingTrust && !menuOpen) {
@@ -1417,6 +1460,16 @@
     onClose: () => showSettings(false),
     onSaved: (s) => applyState(s), // language, shortcuts, tooltips… applied at once
   });
+  window.AskaTasks.init(tasksBox, {
+    api,
+    t,
+    modeLabel: (m) => (modes[m] ? modes[m].label : m),
+    bots: () => bots,
+    onState: (s) => applyState(s), // a bot kept: offered with "@" at once
+    onClose: () => showTasks(false),
+  });
+  api.onTask((task) => window.AskaTasks.onTask(task));
+  api.onOpenTasks(() => showTasks(true)); // system tray icon menu
 
   // The window follows the panel size (minimized, expanded, growing thread).
   new ResizeObserver(() => {
@@ -1437,6 +1490,7 @@
     }
     if (view === 'settings') window.AskaSettings.requestClose();
     if (view === 'history') await showHistory(false);
+    if (view === 'tasks') await showTasks(false);
     if (menuOpen) closeModelMenu();
     if (view !== 'chat' || pendingTrust) return; // unsaved settings or an approval waiting: left as is
     setMini(false);

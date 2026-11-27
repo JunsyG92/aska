@@ -19,6 +19,7 @@
     { name: 'retry' },
     { name: 'copy' },
     { name: 'history' },
+    { name: 'tasks', aliases: ['tache'] },
     { name: 'settings' },
     { name: 'pin' },
     { name: 'mini' },

@@ -23,6 +23,7 @@ const DEFAULT_KEYBINDINGS = {
   rerun: ['Ctrl+R'], // run again in a wider mode, after denied actions
   toggleMini: ['Ctrl+M'],
   togglePin: ['Ctrl+P'],
+  tasks: ['Ctrl+Shift+T'],
   settings: ['Ctrl+,'],
 };
 const ACTIONS = Object.keys(DEFAULT_KEYBINDINGS);

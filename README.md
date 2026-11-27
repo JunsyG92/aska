@@ -181,6 +181,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Ctrl+M` | minimize to a pill / expand |
 | `Ctrl+P` | pin: the chat stays visible when you click elsewhere |
 | `Ctrl+,` | settings |
+| `Ctrl+Shift+T` | [tasks](#tasks): one goal for several bots |
 | `/` | [commands](#commands): `/model sonnet`, `/cd ~/project`, `/codex …`, and your own |
 | `Esc` | cancel the current request, otherwise hide |
 
@@ -191,7 +192,7 @@ A click outside the chat hides it; the agent keeps working. To keep it visible, 
 While Aska is running, its icon stays in the system tray (top right on GNOME).
 A green dot is added while a request is running, and the tooltip says which
 agents are working. Its menu shows or hides the chat, opens a new tab, cancels
-the running requests and quits Aska. On GNOME, a click opens this menu and a
+the running requests, opens the tasks or the settings, and quits Aska. On GNOME, a click opens this menu and a
 double-click shows or hides the chat directly; elsewhere, a left click shows or
 hides the chat and a right click opens the menu. `"tray": false` in the config
 removes it.
@@ -210,6 +211,7 @@ Type `/` in the field: a list of commands opens above it (`↑` `↓` to choose,
 | `/cd ~/project` | change the working folder (`~` and relative paths accepted; `/cd` alone opens the picker) |
 | `/retry` | send the last request of the conversation again |
 | `/copy`, `/history`, `/settings`, `/pin`, `/mini` | same as their shortcuts |
+| `/tasks` (or `/tache`) | open the [tasks](#tasks) |
 
 Your own commands go in `"commands"` in the [configuration](#configuration): a name and the prompt it sends, with `{input}` replaced by what you type after the name (`/trad bonjour` sends `Translate into English: bonjour`; without `{input}`, that text is added after a blank line). They show in the list with their `description`, or the first line of the prompt. An object can also pick the `agent` and the permission `mode` (switched in the window, as if you did it) and a `model` for that request only (`null`: the CLI's default). Names are lowercase letters, digits and `-`; a name taken by Aska's commands or by an agent is refused, and the window and `aska --help` say why.
 
@@ -269,6 +271,15 @@ Each bot is a folder in `~/.aska/bots/<id>/` (`%USERPROFILE%\.aska\bots\<id>\` o
 - A Claude session is only resumed with the same bot and the same text: after editing `SOUL.md` or `MEMORY.md`, the conversation goes on with its history sent again.
 - Bots are read at startup and by `aska --reload`. Like the configuration, a file that belongs to another user or that others can write is refused; problems show in the window and in `aska --help`, which also lists the bots.
 - `~/.aska` is a protected folder: no agent can write there, so a bot cannot change its own `maxMode`.
+
+## Tasks
+
+A task splits one goal between several bots, each in one git repository of a folder ("move every app to Node 26"). `Ctrl+Shift+T`, `/tasks` or "Tasks…" in the tray icon menu open the Tasks view in the window.
+
+1. **New task**: the goal, the folder (its git repositories, two levels deep) and the orchestrator (a bot, or the default agent). The orchestrator reads the folder, read-only, and proposes a plan; nothing runs yet.
+2. **Plan to review**: each subtask with its bot (an existing one, a copy with other rights, or a temporary bot made for the task), its repository, its mode, its instruction and its commands. Badges say what it may do: *writes*, *runs* (commands), *remote* (push, pull request, workflow). Uncheck a subtask to remove it, edit its instruction, lower its mode or uncheck a command. **Approve** grants each checked subtask what is shown, and nothing else.
+3. **Board**: each subtask runs in its own worktree (in Aska's data folder) on a new branch `aska/<goal>/<n>`; your working copy is never touched. Its state, branch, commits and changes follow live, with its journal (the bot's answer, rendered like the chat). Subtasks share the limit of 4 requests with the tabs.
+4. **Actions**: cancel a subtask or all of them, run one again (on top of its branch), keep a temporary bot (copied into `~/.aska/bots`), and clean up: the worktrees and the task are removed, the branches stay in the repositories.
 
 ## Settings
 
@@ -483,6 +494,7 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 | `rerun` | `Ctrl+R` |
 | `toggleMini` | `Ctrl+M` |
 | `togglePin` | `Ctrl+P` |
+| `tasks` | `Ctrl+Shift+T` |
 | `settings` | `Ctrl+,` |
 
 `Enter`, `Shift+Enter`, `Tab`, `Shift+Tab`, `Esc`, the arrows, `Del` and `Ctrl+1` to `Ctrl+9` are fixed (the settings list them). An invalid or conflicting shortcut is ignored and reported in the window and in `aska --help`; an action left with no valid shortcut keeps its defaults.

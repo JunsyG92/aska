@@ -234,6 +234,8 @@ function saveState() {
 
 // Folders are resolved (realpath): the home folder may be reached through a link
 // (macOS /var -> /private/var, Fedora Silverblue /home -> /var/home), so both forms count.
+// "~/projects" (as the window shows folders) back to an absolute path.
+const homePath = (p) => (p === '~' || p.startsWith('~/') || p.startsWith('~' + path.sep) ? path.join(os.homedir(), p.slice(1)) : p);
 const tilde = (p) => {
   if (p === P.workspace || p === fsRealWorkspace()) return t('app.scratch');
   const home = os.homedir();
@@ -486,6 +488,11 @@ function setupTray() {
       cancel: () => {
         for (const tab of tabs ? tabs.running() : []) tab.run.handle.cancel();
         if (taskEngine) taskEngine.stopAll();
+      },
+      tasks: () => {
+        if (!win) return;
+        showWindow();
+        win.webContents.send('aska:open-tasks');
       },
       settings: () => {
         if (!win) return;
@@ -983,8 +990,7 @@ function registerIpc() {
   handle('aska:set-dir', (raw) => {
     if (typeof raw !== 'string' || !raw.trim() || raw.length > 4096 || raw.includes('\0')) return { ...publicState(), error: t('errors.invalidFolder') };
     if (tabs.active().run) return { ...publicState(), error: t('errors.tabBusy') };
-    let p = raw.trim();
-    if (p === '~' || p.startsWith('~/') || p.startsWith('~' + path.sep)) p = path.join(os.homedir(), p.slice(1));
+    let p = homePath(raw.trim());
     if (!path.isAbsolute(p)) p = path.resolve(cwd === P.workspace ? os.homedir() : cwd, p);
     const d = sec.checkWorkdir(p, 'read');
     if (d.error) return { ...publicState(), error: d.error };
@@ -1220,17 +1226,27 @@ function launchSubtask(task, s) {
   const inv = invocationFor({ agent, mode: s.mode, prompt: s.prompt, turns: [], bot, model, excess, canPass, allow: s.allow });
   let answer = '';
   const startedAt = new Date().toISOString();
+  // The journal of the subtask, shown live in the Tasks view (saved when it ends).
+  let shown = null;
+  const show = () => {
+    shown = null;
+    if (s.status === 'running' && win && !win.isDestroyed()) win.webContents.send('aska:task', publicTask(task));
+  };
   const handle = launchAgent(
     agent,
     inv.argv,
     { cwd: dir.path, stdin: inv.stdin, output: agent.output, timeoutMs: cfg.timeoutSec * 1000, maxBytes: cfg.maxOutputKb * 1024 },
     (ev) => {
-      if (ev.type === 'text' && answer.length < MAX_ANSWER) answer += ev.text;
+      if (ev.type !== 'text' || answer.length >= MAX_ANSWER) return;
+      answer += ev.text;
+      s.answer = answer;
+      if (!shown) shown = setTimeout(show, 300);
     }
   );
   return {
     cancel: () => handle.cancel(),
     done: handle.done.then((res) => {
+      clearTimeout(shown);
       sec.appendAudit(P.audit, {
         ts: startedAt,
         task: task.id,
@@ -1259,6 +1275,7 @@ function publicTask(task) {
     subtasks: task.subtasks.map((s) => {
       const b = subtaskBot(s);
       const { botDir, ...rest } = s;
+      if (typeof rest.answer === 'string' && rest.answer.length > 8000) rest.answer = rest.answer.slice(-8000);
       return { ...rest, temporary: !!botDir, repo: tilde(s.repo), worktree: s.worktree ? tilde(s.worktree) : null, bot: b ? { id: b.id, label: b.label, color: b.color, avatar: b.avatar, image: b.image } : { id: s.botId, label: s.botLabel || s.botId } };
     }),
     root: tilde(task.root),
@@ -1273,7 +1290,26 @@ function setupTaskIpc() {
       return { error: e.message };
     }
   };
-  handle('aska:tasks-list', () => engineOr((e) => ({ tasks: e.list().map(publicTask) })));
+  // The tasks, and the folder offered for a new one (the active tab's, unless it is the scratch space).
+  handle('aska:tasks-list', () => engineOr((e) => ({ tasks: e.list().map(publicTask), root: cwd === P.workspace ? '' : tilde(cwd) })));
+  // The folder of a new task, chosen in the system dialog (the tab's folder does not change).
+  handle('aska:task-pick-root', async (from) => {
+    dialogOpen = true;
+    try {
+      const start = typeof from === 'string' ? homePath(from.trim()) : '';
+      const r = await dialog.showOpenDialog(win, {
+        title: t('app.pickDirTitle'),
+        defaultPath: start && path.isAbsolute(start) ? start : os.homedir(),
+        properties: ['openDirectory'],
+      });
+      if (r.canceled || !r.filePaths[0]) return { cancelled: true };
+      const d = sec.checkWorkdir(r.filePaths[0], 'read');
+      return d.error ? { error: d.error } : { path: d.path, label: tilde(d.path) };
+    } finally {
+      dialogOpen = false;
+      if (win) win.focus();
+    }
+  });
   handle('aska:task-create', (input) =>
     engineOr((e) => {
       const { checkTask } = require('./tasks/check');
@@ -1309,8 +1345,9 @@ function setupTaskIpc() {
     const v = req && typeof req === 'object' ? req : {};
     const goal = typeof v.goal === 'string' ? v.goal.trim() : '';
     if (!goal || goal.length > 2000 || goal.includes('\0')) return { error: t('tasks.badGoal', { max: 2000 }) };
-    if (typeof v.root !== 'string' || !path.isAbsolute(v.root)) return { error: t('tasks.badRoot') };
-    const root = sec.checkWorkdir(v.root, 'read');
+    const rawRoot = typeof v.root === 'string' ? homePath(v.root.trim()) : '';
+    if (!rawRoot || !path.isAbsolute(rawRoot)) return { error: t('tasks.badRoot') };
+    const root = sec.checkWorkdir(rawRoot, 'read');
     if (root.error) return { error: root.error };
     if (planRun) return { error: t('tasks.planBusy') };
     const { findRepos, realPath } = require('./tasks/worktree');
@@ -1348,7 +1385,20 @@ function setupTaskIpc() {
     if (!res.ok && !answer.trim()) return { error: t('bots.draft.failed', { agent: agent.label, error: res.error || (res.stderrTail || '').slice(-300) || res.reason }) };
     const p = parsePlan(answer, { root: rootPath, repos, bots });
     if (p.error) return { error: p.error };
-    return { plan: { goal, root: rootPath, ...p.plan, subtasks: p.plan.subtasks.map((s) => ({ ...s, repoLabel: path.relative(rootPath, s.repo) || '.' })) }, agent: agent.label };
+    // Each subtask with its rights, as the review shows them (and lets lower):
+    // one whose bot cannot run is left out, and said.
+    const { rightsOf } = require('./tasks/check');
+    const draft = draftAgent();
+    const ctx = { bots, agents, allowAutoMode: cfg.allowAutoMode, defaultAgent: draft ? draft.id : undefined };
+    const notes = [...p.plan.notes];
+    const subtasks = [];
+    for (const [i, s] of p.plan.subtasks.entries()) {
+      const r = rightsOf(s, i + 1, ctx);
+      if (r.error) notes.push(r.error);
+      else subtasks.push({ ...s, repoLabel: path.relative(rootPath, s.repo).split(path.sep).join('/') || '.', rights: r.rights });
+    }
+    if (!subtasks.length) return { error: notes.join('\n') || t('tasks.planEmpty') };
+    return { plan: { goal, root: rootPath, rootLabel: tilde(rootPath), ...p.plan, notes, subtasks }, agent: agent.label };
   });
   handle('aska:task-plan-cancel', () => {
     if (planRun) planRun.cancel();

@@ -1189,3 +1189,89 @@ kbd {
 .panel.mini .tabs { display: none; }
 
 [hidden] { display: none !important; }
+
+/* ---------- tasks (same frame as the settings, wider) ---------- */
+
+.panel.in-tasks { width: 860px; }
+.tasks .set-body { max-height: 470px; }
+.tk-goal { min-height: 64px; }
+.tk-root { width: 420px; }
+.tk-wait { display: flex; align-items: center; gap: 8px; padding: 10px 0 2px; color: var(--muted); font-size: 13px; }
+.tk-plan, .tk-list { display: grid; gap: 8px; padding: 10px 0 4px; }
+.tk-plan-item, .tk-sub, .tk-item {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.tk-plan-item.off { opacity: 0.55; }
+.tk-item { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.tk-item:hover, .tk-item:focus-visible { border-color: var(--muted); background: var(--surface-2); outline: 0; }
+.tk-plan-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tk-check { flex: none; width: 15px; height: 15px; accent-color: var(--agent); }
+.tk-av { width: 26px; height: 26px; flex: none; border-radius: 50%; object-fit: cover; }
+.tk-who { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; }
+.tk-who b { font-weight: 600; }
+.tk-tag { color: var(--faint); font: 12px/1 var(--mono); }
+.tk-repo { color: var(--muted); font: 12.5px/1 var(--mono); overflow: hidden; text-overflow: ellipsis; }
+.tk-badges { display: flex; flex: none; gap: 4px; }
+.tk-badge {
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--c);
+  background: color-mix(in oklab, var(--c) 13%, transparent);
+}
+.tk-badge.write { --c: var(--edit); }
+.tk-badge.run { --c: var(--auto); }
+.tk-badge.remote, .tk-badge.auto { --c: var(--err); }
+.tk-plan-meta { display: flex; align-items: center; gap: 8px; }
+.tk-plan-meta .set-select { width: auto; }
+.tk-agent { margin-left: auto; color: var(--faint); font-size: 12px; }
+.tk-cmds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tk-cmds .set-hint { flex-basis: 100%; }
+.tk-cmd {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.tk-cmd code { font: 12px/1 var(--mono); }
+.tk-cmd.remote { border-color: color-mix(in oklab, var(--err) 40%, var(--line)); }
+.tk-cmd input { margin: 0; accent-color: var(--agent); }
+.tk-remote { color: var(--err); font-size: 11px; font-weight: 600; }
+.tk-goal-text { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.tk-summary { margin: 6px 0 0; }
+.tk-notes { margin: 6px 0 0; padding-left: 18px; color: var(--auto); font-size: 12.5px; }
+.tk-board-title { display: flex; align-items: baseline; gap: 10px; }
+.tk-board-title .tk-goal-text { flex: 1; min-width: 0; }
+.tk-status {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--c, var(--muted));
+  background: color-mix(in oklab, var(--c, var(--muted)) 13%, transparent);
+}
+.tk-status.running, .tk-status.queued { --c: var(--agent); }
+.tk-status.done { --c: var(--ok); }
+.tk-status.failed { --c: var(--err); }
+.tk-status.cancelled, .tk-status.stopped { --c: var(--faint); }
+.tk-facts { color: var(--muted); font: 12px/1.4 var(--mono); overflow-wrap: anywhere; }
+.tk-sub-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.tk-log { display: grid; gap: 4px; padding-top: 8px; border-top: 1px solid var(--line); }
+.tk-log-title { color: var(--faint); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.tk-prompt { margin: 0 0 6px; white-space: pre-wrap; font-size: 13px; color: var(--muted); }
+.tk-answer { max-height: 260px; overflow-y: auto; user-select: text; }
+.tk-check:focus-visible, .tk-cmd:focus-within { outline: 2px solid var(--agent); outline-offset: 1px; }
+.tk-cmds.inactive .tk-cmd { opacity: 0.5; }
