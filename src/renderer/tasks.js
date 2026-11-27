@@ -79,16 +79,7 @@
       render();
       return setMessage(r.error, 'err');
     }
-    review = {
-      plan: r.plan,
-      agent: r.agent,
-      items: r.plan.subtasks.map((s) => ({
-        include: true,
-        mode: s.rights.modes.includes(s.mode) ? s.mode : s.rights.modes[Math.min(1, s.rights.modes.length - 1)],
-        prompt: s.prompt,
-        allow: [...s.rights.allow],
-      })),
-    };
+    review = { plan: r.plan, agent: r.agent, items: itemsOf(r.plan.subtasks), auto: false };
     render();
     setMessage('');
     const first = root.querySelector('.tk-plan-item input');
@@ -184,9 +175,18 @@
     return w;
   }
 
+  // What the review edits, for each subtask of a plan or of a next wave.
+  const itemsOf = (subtasks) =>
+    subtasks.map((s) => ({
+      include: true,
+      mode: s.rights.modes.includes(s.mode) ? s.mode : s.rights.modes[Math.min(1, s.rights.modes.length - 1)],
+      prompt: s.prompt,
+      allow: [...s.rights.allow],
+    }));
+
   function planItem(s, item, i) {
     const r = s.rights;
-    const card = el('div', 'tk-plan-item' + (item.include ? '' : ' off'));
+    const card = el('div', 'tk-plan-item' + (item.include ? '' : ' off') + (s.newRights && s.newRights.length ? ' new-rights' : ''));
     card.dataset.n = String(i + 1);
 
     const head = el('div', 'tk-plan-head');
@@ -202,11 +202,15 @@
     const name = el('b', null, r.bot.label);
     const tag = r.bot.id ? `@${r.bot.id}` : r.bot.copyOf ? t('tasks.copyOf', { bot: r.bot.copyOf }) : t('tasks.temporary');
     who.append(name, el('span', 'tk-tag', tag), el('span', 'tk-repo', s.repoLabel));
+    if (s.continues) who.append(el('span', 'tk-tag', t('tasks.continues', { n: s.continues })));
     const badges = el('div', 'tk-badges');
+    if (s.newRights && s.newRights.length) badges.append(el('span', 'tk-badge new', t('tasks.warn.new')));
     for (const [kind, text] of warnings(item, r)) badges.append(el('span', `tk-badge ${kind}`, text));
     head.append(check, avatar(r.bot), who, badges);
     card.append(head);
     if (!item.include) return card;
+    // A next wave asking for more than the task was granted: said, reviewed.
+    if (s.newRights && s.newRights.length) card.append(el('div', 'tk-new-rights', t('tasks.newRights', { list: s.newRights.join(' ; ') })));
 
     const mode = el('select', 'set-select small');
     mode.setAttribute('aria-label', t('tasks.mode'));
@@ -257,12 +261,12 @@
   }
 
   // The subtasks as approved: an existing bot with fewer commands becomes a copy of it.
-  function approved() {
+  function approved(subtasks, items) {
     const out = [];
-    review.plan.subtasks.forEach((s, i) => {
-      const item = review.items[i];
+    subtasks.forEach((s, i) => {
+      const item = items[i];
       if (!item.include) return;
-      const sub = { repo: s.repo, prompt: item.prompt.trim(), mode: item.mode };
+      const sub = { repo: s.repo, prompt: item.prompt.trim(), mode: item.mode, ...(s.continues ? { continues: s.continues } : {}) };
       const fewer = s.rights.commands && item.allow.length !== s.rights.allow.length;
       if (s.botId) Object.assign(sub, fewer ? { bot: { copyOf: s.botId, allow: item.allow } } : { botId: s.botId });
       else sub.bot = fewer ? { ...s.bot, allow: item.allow } : s.bot;
@@ -273,11 +277,11 @@
 
   async function approveNow() {
     if (busy) return;
-    const subtasks = approved();
+    const subtasks = approved(review.plan.subtasks, review.items);
     if (!subtasks.length) return setMessage(t('tasks.noneChosen'), 'err');
     if (subtasks.some((s) => !s.prompt)) return setMessage(t('tasks.promptMissing'), 'err');
     busy = true;
-    const c = await opts.api.createTask({ goal: review.plan.goal, root: review.plan.root, subtasks });
+    const c = await opts.api.createTask({ goal: review.plan.goal, root: review.plan.root, subtasks, orchestrator: form.orchestrator || undefined, auto: review.auto });
     if (c.error) {
       busy = false;
       return setMessage(c.error, 'err');
@@ -307,6 +311,15 @@
       head.append(notes);
     }
     head.append(el('p', 'set-hint', t('tasks.consent')));
+    // Next waves: by themselves when they ask for nothing new, otherwise reviewed here again.
+    const auto = el('label', 'tk-auto');
+    const autoBox = el('input', 'tk-check');
+    autoBox.type = 'checkbox';
+    autoBox.checked = review.auto;
+    autoBox.dataset.focusKey = 'auto';
+    autoBox.addEventListener('change', () => { review.auto = autoBox.checked; });
+    auto.append(autoBox, el('span', null, t('tasks.autoContinue')));
+    head.append(auto, el('p', 'set-hint', t('tasks.autoHint')));
     const list = el('div', 'tk-plan');
     p.subtasks.forEach((s, i) => list.append(planItem(s, review.items[i], i)));
     const n = review.items.filter((x) => x.include).length;
@@ -388,6 +401,7 @@
     const head = el('div', 'tk-plan-head');
     const who = el('div', 'tk-who');
     who.append(el('b', null, s.bot.label), el('span', 'tk-tag', s.kept ? `@${s.kept}` : s.temporary ? t('tasks.temporary') : `@${s.bot.id}`), el('span', 'tk-repo', repoOf(x, s)));
+    if (s.continues) who.append(el('span', 'tk-tag', t('tasks.continues', { n: s.continues })));
     const st = el('span', `tk-status ${s.status}`, t(`tasks.status.${s.status}`));
     head.append(avatar(s.bot), who, st);
     row.append(head);
@@ -477,21 +491,85 @@
     const o = x.overview;
     if (o && !o.running && !o.pending) head.append(el('p', 'tk-overview', t('tasks.overview', { done: o.done, check: o.check, failed: o.failed, prs: o.prs.length })));
     const list = el('div', 'tk-plan');
-    for (const s of x.subtasks) list.append(subRow(x, s));
+    // Grouped by wave, once there is more than one.
+    let lastWave = 0;
+    for (const s of x.subtasks) {
+      const w = s.wave || 1;
+      if ((x.wave || 1) > 1 && w !== lastWave) list.append(el('h3', 'set-title tk-wave', t('tasks.waveTitle', { n: w })));
+      lastWave = w;
+      list.append(subRow(x, s));
+    }
+    const body = [head, list];
     const running = x.subtasks.some((s) => RUNNING.has(s.status));
+    // The next wave: being written, proposed for review, or nothing more to do.
+    if (x.asking) {
+      const wait = el('div', 'tk-wait');
+      wait.append(el('span', 'spinner'), el('span', null, t('tasks.waveAsking', { n: x.nextWave && x.nextWave.n ? x.nextWave.n : (x.wave || 1) + 1 })));
+      body.push(wait);
+    } else if (x.proposal) body.push(...proposalBlock(x));
+    else if (x.waveNote) body.push(el('p', 'tk-wave-note', x.waveNote));
     const actions = [button(t('tasks.allTasks'), () => {
       current = null;
       armed = null;
       render();
       setMessage('');
     }, 'set-btn', 'all')];
+    if (x.asking) actions.push(button(t('tasks.cancelPlan'), () => opts.api.cancelTaskPlan(), 'set-btn', 'cancel-wave'));
+    else if (!running && !x.proposal && !x.waveNote && x.nextWave && x.nextWave.n && x.status === 'done') {
+      actions.push(button(t('tasks.proposeWave', { n: x.nextWave.n }), () => askWave(x), 'set-btn', 'wave'));
+    }
     if (running) actions.push(button(t('tasks.cancelAll'), () => act(() => opts.api.cancelTask(x.id)), 'set-btn', 'cancel-all'));
     if (x.subtasks.some((s) => s.status === 'pending')) actions.push(button(t('tasks.start'), () => act(() => opts.api.startTask(x.id)), 'set-btn primary', 'start'));
     const clean = button(t(armed === 'cleanup' ? 'tasks.cleanupSure' : 'tasks.cleanup'), () => cleanupNow(x), 'set-btn danger' + (armed === 'cleanup' ? ' armed' : ''), 'cleanup');
-    clean.disabled = running;
+    clean.disabled = running || !!x.asking;
     clean.title = t('tasks.cleanupHint');
     actions.push(clean);
-    return { body: [head, list], actions };
+    return { body, actions };
+  }
+
+  // ---------- next waves ----------
+
+  let waveReview = null; // { id, n, items } for the proposal shown
+
+  async function askWave(x) {
+    if (busy) return;
+    setMessage('');
+    const r = await act(() => opts.api.proposeWave(x.id));
+    if (r && r.done) setMessage(t('tasks.waveNothing'), 'ok');
+  }
+
+  function proposalBlock(x) {
+    const p = x.proposal;
+    if (!waveReview || waveReview.id !== x.id || waveReview.n !== p.n) waveReview = { id: x.id, n: p.n, items: itemsOf(p.subtasks) };
+    const box = el('section', 'set-section tk-proposal');
+    box.append(el('h3', 'set-title', t('tasks.waveProposed', { n: p.n })));
+    if (p.summary) box.append(el('p', 'tk-summary', p.summary));
+    if (p.notes && p.notes.length) {
+      const notes = el('ul', 'tk-notes');
+      for (const n of p.notes) notes.append(el('li', null, n));
+      box.append(notes);
+    }
+    box.append(el('p', 'set-hint', t('tasks.waveConsent')));
+    const list = el('div', 'tk-plan');
+    p.subtasks.forEach((s, i) => list.append(planItem(s, waveReview.items[i], i)));
+    const k = waveReview.items.filter((it) => it.include).length;
+    const line = el('div', 'tk-sub-actions');
+    const ok = button(t('tasks.approveWave', { count: k }), () => approveWaveNow(x), 'set-btn small primary', 'approve-wave');
+    ok.disabled = !k || busy;
+    line.append(ok, button(t('tasks.dismissWave'), () => act(() => opts.api.dismissWave(x.id)), 'set-btn small', 'dismiss-wave'));
+    box.append(list, line);
+    return [box];
+  }
+
+  async function approveWaveNow(x) {
+    const subtasks = approved(x.proposal.subtasks, waveReview.items);
+    if (!subtasks.length) return setMessage(t('tasks.noneChosen'), 'err');
+    if (subtasks.some((s) => !s.prompt)) return setMessage(t('tasks.promptMissing'), 'err');
+    const r = await act(() => opts.api.approveWave(x.id, subtasks));
+    if (r && !r.error) {
+      waveReview = null;
+      setMessage(t('tasks.started'), 'ok');
+    }
   }
 
   function listPage() {

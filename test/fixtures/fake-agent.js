@@ -71,6 +71,18 @@ process.stdin.on('end', async () => {
       '```',
       '',
     ].join('\n'));
+  } else if (mode === 'stream' && prompt.includes('<results>')) {
+    // A next wave (tasks): nothing more at the last wave; otherwise new rights if the goal says so.
+    j({ type: 'system', subtype: 'init', model: 'fake-model-1', session_id: 'sess-0005-wave' });
+    const goal = (prompt.match(/<goal>\n([\s\S]*?)\n<\/goal>/) || [])[1] || '';
+    const wave = prompt.includes('wave 3 of 3')
+      ? { summary: 'Objectif atteint.', subtasks: [] }
+      : goal.includes('[newrights]')
+        ? { summary: 'Lancer les tests de web.', subtasks: [{ repo: 'web', bot: { label: 'Testeur', soul: 'Tu lances les tests.', maxMode: 'edit', allow: ['npm test'] }, mode: 'edit', instruction: 'Lance npm test' }] }
+        : { summary: 'Relire encore.', subtasks: [{ repo: 'api', continues: 1, bot: 'trad', mode: 'read', instruction: 'Relis le README encore' }] };
+    await sleep(Number(process.env.FAKE_DELAY || 15) * 10);
+    j({ type: 'assistant', message: { content: [{ type: 'text', text: JSON.stringify(wave) }] } });
+    j({ type: 'result', subtype: 'success', is_error: false, result: 'fin' });
   } else if (mode === 'stream' && prompt.includes('<goal>')) {
     // The orchestrator's plan (tasks): the repositories it was given, one bot of each kind.
     j({ type: 'system', subtype: 'init', model: 'fake-model-1', session_id: 'sess-0003-plan' });

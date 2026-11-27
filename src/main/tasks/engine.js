@@ -22,9 +22,10 @@ class TaskEngine {
    * @param busy         () => requests running elsewhere (the tabs)
    * @param max          requests at most, all together
    * @param onUpdate     (task) => void, after every change
+   * @param onDone       (task) => void, when its last subtask ends (not when the user cancels it all)
    */
-  constructor({ store, gitBin, worktreesDir, launch, busy = () => 0, max = 4, onUpdate = () => {} }) {
-    Object.assign(this, { store, gitBin, worktreesDir, launch, busy, max, onUpdate });
+  constructor({ store, gitBin, worktreesDir, launch, busy = () => 0, max = 4, onUpdate = () => {}, onDone = () => {} }) {
+    Object.assign(this, { store, gitBin, worktreesDir, launch, busy, max, onUpdate, onDone });
     this.tasks = new Map();
     this.running = new Map(); // "<task>/<n>" -> handle
     for (const task of store.list()) this.tasks.set(task.id, task);
@@ -67,9 +68,29 @@ class TaskEngine {
       }
     }
     task.status = 'running';
+    if (!task.startedAt) task.startedAt = new Date().toISOString(); // the waves' time limit counts from here
+    delete task.cancelled;
     this.changed(task);
     this.pump();
     return { ok: true };
+  }
+
+  /**
+   * A next wave: its subtasks (checked like a task's) numbered after the
+   * others, pending until started. One that continues a subtask starts from
+   * its branch (see run).
+   */
+  addWave(id, subtasks) {
+    const task = this.get(id);
+    if (!task) return { error: t('tasks.unknown') };
+    const wave = (task.wave || 1) + 1;
+    const from = task.subtasks.length;
+    task.subtasks.push(...subtasks.map((s, i) => ({ n: from + i + 1, wave, status: 'pending', ...s })));
+    task.wave = wave;
+    delete task.proposal;
+    task.status = 'ready';
+    this.changed(task);
+    return { ok: true, task };
   }
 
   /** Starts queued subtasks while there is room. */
@@ -86,13 +107,16 @@ class TaskEngine {
   run(task, s) {
     // Its worktree, made once: a subtask run again works on top of its branch.
     if (!s.worktree) {
+      // Continuing a subtask: from its branch, with its base (its commits are part of the result).
+      const prev = s.continues ? task.subtasks.find((x) => x.n === s.continues && x.branch) : null;
       const w = addWorktree(this.gitBin, {
         repo: s.repo,
         dir: path.join(this.worktreesDir, task.id, String(s.n)),
         branch: `aska/${task.slug}/${s.n}`,
+        ...(prev ? { base: `refs/heads/${prev.branch}` } : {}),
       });
       if (w.error) return this.finish(task, s, { ok: false, reason: 'worktree', error: w.error });
-      Object.assign(s, { worktree: w.dir, branch: w.branch, base: w.base, baseRef: w.baseRef });
+      Object.assign(s, { worktree: w.dir, branch: w.branch, base: prev ? prev.base : w.base, baseRef: prev ? prev.baseRef : w.baseRef });
     }
     s.status = 'running';
     s.startedAt = new Date().toISOString();
@@ -127,15 +151,18 @@ class TaskEngine {
     }
     if (!s.report) delete s.report;
     if (s.worktree) s.summary = summary(this.gitBin, { dir: s.worktree, base: s.base });
-    if (task.subtasks.every((x) => DONE.has(x.status) || x.status === 'pending')) task.status = 'done';
+    const ended = task.status !== 'done' && task.subtasks.every((x) => DONE.has(x.status) || x.status === 'pending');
+    if (ended) task.status = 'done';
     this.changed(task);
     this.pump();
+    if (ended && !task.cancelled) this.onDone(task);
   }
 
   /** Cancels a subtask, or the whole task: queued ones do not start, running ones stop. */
   cancel(id, n = null) {
     const task = this.get(id);
     if (!task) return { error: t('tasks.unknown') };
+    if (n === null) task.cancelled = true; // stopped by the user: no next wave by itself
     for (const s of task.subtasks) {
       if (n !== null && s.n !== n) continue;
       if (s.status === 'queued' || s.status === 'pending') s.status = 'cancelled';

@@ -478,3 +478,105 @@ test('pull request: pushed to origin (never forced), opened with gh; no gh or no
   assert.match((await pushAndOpenPr({ ...base, gh })).error, /no "origin" remote/);
   assert.match((await pushAndOpenPr({ ...base, gh, branch: 'main' })).error, /Invalid branch name/);
 });
+
+// ---------- ticket 18: next waves ----------
+
+const { nextWave, continuable: continuableOf, newRights, MAX_WAVES } = require('../src/main/tasks/waves');
+
+test('waves: limits (waves, subtasks, time, still running)', () => {
+  const now = Date.parse('2026-11-27T12:00:00Z');
+  const sub = (n, status = 'done', extra = {}) => ({ n, status, repo: '/r/a', mode: 'edit', allow: [], ...extra });
+  const task = (subtasks, extra = {}) => ({ wave: 1, startedAt: '2026-11-27T11:00:00Z', subtasks, ...extra });
+  assert.deepEqual(nextWave(task([sub(1), sub(2, 'failed')]), now), { n: 2, room: 20 });
+  assert.match(nextWave(task([sub(1, 'running')]), now).error, /Wait for the running subtasks/);
+  assert.match(nextWave(task([sub(1)], { wave: MAX_WAVES }), now).error, /3 waves at most/);
+  assert.match(nextWave(task(Array.from({ length: 30 }, (_, i) => sub(i + 1))), now).error, /30 subtasks at most/);
+  assert.deepEqual(nextWave(task(Array.from({ length: 25 }, (_, i) => sub(i + 1))), now), { n: 2, room: 5 }, 'the room left');
+  assert.match(nextWave(task([sub(1)], { startedAt: '2026-11-27T09:59:00Z' }), now).error, /more than 2 hours/);
+  // Continuable: a finished subtask with a branch.
+  const c = continuableOf(task([sub(1, 'failed', { branch: 'aska/x/1' }), sub(2, 'done')]));
+  assert.deepEqual([...c.keys()], [1]);
+});
+
+test('waves: what is new beyond the rights the task was granted', () => {
+  const task = {
+    subtasks: [
+      { n: 1, repo: '/r/api', mode: 'edit', allow: ['git add', 'git commit'] },
+      { n: 2, repo: '/r/web', mode: 'read', allow: ['npm test'] }, // read-only: its commands were never granted
+    ],
+  };
+  assert.deepEqual(newRights(task, { repo: '/r/web', mode: 'edit', allow: ['git commit'] }), []);
+  assert.deepEqual(newRights(task, { repo: '/r/api', mode: 'read', allow: ['git push'] }), [], 'read-only: no command granted');
+  assert.deepEqual(newRights(task, { repo: '/r/docs', mode: 'read', allow: [] }), ['a repository the task did not have']);
+  assert.deepEqual(newRights(task, { repo: '/r/api', mode: 'auto', allow: [] }), ['the "Autonomous" mode, wider than those granted']);
+  assert.deepEqual(newRights(task, { repo: '/r/api', mode: 'edit', allow: ['npm test', 'git commit', 'git push'] }), ['commands not granted: npm test, git push']);
+});
+
+test('waves: the prompt gives the results as data; the answer may continue a subtask or be empty', () => {
+  const prompt = planPrompt({ goal: 'Node 26', repos: ['api'], bots: [], wave: { n: 2, max: 3, room: 4, results: '- 1. api: failed. tests failed' } });
+  assert.match(prompt, /This would be wave 2 of 3/);
+  assert.match(prompt, /At most 4 subtasks/);
+  assert.match(prompt, /<results>\n- 1\. api: failed\. tests failed\n<\/results>/);
+  assert.match(prompt, /"continues": <its number>/);
+  assert.doesNotMatch(planPrompt({ goal: 'Node 26', repos: ['api'], bots: [] }), /<results>/);
+  const root = path.join(path.sep, 'r');
+  const api = path.join(root, 'api');
+  const web = path.join(root, 'web');
+  const cont = new Map([[1, { n: 1, repo: web, branch: 'aska/x/1' }]]);
+  const bots = { trad: { id: 'trad' } };
+  const answer = JSON.stringify({
+    summary: 'Corriger web.',
+    subtasks: [
+      { repo: 'api', continues: 1, bot: 'trad', instruction: 'Répare les tests' },
+      { repo: 'api', continues: 7, bot: 'trad', instruction: 'x' },
+      { repo: 'api', bot: 'trad', instruction: 'y' },
+      { repo: 'api', bot: 'trad', instruction: 'z' },
+    ],
+  });
+  const p = parsePlan(answer, { root, repos: [api, web], bots, continuable: cont, max: 2 });
+  assert.deepEqual(p.plan.subtasks.map((s) => [s.repo, s.continues]), [[web, 1], [api, undefined]], 'continuing: its repository; then the room left');
+  assert.match(p.plan.notes.join('\n'), /Subtask 2 left out: subtask 7 has no branch to continue[\s\S]*Only the first 2 subtasks/);
+  const empty = parsePlan('{"summary": "Fini.", "subtasks": []}', { root, repos: [api], bots, continuable: cont });
+  assert.deepEqual(empty.plan, { summary: 'Fini.', subtasks: [], notes: [] }, 'a next wave may be empty');
+  assert.match(parsePlan('{"summary": "Fini.", "subtasks": []}', { root, repos: [api], bots }).error, /no subtask/);
+});
+
+test('task engine: a next wave, one subtask continuing another on its branch; told when it all ends', { skip: !hasGit && 'git not installed' }, async () => {
+  const root = tmp();
+  const repo = makeRepo(path.join(root, 'repos', 'a'));
+  const store = new TaskStore(path.join(root, 'state'));
+  const { runs, launch } = fakeLaunch();
+  const done = [];
+  const engine = new TaskEngine({ store, gitBin: GIT, worktreesDir: path.join(root, 'wt'), launch, onDone: (t) => done.push(t.wave) });
+  const task = engine.add(store.create({ goal: 'Node 26', root, subtasks: [{ repo, botId: 'b', prompt: 'p', mode: 'edit', allow: [] }] }));
+  task.wave = 1;
+  engine.start(task.id);
+  assert.ok(task.startedAt);
+  const s1 = task.subtasks[0];
+  fs.writeFileSync(path.join(s1.worktree, '.nvmrc'), '26\n');
+  assert.ok(git(GIT, ['add', '.'], s1.worktree).ok);
+  assert.ok(git(GIT, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'chore: node 26'], s1.worktree).ok);
+  runs[0].end({ ok: false, reason: 'exit', error: 'tests failed', durationMs: 1 });
+  await tick();
+  assert.deepEqual(done, [1], 'the task ended: told once');
+  // Wave 2: continues subtask 1 from its branch, with its base.
+  engine.addWave(task.id, [{ repo, botId: 'b', prompt: 'fix', mode: 'edit', allow: [], continues: 1 }]);
+  assert.deepEqual([task.wave, task.subtasks[1].n, task.subtasks[1].wave, task.subtasks[1].status], [2, 2, 2, 'pending']);
+  engine.start(task.id);
+  const s2 = task.subtasks[1];
+  assert.equal(s2.branch, 'aska/node-26/2');
+  assert.ok(fs.existsSync(path.join(s2.worktree, '.nvmrc')), 'from the branch it continues');
+  assert.equal(s2.base, s1.base, 'the same base: its pull request has both commits');
+  runs[1].end({ ok: true, durationMs: 1, answer: '{"status": "done", "summary": "ok", "commits": [], "followUp": ""}' });
+  await tick();
+  assert.deepEqual(s2.summary.commits.map((c) => c.replace(/^\w+ /, '')), ['chore: node 26']);
+  assert.deepEqual(done, [1, 2]);
+  // Cancelled by the user: not told (no next wave by itself).
+  engine.addWave(task.id, [{ repo, botId: 'b', prompt: 'more', mode: 'edit', allow: [] }]);
+  engine.start(task.id);
+  engine.cancel(task.id);
+  runs[2].end({ ok: false, reason: 'cancel', durationMs: 1 });
+  await tick();
+  assert.deepEqual(done, [1, 2]);
+  assert.deepEqual(engine.cleanup(task.id), { ok: true });
+});

@@ -1183,6 +1183,8 @@ const botBusy = (id) => tabs.list.some((x) => x.run && x.run.botId === id);
 // Loaded on first use only: Aska starts and runs as before for whoever never opens them.
 
 let taskEngine = null;
+let onTaskDone = null; // set with the tasks' IPC (a next wave)
+const waving = new Set(); // tasks whose next wave is being written
 
 function tasksModule() {
   if (taskEngine) return taskEngine;
@@ -1199,6 +1201,9 @@ function tasksModule() {
     max: MAX_RUNS,
     onUpdate: (task) => {
       if (win && !win.isDestroyed()) win.webContents.send('aska:task', publicTask(task));
+    },
+    onDone: (task) => {
+      if (onTaskDone) onTaskDone(task);
     },
   });
   taskEngine.gitBin = git.path;
@@ -1273,9 +1278,13 @@ function launchSubtask(task, s) {
 // What the window sees of a task (the bots by their public fields).
 function publicTask(task) {
   const { taskSummary, prText } = require('./tasks/report');
+  const next = require('./tasks/waves').nextWave(task);
   return {
     ...task,
     overview: taskSummary(task),
+    // A next wave: being written, or whether one may be asked for (and why not).
+    asking: waving.has(task.id),
+    nextWave: next.error ? { error: next.error } : { n: next.n },
     subtasks: task.subtasks.map((s) => {
       const b = subtaskBot(s);
       const { botDir, ...rest } = s;
@@ -1322,50 +1331,33 @@ function setupTaskIpc() {
       const draft = draftAgent();
       const c = checkTask(input, { bots, agents, allowAutoMode: cfg.allowAutoMode, gitBin: e.gitBin, defaultAgent: draft ? draft.id : undefined });
       if (c.error) return c;
-      // Temporary bots: written into the task's folder once it has its id.
       const task = e.store.create(c);
-      const { writeTempBot } = require('./tasks/bots');
-      for (const s of task.subtasks) {
-        if (!s.temp) continue;
-        s.botDir = path.join(e.store.botsDir(task.id), String(s.n));
-        s.botLabel = s.temp.label;
-        writeTempBot(s.botDir, s.temp);
-        delete s.temp;
-      }
+      // Who planned it (asked again for a next wave), and whether a wave within its rights starts by itself.
+      task.orchestrator = typeof input.orchestrator === 'string' && Object.hasOwn(bots, input.orchestrator) ? input.orchestrator : null;
+      task.auto = input.auto === true;
+      task.wave = 1;
+      for (const s of task.subtasks) s.wave = 1;
+      // Temporary bots: written into the task's folder once it has its id.
+      writeTempBots(e, task);
       return { task: publicTask(e.add(task)) };
     })
   );
   handle('aska:task-start', (req) => engineOr((e) => e.start(req && req.id, req && Array.isArray(req.numbers) ? req.numbers : null)));
   handle('aska:task-cancel', (req) => engineOr((e) => e.cancel(req && req.id, req && Number.isInteger(req.n) ? req.n : null)));
   handle('aska:task-cleanup', (id) => engineOr((e) => e.cleanup(id)));
-  // The orchestrator's plan: a bot (or the default agent), read-only in the
-  // task's folder. Nothing is created: the window shows the plan to review.
+  // The orchestrator: a bot (or the default agent), read-only in the task's
+  // folder, one run at a time (a plan, or a next wave). Nothing is created:
+  // its subtasks come back with their rights, for the review.
   let planRun = null;
-  handle('aska:task-plan', async (req) => {
-    let e;
-    try {
-      e = tasksModule();
-    } catch (err) {
-      return { error: err.message };
-    }
-    const v = req && typeof req === 'object' ? req : {};
-    const goal = typeof v.goal === 'string' ? v.goal.trim() : '';
-    if (!goal || goal.length > 2000 || goal.includes('\0')) return { error: t('tasks.badGoal', { max: 2000 }) };
-    const rawRoot = typeof v.root === 'string' ? homePath(v.root.trim()) : '';
-    if (!rawRoot || !path.isAbsolute(rawRoot)) return { error: t('tasks.badRoot') };
-    const root = sec.checkWorkdir(rawRoot, 'read');
-    if (root.error) return { error: root.error };
+
+  async function askOrchestrator({ goal, rootPath, repos, botId, wave = null, continuable = null, max }) {
     if (planRun) return { error: t('tasks.planBusy') };
-    const { findRepos, realPath } = require('./tasks/worktree');
-    const rootPath = realPath(root.path);
-    const repos = findRepos(e.gitBin, rootPath);
-    if (!repos.length) return { error: t('tasks.noRepos', { root: tilde(rootPath) }) };
-    const orchestrator = typeof v.botId === 'string' && Object.hasOwn(bots, v.botId) ? bots[v.botId] : null;
+    const orchestrator = typeof botId === 'string' && Object.hasOwn(bots, botId) ? bots[botId] : null;
     const agent = orchestrator ? agents[orchestrator.agent] : draftAgent();
     if (!agent || !agent.binPath) return { error: t('errors.unknownAgent') };
     const { planPrompt, parsePlan } = require('./tasks/plan');
     const publicBots = Object.values(bots).map((b) => ({ id: b.id, label: b.label, description: b.description, agent: b.agent, maxMode: b.maxMode, allow: b.allow }));
-    const prompt = planPrompt({ goal, repos: repos.map((r) => path.relative(rootPath, r).split(path.sep).join('/') || '.'), bots: publicBots, lang: getLanguage(), allowAutoMode: cfg.allowAutoMode });
+    const prompt = planPrompt({ goal, repos: repos.map((r) => path.relative(rootPath, r).split(path.sep).join('/') || '.'), bots: publicBots, lang: getLanguage(), allowAutoMode: cfg.allowAutoMode, wave });
     const { excess, canPass } = commandFit(agent);
     let inv;
     try {
@@ -1386,10 +1378,10 @@ function setupTaskIpc() {
     );
     const res = await planRun.done;
     planRun = null;
-    sec.appendAudit(P.audit, { ts: startedAt, plan: true, agent: agent.id, bot: orchestrator ? orchestrator.id : undefined, mode: 'read', cwd: rootPath, argv: inv.logArgv, prompt: cfg.savePrompts ? goal : undefined, result: res.reason, durationMs: res.durationMs });
+    sec.appendAudit(P.audit, { ts: startedAt, plan: true, wave: wave ? wave.n : undefined, agent: agent.id, bot: orchestrator ? orchestrator.id : undefined, mode: 'read', cwd: rootPath, argv: inv.logArgv, prompt: cfg.savePrompts ? goal : undefined, result: res.reason, durationMs: res.durationMs });
     if (res.reason === 'cancel') return { cancelled: true };
     if (!res.ok && !answer.trim()) return { error: t('bots.draft.failed', { agent: agent.label, error: res.error || (res.stderrTail || '').slice(-300) || res.reason }) };
-    const p = parsePlan(answer, { root: rootPath, repos, bots });
+    const p = parsePlan(answer, { root: rootPath, repos, bots, continuable, ...(max ? { max } : {}) });
     if (p.error) return { error: p.error };
     // Each subtask with its rights, as the review shows them (and lets lower):
     // one whose bot cannot run is left out, and said.
@@ -1403,9 +1395,148 @@ function setupTaskIpc() {
       if (r.error) notes.push(r.error);
       else subtasks.push({ ...s, repoLabel: path.relative(rootPath, s.repo).split(path.sep).join('/') || '.', rights: r.rights });
     }
-    if (!subtasks.length) return { error: notes.join('\n') || t('tasks.planEmpty') };
-    return { plan: { goal, root: rootPath, rootLabel: tilde(rootPath), ...p.plan, notes, subtasks }, agent: agent.label };
+    if (p.plan.subtasks.length && !subtasks.length) return { error: notes.join('\n') || t('tasks.planEmpty') };
+    return { plan: { summary: p.plan.summary, notes, subtasks }, agent: agent.label };
+  }
+
+  // Temporary bots of the subtasks from number "from": written into the task's folder.
+  function writeTempBots(e, task, from = 1) {
+    const { writeTempBot } = require('./tasks/bots');
+    for (const s of task.subtasks) {
+      if (s.n < from || !s.temp) continue;
+      s.botDir = path.join(e.store.botsDir(task.id), String(s.n));
+      s.botLabel = s.temp.label;
+      writeTempBot(s.botDir, s.temp);
+      delete s.temp;
+    }
+    e.store.save(task);
+  }
+
+  // A task ended by itself: its next wave, if the user chose to continue automatically.
+  onTaskDone = (task) => {
+    if (task.auto) proposeWave(taskEngine, task, { auto: true }).catch(() => {});
+  };
+
+  handle('aska:task-plan', async (req) => {
+    let e;
+    try {
+      e = tasksModule();
+    } catch (err) {
+      return { error: err.message };
+    }
+    const v = req && typeof req === 'object' ? req : {};
+    const goal = typeof v.goal === 'string' ? v.goal.trim() : '';
+    if (!goal || goal.length > 2000 || goal.includes('\0')) return { error: t('tasks.badGoal', { max: 2000 }) };
+    const rawRoot = typeof v.root === 'string' ? homePath(v.root.trim()) : '';
+    if (!rawRoot || !path.isAbsolute(rawRoot)) return { error: t('tasks.badRoot') };
+    const root = sec.checkWorkdir(rawRoot, 'read');
+    if (root.error) return { error: root.error };
+    if (planRun) return { error: t('tasks.planBusy') };
+    const { findRepos, realPath } = require('./tasks/worktree');
+    const rootPath = realPath(root.path);
+    const repos = findRepos(e.gitBin, rootPath);
+    if (!repos.length) return { error: t('tasks.noRepos', { root: tilde(rootPath) }) };
+    const r = await askOrchestrator({ goal, rootPath, repos, botId: v.botId });
+    if (r.error || r.cancelled) return r;
+    if (!r.plan.subtasks.length) return { error: r.plan.notes.join('\n') || t('tasks.planEmpty') };
+    return { plan: { goal, root: rootPath, rootLabel: tilde(rootPath), ...r.plan }, agent: r.agent };
   });
+
+  // A next wave, from the reports of the finished subtasks. Within the rights
+  // already approved and with "Continue automatically", it starts by itself;
+  // otherwise it waits on the board for the user's review.
+  async function proposeWave(e, task, { auto = false } = {}) {
+    const { nextWave, continuable, newRights } = require('./tasks/waves');
+    const next = nextWave(task);
+    if (next.error) return { error: next.error };
+    if (planRun) return { error: t('tasks.planBusy') };
+    const { findRepos } = require('./tasks/worktree');
+    const { orchestratorReport } = require('./tasks/report');
+    const repos = findRepos(e.gitBin, task.root);
+    const results = orchestratorReport(task, (s) => path.relative(task.root, s.repo).split(path.sep).join('/') || '.');
+    waving.add(task.id);
+    e.onUpdate(task);
+    let r;
+    try {
+      r = await askOrchestrator({ goal: task.goal, rootPath: task.root, repos, botId: task.orchestrator, wave: { n: next.n, max: require('./tasks/waves').MAX_WAVES, room: next.room, results }, continuable: continuable(task), max: next.room });
+    } finally {
+      waving.delete(task.id);
+    }
+    if (r.error || r.cancelled) {
+      e.onUpdate(task);
+      return r;
+    }
+    // Nothing more to do: said on the board.
+    if (!r.plan.subtasks.length) {
+      task.waveNote = r.plan.summary || t('tasks.wave.nothing');
+      e.changed(task);
+      return { done: true, task: publicTask(task) };
+    }
+    const subtasks = r.plan.subtasks.map((s) => {
+      const mode = s.rights.modes.includes(s.mode) ? s.mode : s.rights.modes[Math.min(1, s.rights.modes.length - 1)];
+      return { ...s, mode, newRights: newRights(task, { repo: s.repo, mode, allow: s.rights.commands ? s.rights.allow : [] }) };
+    });
+    const proposal = { n: next.n, summary: r.plan.summary, notes: r.plan.notes, agent: r.agent, subtasks };
+    delete task.waveNote;
+    if (auto && task.auto && subtasks.every((s) => !s.newRights.length)) {
+      const a = approveWave(e, task, subtasks.map((s) => ({ repo: s.repo, prompt: s.prompt, mode: s.mode, continues: s.continues, ...(s.botId ? { botId: s.botId } : { bot: s.bot }) })));
+      if (!a.error) return { task: publicTask(task), started: true };
+      task.proposal = { ...proposal, notes: [...proposal.notes, a.error] };
+    } else task.proposal = proposal;
+    e.changed(task);
+    return { task: publicTask(task) };
+  }
+
+  // The subtasks of a wave, as approved: checked like a new task's, then started.
+  function approveWave(e, task, list) {
+    const { nextWave, continuable } = require('./tasks/waves');
+    const next = nextWave(task);
+    if (next.error) return next;
+    if (!Array.isArray(list) || !list.length || list.length > next.room) return { error: t('tasks.badCount', { max: next.room }) };
+    const { checkTask } = require('./tasks/check');
+    const draft = draftAgent();
+    const c = checkTask({ goal: task.goal, root: task.root, subtasks: list }, { bots, agents, allowAutoMode: cfg.allowAutoMode, gitBin: e.gitBin, defaultAgent: draft ? draft.id : undefined });
+    if (c.error) return c;
+    const cont = continuable(task);
+    const subtasks = c.subtasks.map((s, i) => {
+      const from = Number.isInteger(list[i].continues) ? cont.get(list[i].continues) : null;
+      return from && from.repo === s.repo ? { ...s, continues: from.n } : s;
+    });
+    const first = task.subtasks.length + 1;
+    const r = e.addWave(task.id, subtasks);
+    if (r.error) return r;
+    writeTempBots(e, task, first);
+    return e.start(task.id);
+  }
+
+  handle('aska:task-wave', (id) => {
+    let e;
+    try {
+      e = tasksModule();
+    } catch (err) {
+      return { error: err.message };
+    }
+    const task = typeof id === 'string' ? e.get(id) : null;
+    if (!task) return { error: t('tasks.unknown') };
+    return proposeWave(e, task);
+  });
+  handle('aska:task-wave-approve', (req) =>
+    engineOr((e) => {
+      const task = req && typeof req.id === 'string' ? e.get(req.id) : null;
+      if (!task || !task.proposal) return { error: t('tasks.unknown') };
+      const r = approveWave(e, task, req.subtasks);
+      return r.error ? r : { task: publicTask(task) };
+    })
+  );
+  handle('aska:task-wave-dismiss', (id) =>
+    engineOr((e) => {
+      const task = typeof id === 'string' ? e.get(id) : null;
+      if (!task) return { error: t('tasks.unknown') };
+      delete task.proposal;
+      e.changed(task);
+      return { task: publicTask(task) };
+    })
+  );
   handle('aska:task-plan-cancel', () => {
     if (planRun) planRun.cancel();
   });
