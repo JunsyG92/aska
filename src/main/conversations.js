@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { writePrivate, ensurePrivateDir, readOwnedJson } = require('./security');
+const { sanitizeSources } = require('./sources');
 
 const ID_RE = /^[a-f0-9]{16}$/;
 const MAX_ANSWER = 200 * 1024;
@@ -61,7 +62,7 @@ class ConversationStore {
 
   create(cwd) {
     const now = new Date().toISOString();
-    return { id: crypto.randomBytes(8).toString('hex'), title: '', createdAt: now, updatedAt: now, cwd, turns: [], sessions: {} };
+    return { id: crypto.randomBytes(8).toString('hex'), title: '', createdAt: now, updatedAt: now, cwd, turns: [], sessions: {}, sources: [] };
   }
 
   file(id) {
@@ -92,6 +93,7 @@ class ConversationStore {
       if (t.status === 'running') t.status = 'error'; // app closed mid-run
     }
     if (!c.sessions || typeof c.sessions !== 'object') c.sessions = {};
+    c.sources = sanitizeSources(c.sources); // documents and links attached to the conversation
     return c;
   }
 
@@ -155,6 +157,8 @@ class ConversationStore {
   }
 }
 
+const HISTORY_CHARS = 24000; // history fed back into a request, at most
+
 const clip = (s, n) => (s.length > n ? s.slice(0, n) + '\n[… truncated]' : s);
 
 /**
@@ -162,7 +166,8 @@ const clip = (s, n) => (s.length > n ? s.slice(0, n) + '\n[… truncated]' : s);
  * the context is fed back into the request: the previous turns, from newest to
  * oldest, as long as the budget allows.
  */
-function buildContextPrompt(turns, prompt, maxChars = 24000) {
+function buildContextPrompt(turns, prompt, maxChars = HISTORY_CHARS) {
+  if (maxChars <= 0) return prompt; // no room left for the history (see fitInvocation)
   const blocks = [];
   let used = 0;
   for (let i = turns.length - 1; i >= 0; i--) {
@@ -186,4 +191,4 @@ function buildContextPrompt(turns, prompt, maxChars = 24000) {
   ].join('\n');
 }
 
-module.exports = { ConversationStore, buildContextPrompt, plainText, validId, titleOf, MAX_ANSWER, ensurePrivateDir };
+module.exports = { ConversationStore, buildContextPrompt, HISTORY_CHARS, plainText, validId, titleOf, MAX_ANSWER, ensurePrivateDir };

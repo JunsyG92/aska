@@ -66,7 +66,9 @@ function helpText(stream = process.stdout, env = process.env) {
   // Also sets the help language ("language" in the config, else the system's).
   const { config: cfg, warnings } = loadConfig(P.config, { systemLangs: systemLanguages(env) });
   const win = process.platform === 'win32';
-  const shortcut = cfg.shortcut ? cfg.shortcut.replace(/Control/g, 'Ctrl').replace('Space', t('cli.space')) : t('cli.none');
+  const accel = (a) => (a ? a.replace(/Control/g, 'Ctrl').replace('Shift', t('keys.names.Shift')).replace('Space', t('cli.space')) : t('cli.none'));
+  const shortcut = accel(cfg.shortcut);
+  const selShortcut = accel(cfg.selectionShortcut);
   // Pinned: choice made in the UI (saved state), else from "hideOnBlur".
   const st = readOwnedJson(P.state).data || {};
   const pinned = typeof st.pinned === 'boolean' ? st.pinned : !cfg.hideOnBlur;
@@ -81,6 +83,7 @@ function helpText(stream = process.stdout, env = process.env) {
     '',
     s.bold(t('cli.options')),
     row('--toggle', t('cli.toggle')),
+    row('--selection', t('cli.selection')),
     row('--hidden', t('cli.hidden')),
     row('--reload', t('cli.reload')),
     row('--restart', t('cli.restart')),
@@ -93,6 +96,7 @@ function helpText(stream = process.stdout, env = process.env) {
     '',
     s.bold(t('cli.inWindow')),
     row(shortcut, t('cli.globalShortcut')),
+    row(selShortcut, t('cli.selectionShortcut')),
     row(t('cli.keys.enter'), t('cli.send')),
     row(t('cli.keys.tab'), t('cli.nextAgentMode')),
     row(t('cli.keys.model'), t('cli.pickModel')),
@@ -100,6 +104,7 @@ function helpText(stream = process.stdout, env = process.env) {
     row(`${key.nextTab}, Ctrl+1…9`, t('cli.switchTab')),
     row(key.history, t('cli.history')),
     row(key.pickDir, t('cli.workingFolder')),
+    row(key.sources, t('cli.sources')),
     row(key.toggleMini, t('cli.collapse')),
     row(key.togglePin, t('cli.pin')),
     row(t('cli.keys.copy'), t('cli.copyLast')),

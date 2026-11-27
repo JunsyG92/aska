@@ -90,6 +90,24 @@
         <div id="model-note" class="model-note"></div>
       </section>
 
+      <section id="src-menu" class="src-menu" hidden aria-label="Documents and links" data-i18n-aria-label="sources.label">
+        <div class="model-head">
+          <input id="src-input" type="text" spellcheck="false" autocomplete="off" maxlength="4096"
+                 placeholder="Paste a link or a file path…" aria-label="Link or file path to add" aria-controls="src-list"
+                 data-i18n-placeholder="sources.input" data-i18n-aria-label="sources.inputLabel">
+          <button id="src-pick" class="win-btn" type="button" title="Choose files" aria-label="Add files…"
+                  data-i18n-title="sources.pickTitle" data-i18n-aria-label="sources.pick">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.6a1 1 0 0 1 1-1h3l1.3 1.5H13a1 1 0 0 1 1 1v6.3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1zM8 7.4v3.8M6.1 9.3h3.8"/></svg>
+          </button>
+          <button id="src-refresh" class="win-btn" type="button" title="Read the documents again" aria-label="Read the documents again"
+                  data-i18n-title="sources.refresh" data-i18n-aria-label="sources.refresh">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.6 8a4.6 4.6 0 1 1-1.5-3.4M12.8 3v2.4h-2.4"/></svg>
+          </button>
+        </div>
+        <div id="src-list" class="src-list" role="listbox" aria-label="Documents and links" data-i18n-aria-label="sources.label"></div>
+        <div id="src-note" class="model-note"></div>
+      </section>
+
       <section id="cmd-menu" class="cmd-menu" hidden aria-label="Commands" data-i18n-aria-label="commands.label">
         <div id="cmd-list" class="cmd-list" role="listbox" aria-label="Commands" data-i18n-aria-label="commands.label"></div>
         <div class="cmd-note" data-i18n="commands.note"></div>
@@ -106,6 +124,10 @@
         <button id="model" type="button" class="chip" title="Model (Ctrl+Shift+M)" data-i18n-title="modelChipTitle">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 13.4 4.9v6.2L8 14.2 2.6 11.1V4.9zM2.8 5 8 8l5.2-3M8 8v6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
           <span id="model-name"></span>
+        </button>
+        <button id="sources" type="button" class="chip sources" title="Documents and links given to the agent (Ctrl+D)" data-i18n-title="sources.chipTitle">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 7.4 8.1 12.3a3 3 0 0 1-4.3-4.3l5.3-5.2a2 2 0 0 1 2.8 2.8L6.7 10.8a1 1 0 0 1-1.4-1.4l4.5-4.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="sources-count"></span>
         </button>
         <span id="status" class="status"></span>
         <span class="keys" id="keys"></span>

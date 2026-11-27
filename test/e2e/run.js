@@ -93,7 +93,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     trad: 'Translate into English: {input}',
     sum: { prompt: 'Summarize these notes', description: 'Summary with Haiku', model: 'haiku' },
   };
-  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'en', commands: userCommands }), { mode: 0o600 });
+  // No global shortcut: the test never grabs keys on the machine that runs it.
+  fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, selectionShortcut: false, language: 'en', commands: userCommands }), { mode: 0o600 });
   const args = [ROOT];
   if (process.env.ASKA_E2E_NO_SANDBOX === '1') args.unshift('--no-sandbox');
   const app = await electron.launch({ executablePath: require(path.join(ROOT, 'node_modules', 'electron')), args, env, cwd: ROOT });
@@ -575,6 +576,46 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(st.activeTab, st.tabs[0]);
     assert.deepEqual(await tabTitles(), ['Summarize main.js (deny)']);
 
+    // ---------- ask about the selection (what the global shortcut runs: aska --selection) ----------
+    const askSelection = () => app.evaluate(({ app }) => app.emit('second-instance', {}, ['--selection']));
+    // Linux: the primary selection (highlighted text); macOS and Windows: the clipboard only.
+    const setBoards = (selection, copied) =>
+      app.evaluate(async ({ clipboard }, [sel, cp]) => {
+        await clipboard.writeText(cp);
+        if (clipboard.selection) await clipboard.selection.writeText(sel);
+      }, [selection, copied]);
+    const linux = process.platform === 'linux';
+    const turnsSel = await turns();
+    await page.fill('#input', 'my draft');
+    await setBoards('const a = 1;\nconst b = 2;', 'copied text');
+    await askSelection();
+    await page.waitForFunction(() => document.querySelector('#input').value.startsWith('> '));
+    if (linux) {
+      assert.equal(await page.inputValue('#input'), '> const a = 1;\n> const b = 2;\n\nmy draft', 'quoted, before the draft');
+      assert.equal(await page.textContent('#status'), '');
+    } else {
+      assert.equal(await page.inputValue('#input'), '> copied text\n\nmy draft');
+      assert.equal(await page.textContent('#status'), 'Quoted from the clipboard (no text selected)');
+    }
+    await page.waitForTimeout(250);
+    await shot('13-selection-light');
+    assert.equal(await turns(), turnsSel, 'nothing is sent');
+    if (linux) {
+      // Nothing highlighted: the clipboard, and the status says so.
+      await setBoards('', 'copied text');
+      await page.fill('#input', '');
+      await askSelection();
+      await page.waitForFunction(() => document.querySelector('#input').value === '> copied text\n\n');
+      assert.equal(await page.textContent('#status'), 'Quoted from the clipboard (no text selected)');
+    }
+    // Nothing at all: the field is left as is.
+    await setBoards('', '');
+    await page.fill('#input', 'kept');
+    await askSelection();
+    await page.waitForFunction(() => /No selected text/.test(document.querySelector('#status').textContent));
+    assert.equal(await page.inputValue('#input'), 'kept');
+    await page.fill('#input', '');
+
     // ---------- "/" commands, run by the window ----------
     const cmdNames = () => page.locator('#cmd-list .cmd-name').allTextContents();
     const modelBefore = await page.textContent('#model-name');
@@ -722,7 +763,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
 
     // French UI: "language" in the config, picked up by "aska --reload" and the next show.
     // Same for the shortcuts: history moved to Ctrl+J, model menu to Alt+Shift+M.
-    fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }), { mode: 0o600 });
+    fs.writeFileSync(P.config, JSON.stringify({ shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }), { mode: 0o600 });
     await app.evaluate(({ app }) => app.emit('second-instance', {}, ['--reload']));
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
@@ -788,8 +829,79 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
     assert.equal(await page.locator('.tab').count(), tabsBefore + 1);
 
+    // ---------- documents and links of a conversation ----------
+    // (the window is in French at this point: the checks do not depend on the language)
+    const brief = path.join(home, 'brief.md');
+    fs.writeFileSync(brief, 'Launch date: 14 March.\n');
+    await send('/new');
+    await send('/agent claude');
+    assert.equal(await page.textContent('#sources-count'), '');
+    // The main process revalidates what the window sends.
+    const badSources = await page.evaluate(async () => [
+      (await window.aska.addSources(['file:///etc/passwd', 'ftp://example.com/a'])).errors.length,
+      (await window.aska.addSources('brief.md')).errors.length,
+      (await window.aska.addSources([42])).errors.length,
+      (await window.aska.removeSource(42)).conversation.sources.length,
+    ]);
+    assert.deepEqual(badSources, [2, 1, 1, 0]);
+    await send('/add ' + brief);
+    await page.waitForFunction(() => document.querySelector('#sources-count').textContent === '1');
+    assert.equal(await page.inputValue('#input'), '');
+    // The panel lists them, with what was read.
+    await page.keyboard.press('Control+d');
+    await page.waitForSelector('#src-menu:not([hidden])');
+    await page.waitForFunction(() => /^22 /.test((document.querySelector('.src-item .src-sub') || {}).textContent || ''));
+    assert.match(await page.textContent('.src-item .src-name'), /brief\.md$/);
+    await page.keyboard.type('ftp://example.com/a');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#src-note.err');
+    assert.equal(await page.locator('.src-item').count(), 1);
+    await page.waitForTimeout(250);
+    await shot('12-sources-light');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#src-menu', { state: 'hidden' });
+    assert.equal(await visible(), true);
+    // Their text goes before the request.
+    await send('When do we launch?');
+    await settled('running');
+    await settled('done');
+    let docCall = calls().at(-1);
+    assert.match(docCall.stdin, /<documents>\n<document index="1" source="[^"]*brief\.md">\nLaunch date: 14 March\.\n<\/document>\n<\/documents>/);
+    assert.ok(docCall.stdin.endsWith('Request from the user:\nWhen do we launch?'));
+    assert.ok(!docCall.args.includes('--resume'));
+    assert.match(await page.locator('.turn .meta').last().textContent(), / · 1 document · /);
+    // The resumed session already has them: they are not sent twice.
+    await send('And who decides?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(docCall.args.includes('--resume'));
+    assert.equal(docCall.stdin, 'And who decides?');
+    // A document that changed is sent again.
+    fs.writeFileSync(brief, 'Launch date: 21 March, decided by the board.\n');
+    await send('Any change?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(docCall.args.includes('--resume'));
+    assert.match(docCall.stdin, /Launch date: 21 March, decided by the board\./);
+    // Removed (Del on the selected line): the session that knows it is not resumed.
+    await page.click('#sources');
+    await page.waitForSelector('.src-item');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Delete');
+    await page.waitForFunction(() => document.querySelector('#sources-count').textContent === '');
+    await page.keyboard.press('Escape');
+    await send('Still there?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(!docCall.args.includes('--resume'));
+    assert.ok(!docCall.stdin.includes('<documents>'));
+    assert.match(docCall.stdin, /<history>[\s\S]*New request from the user:\nStill there\?$/);
+
     // ---------- settings panel ----------
-    // Config at this point: { shortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
+    // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
     const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));
     const configBefore = readConfig();
     const row = (action) => page.locator(`.set-row[data-action="${action}"]`);

@@ -31,6 +31,10 @@ contextBridge.exposeInMainWorld('aska', {
   deleteConversation: (id) => ipcRenderer.invoke('aska:conv-delete', id),
   listModels: (agentId, refresh) => ipcRenderer.invoke('aska:models', { agentId, refresh: refresh === true }),
   setModel: (agentId, model) => ipcRenderer.invoke('aska:set-model', { agentId, model }),
+  addSources: (items) => ipcRenderer.invoke('aska:sources-add', items),
+  pickSources: () => ipcRenderer.invoke('aska:sources-pick'),
+  removeSource: (key) => ipcRenderer.invoke('aska:sources-remove', key),
+  listSources: (refresh) => ipcRenderer.invoke('aska:sources-list', { refresh: refresh === true }),
   getSettings: () => ipcRenderer.invoke('aska:settings-get'),
   saveSettings: (values) => ipcRenderer.invoke('aska:settings-save', values),
   onRunEvent: on('aska:run-event'),
@@ -38,6 +42,7 @@ contextBridge.exposeInMainWorld('aska', {
   onWillHide: on('aska:will-hide'),
   onNewConversation: on('aska:new-conversation'),
   onOpenSettings: on('aska:open-settings'),
+  onSelection: on('aska:selection'),
   onUnread: on('aska:unread'),
   onTabs: on('aska:tabs'),
 });

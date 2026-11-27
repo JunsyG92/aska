@@ -17,6 +17,7 @@
   const status = $('status');
   const keys = $('keys');
   const cmdMenu = $('cmd-menu');
+  const srcMenu = $('src-menu');
   const api = window.aska;
 
   let agents = [];
@@ -39,6 +40,8 @@
   let activityText = '';
   let view = 'chat'; // 'chat' | 'history' | 'settings'
   let menuOpen = false;
+  let srcOpen = false; // documents and links of the conversation
+  let sources = []; // [{ key, kind, label }]
   let pinned = false;
   let unread = 0;
   let tabList = []; // tabs: [{ id, title, color, running, unread, active }]
@@ -117,6 +120,8 @@
   function setKeys() {
     const items = view === 'settings'
       ? [[t('keys.esc'), t('footer.back')]]
+      : srcOpen
+      ? [['⏎', t('footer.add')], [t('keys.del'), t('footer.remove')], [t('keys.esc'), t('footer.close')]]
       : cmdOpen()
       ? [['↑ ↓', t('footer.select')], ['Tab', t('footer.complete')], ['⏎', t('footer.run')], [t('keys.esc'), t('footer.close')]]
       : running
@@ -342,6 +347,7 @@
     const a = agent();
     if (running || !a || !a.canPickModel) return;
     if (menuOpen) return closeModelMenu();
+    if (srcOpen) closeSources();
     modelAll = a.models.map((id) => ({ id, label: null }));
     modelDefault = null;
     modelCurrent = a.model || null;
@@ -369,7 +375,8 @@
 
   function fillMeta(metaEl, turn) {
     const secs = turn.durationMs ? t('duration', { secs: (turn.durationMs / 1000).toLocaleString(locale, { maximumFractionDigits: 1 }) }) : null;
-    const parts = [turn.model, modes[turn.mode] ? modes[turn.mode].label : null, secs].filter(Boolean);
+    const docs = turn.sources ? t('sources.used', { count: turn.sources }) : null;
+    const parts = [turn.model, modes[turn.mode] ? modes[turn.mode].label : null, docs, secs].filter(Boolean);
     metaEl.dataset.cancelled = t('cancelled');
     metaEl.replaceChildren(el('i'), el('b', null, turn.label), parts.length ? ' · ' + parts.join(' · ') : '');
   }
@@ -462,6 +469,7 @@
     history = s.history || [];
     warnings = s.warnings || [];
     customCommands = s.commands || [];
+    setSources(s.conversation.sources || []);
     $('cwd-name').textContent = s.cwd;
     $('cwd').title = t('cwdTitle', { path: s.cwdIsScratch ? t('cwdScratch') : s.cwd });
     $('hist-btn').hidden = !s.historyEnabled;
@@ -514,6 +522,7 @@
     closeArmed = null;
     pendingTrust = null;
     confirmBox.hidden = true;
+    if (srcOpen) closeSources(true);
     if (view === 'history') showHistory(false);
     showNotice('');
     renderThread(s.conversation);
@@ -662,7 +671,7 @@
     }
     showNotice('');
     thread.querySelectorAll('.notice .rerun').forEach((b) => b.remove()); // only on the last turn
-    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode, prompt, answer: '', status: 'running' }, false);
+    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode, prompt, answer: '', status: 'running', sources: sources.length }, false);
     live.node.classList.add('live');
     turnCount += 1;
     panel.dataset.state = 'running';
@@ -772,7 +781,7 @@
 
   // Palette above the footer while a command is typed (not while recalling with ↑).
   function refreshPalette() {
-    const quiet = view !== 'chat' || mini || pendingTrust || menuOpen || histIdx !== -1 || input.value === cmdDismissed;
+    const quiet = view !== 'chat' || mini || pendingTrust || menuOpen || srcOpen || histIdx !== -1 || input.value === cmdDismissed;
     const items = quiet ? null : window.AskaCommands.suggest(input.value, cmdCtx());
     if (input.value !== cmdDismissed) cmdDismissed = null;
     const wasOpen = cmdOpen();
@@ -869,6 +878,17 @@
         done();
         return setStatus(t('commands.folder', { path: res.cwd }), 'ok');
       }
+      case 'add': {
+        if (!arg) {
+          done();
+          return pickSources();
+        }
+        if (await addSource(arg)) done();
+        return;
+      }
+      case 'sources':
+        done();
+        return openSources();
       case 'retry':
         if (running) return busy();
         if (!lastPrompt) return setStatus(t('commands.noRetry'), 'err');
@@ -899,6 +919,141 @@
   async function newConversation() {
     if (view === 'history') showHistory(false);
     await newTab();
+  }
+
+  // ---------- documents and links (read by the main process, see sources.js) ----------
+
+  const srcList = $('src-list');
+  const srcInput = $('src-input');
+  let srcInfo = new Map(); // key -> what the main process read: { title, chars, error, note }
+  let srcSel = -1;
+  let srcError = ''; // why the last entry was refused, shown in the panel
+  const SRC_ICON = {
+    file: 'M4 2.5h5l3 3v8H4zM9 2.5v3h3',
+    url: 'M6.7 9.3a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.8.8M9.3 6.7a2.6 2.6 0 0 0-3.7 0L3.4 8.9a2.6 2.6 0 0 0 3.7 3.7l.8-.8',
+  };
+
+  function icon(d) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+    return svg;
+  }
+
+  function setSources(list) {
+    sources = list;
+    $('sources-count').textContent = list.length ? String(list.length) : '';
+    $('sources').classList.toggle('on', list.length > 0);
+    if (srcOpen) renderSources();
+  }
+
+  function highlightSource(i, scroll) {
+    const rows = srcList.children;
+    srcSel = rows.length ? Math.min(Math.max(i, -1), rows.length - 1) : -1;
+    [...rows].forEach((r, j) => {
+      r.classList.toggle('active', j === srcSel);
+      r.setAttribute('aria-selected', String(j === srcSel));
+    });
+    if (scroll && srcSel >= 0) rows[srcSel].scrollIntoView({ block: 'nearest' });
+  }
+
+  function renderSources() {
+    srcList.replaceChildren(
+      ...sources.map((s, i) => {
+        const info = srcInfo.get(s.key);
+        const row = el('div', 'src-item');
+        row.setAttribute('role', 'option');
+        const sub = !info
+          ? t('sources.loading')
+          : info.error || [info.title, info.chars ? t('sources.chars', { count: info.chars }) : null, info.note].filter(Boolean).join(' · ');
+        const del = el('button', 'src-del', t('sources.remove'));
+        del.type = 'button';
+        del.tabIndex = -1;
+        del.title = t('sources.removeTitle', { name: s.label });
+        del.addEventListener('click', () => removeSource(s.key));
+        row.append(icon(SRC_ICON[s.kind] || SRC_ICON.file), el('div', 'src-name', s.label), del, el('div', 'src-sub' + (info && info.error ? ' err' : ''), sub));
+        row.title = s.label;
+        row.addEventListener('mousemove', () => { if (pointerMoved && srcSel !== i) highlightSource(i, false); });
+        return row;
+      })
+    );
+    $('src-note').textContent = srcError || t(sources.length ? 'sources.note' : 'sources.empty');
+    $('src-note').classList.toggle('err', !!srcError);
+    highlightSource(Math.min(srcSel, sources.length - 1), false);
+  }
+
+  // What each source gave once read (size, title, or why it could not be read).
+  async function loadSourceInfo(refresh) {
+    if (!sources.length) return;
+    const btn = $('src-refresh');
+    const forConv = convId;
+    btn.classList.add('busy');
+    const list = await api.listSources(refresh);
+    btn.classList.remove('busy');
+    if (forConv !== convId) return;
+    srcInfo = new Map(list.map((x) => [x.key, x]));
+    if (srcOpen) renderSources();
+  }
+
+  function openSources() {
+    if (mini || pendingTrust) return;
+    if (srcOpen) return closeSources();
+    if (menuOpen) closeModelMenu();
+    if (view !== 'chat') return;
+    srcOpen = true;
+    srcMenu.hidden = false;
+    srcInput.value = '';
+    srcSel = -1;
+    srcError = '';
+    refreshPalette();
+    renderSources();
+    setKeys();
+    srcInput.focus();
+    loadSourceInfo(false);
+  }
+
+  function closeSources(quiet) {
+    srcOpen = false;
+    srcMenu.hidden = true;
+    if (quiet) return;
+    setKeys();
+    input.focus();
+  }
+
+  function reportSources(res) {
+    srcError = res.errors && res.errors.length ? res.errors[0] : '';
+    applyState(res);
+    if (srcOpen) renderSources();
+    if (srcError) setStatus(srcError, 'err');
+    else if (res.added) setStatus(t('sources.added', { count: res.added }), 'ok');
+    if (res.added) loadSourceInfo(false);
+    return !(res.errors && res.errors.length);
+  }
+
+  /** A link or a file path, typed or pasted (several lines: one per line). */
+  async function addSource(text) {
+    const items = String(text).split('\n').map((x) => x.trim()).filter(Boolean);
+    if (!items.length) return false;
+    return reportSources(await api.addSources(items));
+  }
+
+  async function pickSources() {
+    const ok = reportSources(await api.pickSources());
+    (srcOpen ? srcInput : input).focus();
+    return ok;
+  }
+
+  async function removeSource(key) {
+    const keep = srcSel;
+    applyState(await api.removeSource(key));
+    setStatus(t('sources.removed'), 'ok');
+    if (srcOpen) {
+      highlightSource(Math.min(keep, sources.length - 1), false);
+      srcInput.focus();
+    }
   }
 
   // ---------- conversation history ----------
@@ -1003,6 +1158,7 @@
 
   async function showSettings(on) {
     if (on && view === 'settings') return;
+    if (on && srcOpen) closeSources(true);
     if (on && view === 'history') await showHistory(false);
     view = on ? 'settings' : 'chat';
     refreshPalette();
@@ -1022,6 +1178,7 @@
   }
 
   async function showHistory(on) {
+    if (on && srcOpen) closeSources(true);
     view = on ? 'history' : 'chat';
     refreshPalette();
     $('hist-btn').setAttribute('aria-pressed', String(on));
@@ -1128,12 +1285,12 @@
       }
       return;
     }
-    if (is('settings') && !mini && !pendingTrust && !menuOpen) {
+    if (is('settings') && !mini && !pendingTrust && !menuOpen && !srcOpen) {
       e.preventDefault();
       showSettings(true);
       return;
     }
-    if (!mini && !pendingTrust && !menuOpen) {
+    if (!mini && !pendingTrust && !menuOpen && !srcOpen) {
       // Ctrl+1 to Ctrl+9 stay fixed: tab n°1 to 8, Ctrl+9 the last one.
       const tabNumber = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key) && tabList.length > 1;
       const tabKey =
@@ -1169,6 +1326,23 @@
       else if (e.key === 'Enter') {
         e.preventDefault();
         if (modelItems[modelSel]) chooseModel(modelItems[modelSel].id);
+      } else if (e.key === 'Tab') e.preventDefault();
+      return;
+    }
+    if (srcOpen) {
+      const sel = sources[srcSel];
+      if (e.key === 'Escape' || is('sources')) { e.preventDefault(); closeSources(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); highlightSource(srcSel + 1, true); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); highlightSource(srcSel - 1, true); }
+      else if (e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault();
+        // Nothing typed: the file picker.
+        if (!srcInput.value.trim()) pickSources();
+        else addSource(srcInput.value).then((ok) => { if (ok) srcInput.value = ''; });
+      } else if (e.key === 'Delete' && sel && srcInput.selectionStart === srcInput.value.length) {
+        // "Del" targets the selected document when there is nothing left to erase in the field.
+        e.preventDefault();
+        removeSource(sel.key);
       } else if (e.key === 'Tab') e.preventDefault();
       return;
     }
@@ -1238,6 +1412,9 @@
     } else if (is('history')) {
       e.preventDefault();
       if (!$('hist-btn').hidden) showHistory(true);
+    } else if (is('sources')) {
+      e.preventDefault();
+      openSources();
     } else if (e.key === 'ArrowUp' && e.target === input && !input.value.slice(0, input.selectionStart).includes('\n')) {
       if (historyMove(-1)) e.preventDefault();
     } else if (e.key === 'ArrowDown' && e.target === input && histIdx !== -1) {
@@ -1260,6 +1437,10 @@
     e.preventDefault();
     if (!running) api.resetDir().then(applyState);
   });
+  $('sources').addEventListener('click', openSources);
+  srcInput.addEventListener('input', () => { if (srcError) { srcError = ''; renderSources(); } });
+  $('src-pick').addEventListener('click', pickSources);
+  $('src-refresh').addEventListener('click', () => { loadSourceInfo(true); srcInput.focus(); });
   $('trust-once').addEventListener('click', () => submit('once'));
   $('trust-always').addEventListener('click', () => submit('always'));
   $('trust-cancel').addEventListener('click', closeConfirm);
@@ -1287,6 +1468,25 @@
   api.onRunEvent(onRunEvent);
   api.onNewConversation(() => newConversation()); // system tray icon menu
   api.onOpenSettings(() => showSettings(true)); // system tray icon menu
+  // "Ask about the selection": the selected text, quoted, before the draft; nothing is sent.
+  api.onSelection(async (sel) => {
+    if (!sel || !sel.quote) {
+      setStatus(t('selection.empty'), 'err');
+      return;
+    }
+    if (view === 'settings') window.AskaSettings.requestClose();
+    if (view === 'history') await showHistory(false);
+    if (menuOpen) closeModelMenu();
+    if (view !== 'chat' || pendingTrust) return; // unsaved settings or an approval waiting: left as is
+    setMini(false);
+    const rest = input.value.trim();
+    setInput(sel.quote + '\n\n' + (rest ? rest : ''));
+    input.scrollTop = input.scrollHeight;
+    input.focus();
+    if (sel.truncated) setStatus(t('selection.truncated', { max: Number(sel.max).toLocaleString(locale) }), 'err');
+    else if (sel.source === 'clipboard') setStatus(t('selection.fromClipboard'));
+    else setStatus('');
+  });
   api.onUnread(setUnread);
   $('pin-btn').addEventListener('click', () => { setPinned(!pinned, true); input.focus(); });
   api.onWillHide(() => {
@@ -1299,7 +1499,7 @@
     panel.classList.remove('out', 'in');
     void panel.offsetWidth;
     panel.classList.add('in');
-    if (!pendingTrust && !menuOpen && view === 'chat') input.focus();
+    if (!pendingTrust && !menuOpen && !srcOpen && view === 'chat') input.focus();
     setKeys();
     autosize();
   });

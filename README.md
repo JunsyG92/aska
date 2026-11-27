@@ -24,12 +24,14 @@ driven by their official CLIs. Linux, macOS and Windows.
 ## At a glance
 
 - ⌨️ **`Ctrl+Alt+Space`** opens the window, wherever you are. `Tab` switches agent, `Enter` sends.
+- ✂️ **Ask about what you selected**: `Ctrl+Alt+Shift+Space` opens Aska with the text selected in any window quoted in the field, ready for your question.
 - 💬 **A real conversation thread**: each message keeps the context of the previous ones, even if you switch agents along the way.
 - 🗂️ **Tabs that work in parallel**: one conversation per topic, and Claude can think in one while you ask Codex something in another.
 - 🔌 **Your CLIs, your accounts**: Aska calls no API and stores no key. It runs the CLIs already installed and signed in on your machine, with their MCP servers and skills.
 - 🛡️ **Read-only by default**: the agent changes nothing until you switch modes, and never without your approval for the folder.
 - 📌 **Out of the way or always there**: a click outside hides the chat; pinned, it stays on top where you put it. Minimized to a pill, it shows you how the agent is doing.
 - 🔔 **Notified as soon as the AI answers**: a system notification (agent and start of the answer) when the chat is hidden or minimized; one click brings you back to the conversation.
+- 📎 **Your documents as context**: attach files and links to a conversation, their text goes to the agent with your requests (`Ctrl+D`, or `/add`).
 - ⌨️ **`/` commands**: `/model`, `/mode`, `/cd`, `/codex …` from the field, and your own prompts as commands (`/trad bonjour`).
 - 🌗 **Light or dark**, following your system theme.
 - 🌐 **English or French**: the interface follows your system language (`"language"` in the config to force one).
@@ -108,13 +110,13 @@ You need **Node.js ≥ 20** and at least one agent CLI installed and signed in:
 
 ```sh
 git clone https://github.com/JunsyG92/aska.git && cd aska
-./scripts/install.sh                    # X11: global shortcut Ctrl+Alt+Space
-./scripts/install.sh --gnome-shortcut   # GNOME / Wayland: shortcut registered in GNOME
+./scripts/install.sh                    # X11: global shortcuts Ctrl+Alt+Space and Ctrl+Alt+Shift+Space
+./scripts/install.sh --gnome-shortcut   # GNOME / Wayland: shortcuts registered in GNOME
 aska --hidden &                         # or log in again (autostart)
 ```
 
 - **Ubuntu 24.04+**: the script offers to configure the Electron sandbox (asks for your `sudo` password). Without it, Aska does not start; `--sandbox-fix` does it without asking.
-- **Wayland**: an application cannot always grab a global shortcut. If `Ctrl+Alt+Space` does nothing, bind the command `aska --toggle` to a shortcut in your desktop's keyboard settings (KDE, Sway, Hyprland...) and set `"shortcut": false` in the configuration.
+- **Wayland**: an application cannot always grab a global shortcut. If `Ctrl+Alt+Space` does nothing, bind the command `aska --toggle` to a shortcut in your desktop's keyboard settings (KDE, Sway, Hyprland...) and set `"shortcut": false` in the configuration. Same for `Ctrl+Alt+Shift+Space`: bind `aska --selection` and set `"selectionShortcut": false`.
 - **Wayland**: the `aska` command runs Aska through XWayland (`--ozone-platform=x11`). As a native Wayland client, the window gets no keyboard focus when a shortcut shows it on GNOME, and hides as soon as you drag it. `aska --ozone-platform=wayland` still forces native Wayland. If you installed Aska before this change, run `./scripts/install.sh` again to update the command, then `aska --restart`.
 
 ### macOS
@@ -152,6 +154,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | Command | Effect |
 | --- | --- |
 | `aska` / `aska --toggle` | shows or hides the window (starts the app if needed) |
+| `aska --selection` | shows the window with the selected text quoted in the field (see [Ask about the selection](#ask-about-the-selection)) |
 | `aska --hidden` | starts in the background |
 | `aska --reload` | reloads the configuration |
 | `aska --restart` | restarts Aska (after an update) |
@@ -163,6 +166,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | Key | Action |
 | --- | --- |
 | `Ctrl+Alt+Space` | show / hide the window (global shortcut, configurable) |
+| `Ctrl+Alt+Shift+Space` | ask about the text selected in another window (global shortcut, configurable) |
 | `Enter` | send · `Shift+Enter`: new line |
 | `Tab` | next agent |
 | `Shift+Tab` | next permission mode |
@@ -173,6 +177,7 @@ The help lists the options, the shortcuts, and above all **the status of each ag
 | `Ctrl+1` … `Ctrl+9` | go to tab 1 to 8, `Ctrl+9`: the last one |
 | `Ctrl+H` | history: type to search, `Enter` to open, `Del` twice to delete |
 | `Ctrl+O` | working folder (right-click the folder: back to the scratch space) |
+| `Ctrl+D` | [documents and links](#documents-and-links) given to the agent in this conversation |
 | `↑` / `↓` | recall a message already sent |
 | `Ctrl+Shift+C` | copy the last answer |
 | `Ctrl+R` | after denied actions: run the request again in the next mode (the button of the last answer) |
@@ -206,6 +211,8 @@ Type `/` in the field: a list of commands opens above it (`↑` `↓` to choose,
 | `/mode read` · `edit` · `auto` | change the permission mode |
 | `/model sonnet` | pick the model (`/model default`: the CLI's own; `/model` alone opens the picker) |
 | `/cd ~/project` | change the working folder (`~` and relative paths accepted; `/cd` alone opens the picker) |
+| `/add ~/notes/brief.md`, `/add https://…` | give a [document or a link](#documents-and-links) to the agent (`/add` alone opens the file picker) |
+| `/sources` | documents and links of the conversation |
 | `/retry` | send the last request of the conversation again |
 | `/copy`, `/history`, `/settings`, `/pin`, `/mini` | same as their shortcuts |
 
@@ -213,11 +220,20 @@ Your own commands go in `"commands"` in the [configuration](#configuration): a n
 
 Only `/word` followed by a space or the end is a command: `/etc/hosts, what is it?` is a message. To send a message that starts with a command name (an agent's own `/review`, say), double the slash: `//review` sends `/review`.
 
+### Ask about the selection
+
+Select some text anywhere (a page, an error in a terminal, a mail), then press `Ctrl+Alt+Shift+Space`: Aska shows up with that text quoted in the field (`> ` in front of each line), above your draft, and you type the question. Nothing is sent until you press `Enter`.
+
+- **Linux**: the highlighted text (the primary selection), no need to copy it. If nothing is highlighted, the clipboard, and the window says so.
+- **macOS and Windows**: they have no primary selection: copy the text first (`Cmd+C` / `Ctrl+C`), then press the shortcut.
+- The text is cleaned (control characters and terminal colors dropped) and cut at 20,000 characters.
+- `"selectionShortcut"` in the configuration (or the settings) changes it; `false` removes it. `aska --selection` does the same from a script or a desktop shortcut.
+
 ## Settings
 
-`Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in two tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcut, the shortcuts inside the window (press the keys to record one), and the fixed keys. **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
+`Ctrl+,`, the ⚙ button or "Settings…" in the tray icon menu open the settings in the window, in two tabs. **General**: language, default agent and mode, time limit, always on top, tray icon, notifications, saved conversations. **Shortcuts**: the global shortcuts (show / hide, ask about the selection), the shortcuts inside the window (press the keys to record one), and the fixed keys. **Save** writes them to `config.json` (only what differs from the defaults, `600` rights) and applies them at once; **Cancel** or `Esc` discards the changes; **Reset all to defaults** fills the form with the defaults, to save.
 
-- On GNOME, the global shortcut is the "Aska" entry of the GNOME custom keyboard shortcuts (`aska --toggle`): the settings change it there, since an application cannot grab a global shortcut under Wayland.
+- On GNOME, the global shortcuts are the "Aska" (`aska --toggle`) and "Aska (selection)" (`aska --selection`) entries of the GNOME custom keyboard shortcuts: the settings change them there, since an application cannot grab a global shortcut under Wayland.
 - Agents, their programs and arguments, `envPassthrough` and the autonomous mode stay in `config.json`, edited by hand: they decide which programs run, so the window cannot change them.
 - A value the main process refuses (shortcut already used, reserved combo…) is shown next to its field, and nothing is saved.
 
@@ -257,6 +273,18 @@ requests at most, 8 tabs).
 - **Follow-ups**: with Claude, Aska resumes the CLI session (`--resume`), which keeps the whole context, tools included. With the other agents, or if you switch agents mid-thread, the previous exchanges are injected back into the request (most recent first, up to about 24,000 characters).
 - **Switching agents along the way**: so Codex can carry on a discussion started with Claude.
 - **History**: each conversation is saved as a private file (200 at most) and reopens in its original working folder. `"savePrompts": false` disables all saving.
+
+### Documents and links
+
+A conversation can carry **documents and links**: a brief, meeting notes, a spec, a page of your wiki. Aska reads them itself and sends their text to the agent before your request, so the answers take them into account. It works with every agent and in read-only mode, since the agent needs no tool to get them.
+
+- `Ctrl+D` or the 📎 button opens the list: paste a link or a file path and press `Enter`, or press `Enter` on the empty field to choose files. `Del` removes the selected one. From the field, `/add ~/notes/brief.md` or `/add https://…` does the same.
+- **Files**: any text file (Markdown, code, CSV, JSON, HTML…). PDFs are read through `pdftotext` when it is installed (`poppler-utils` on Linux, `brew install poppler` on macOS). For any other format, the agent only gets the path, to read it with its own tools if it can.
+- **Links**: `http(s)` pages, fetched by Aska without cookies, as text (HTML is reduced to its text). A page is fetched again after ten minutes, or with the ↻ button.
+- Documents belong to the conversation: they are saved with it, and each tab has its own. They are read again when they change.
+- 20 documents at most. Their text is sent with each request (once per session with Claude, which keeps it), within a budget: about 240,000 characters when the request goes through stdin (Claude, Codex), 40,000 when it is passed as an argument (Copilot, Cursor; 8,000 on Windows). Beyond it, the longest documents are truncated, and the agent is told.
+
+What you attach is sent to the agent's provider, like the text of your requests. Files in `~/.ssh`, `~/.gnupg`, `~/.aws` and similar folders are refused.
 
 ## Models
 
@@ -337,6 +365,16 @@ In short: **no shell** ever sees the text of your requests, the agent only recei
 - Writing is refused in `/`, your whole `~`, system folders and sensitive
   folders (`~/.ssh`, `~/.config`, `~/.gnupg`...).
 
+**Documents and links**
+- Read by Aska itself, never by a shell: a file must exist and be a regular file,
+  and files in folders of secrets (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`...) are refused.
+- Links are `http(s)` only, fetched without cookies or credentials, with a time
+  limit and a size cap; only text content is kept.
+- Their text is placed in a delimited block that tells the agent it is reference
+  material, not instructions. As with any content an agent reads, a hostile page
+  can still try to influence the answer: only attach what you trust.
+- The audit log lists what was sent along with each request.
+
 **Application**
 - Sandboxed UI, without Node (`contextIsolation`, `sandbox`), strict CSP,
   no remote resources, navigation and new windows blocked.
@@ -380,6 +418,7 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 ```json
 {
   "shortcut": "Control+Alt+Space",
+  "selectionShortcut": "Control+Alt+Shift+Space",
   "defaultAgent": "claude",
   "defaultMode": "read",
   "allowAutoMode": false,
@@ -426,6 +465,7 @@ Linux and macOS: `~/.config/aska/config.json` (mode `600`). Windows: `%APPDATA%\
 | `nextTab` / `prevTab` | `Ctrl+Tab`, `Ctrl+PageDown` / `Ctrl+Shift+Tab`, `Ctrl+PageUp` |
 | `history` | `Ctrl+H` |
 | `pickDir` | `Ctrl+O` |
+| `sources` | `Ctrl+D` |
 | `modelMenu` | `Ctrl+Shift+M` |
 | `copyAnswer` | `Ctrl+Shift+C` |
 | `rerun` | `Ctrl+R` |

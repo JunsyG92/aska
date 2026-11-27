@@ -5,16 +5,18 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, buildInvocation, isModel, canPickModel } = require('./agents');
-const { ConversationStore, buildContextPrompt, MAX_ANSWER } = require('./conversations');
+const { MODES, MODE_ORDER, resolveAgents, buildInvocation, fitInvocation, isModel, canPickModel } = require('./agents');
+const { ConversationStore, buildContextPrompt, HISTORY_CHARS, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
+const src = require('./sources');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
 const sec = require('./security');
 const { runAgent } = require('./runner');
-const { resolveLaunch, buildCommand, extendedPath } = require('./launch');
+const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
 const { buildId, runningInstance } = require('./build');
 const { createTray } = require('./tray');
+const { readSelection, quoteSelection, MAX_CHARS: MAX_SELECTION } = require('./selection');
 const { keyLabels, ACTIONS } = require('./keys');
 const { settingsView, validateSettings, mergeConfig } = require('./settings');
 const gnome = require('./gnome');
@@ -43,6 +45,7 @@ let tray = null; // system tray icon
 let runSeq = 0;
 let dialogOpen = false;
 let shortcutOk = false;
+let selectionShortcutOk = false;
 let quitting = false;
 let mini = false; // panel collapsed into a pill
 let pinned = null; // pinned: stays visible when clicking elsewhere (null = per config)
@@ -51,6 +54,7 @@ let notifier = null;
 let savedPos = null; // anchor chosen by the user: left edge and BOTTOM edge of the window
 let saveTimer = null;
 let store = null; // saved conversations
+let loader = null; // text of the documents and links attached to conversations (see sources.js)
 let tabs = null; // open tabs (see tabs.js); each one carries its conversation and its running request
 let savedTabs = null; // saved tabs, reopened at startup
 const picked = {}; // model chosen per agent: { claude: 'opus' } (missing = default)
@@ -140,6 +144,10 @@ function loadEverything() {
     },
   });
   store = new ConversationStore(P.conversations, { persist: cfg.savePrompts });
+  // PDFs are read through pdftotext when it is installed (same checks as an agent's binary).
+  const pdftotext = sec.resolveBinary(['pdftotext'], { envPath: searchPath() }).path || null;
+  if (!loader) loader = new src.SourceLoader({ pdftotext });
+  else loader.pdftotext = pdftotext;
   if (!tabs) {
     tabs = new Tabs(store);
     tabs.restore(cfg.savePrompts && savedTabs ? savedTabs.ids : [], savedTabs && savedTabs.active, cwd);
@@ -233,7 +241,13 @@ function publicTurn(t) {
     status: t.status,
     notice: t.notice || null,
     durationMs: t.durationMs || 0,
+    sources: Number.isInteger(t.sources) ? t.sources : 0,
   };
+}
+
+// Documents and links of a conversation, for the UI (readable paths).
+function publicSources(conv) {
+  return (conv.sources || []).map((s) => ({ key: src.keyOf(s), kind: s.kind, label: s.kind === 'url' ? s.url : tilde(s.path) }));
 }
 
 // Conversation list for the UI: agent colors and readable folder.
@@ -283,7 +297,7 @@ function publicState() {
     running: !!tabs.active().run,
     // Running request of the active tab: the interface reattaches to it to follow the answer.
     run: tabs.active().run ? { id: tabs.active().run.id } : null,
-    conversation: { id: tabs.active().conv.id, title: tabs.active().conv.title, turns: tabs.active().conv.turns.map(publicTurn) },
+    conversation: { id: tabs.active().conv.id, title: tabs.active().conv.title, turns: tabs.active().conv.turns.map(publicTurn), sources: publicSources(tabs.active().conv) },
     tabs: publicTabs(),
     historyEnabled: cfg.savePrompts,
     pinned,
@@ -470,16 +484,34 @@ function setupTray() {
 
 function registerShortcut() {
   globalShortcut.unregisterAll();
-  shortcutOk = false;
-  if (!cfg.shortcut) return;
-  try {
-    shortcutOk = globalShortcut.register(cfg.shortcut, toggleWindow);
-  } catch {
-    shortcutOk = false;
+  const register = (accel, fn) => {
+    try {
+      return globalShortcut.register(accel, fn);
+    } catch {
+      return false;
+    }
+  };
+  shortcutOk = !!cfg.shortcut && register(cfg.shortcut, toggleWindow);
+  if (cfg.shortcut && !shortcutOk) warnings.push(t('app.shortcutUnavailable', { shortcut: cfg.shortcut }));
+  selectionShortcutOk = !!cfg.selectionShortcut && register(cfg.selectionShortcut, askAboutSelection);
+  if (cfg.selectionShortcut && !selectionShortcutOk) {
+    warnings.push(t('app.selectionShortcutUnavailable', { shortcut: cfg.selectionShortcut }));
   }
-  if (!shortcutOk) {
-    warnings.push(t('app.shortcutUnavailable', { shortcut: cfg.shortcut }));
-  }
+}
+
+// "Ask about the selection": the window shows up with the selected text quoted
+// in the field (see selection.js). Nothing is sent.
+async function askAboutSelection() {
+  if (!win) return;
+  const sel = await readSelection(clipboard);
+  if (!win || win.isDestroyed()) return;
+  showWindow();
+  win.webContents.send('aska:selection', {
+    quote: sel.text ? quoteSelection(sel.text) : null,
+    source: sel.source,
+    truncated: sel.truncated,
+    max: MAX_SELECTION,
+  });
 }
 
 // ---------- settings panel (see settings.js) ----------
@@ -504,8 +536,10 @@ async function settingsGet() {
   if (run) {
     try {
       const g = await gnome.readShortcut(run);
+      const s = await gnome.readShortcut(run, gnome.ENTRIES.selection);
       gnomeInfo = { active: true };
       view.values.shortcut = g.binding;
+      view.values.selectionShortcut = s.binding;
     } catch (e) {
       gnomeInfo = { active: false, error: e.message }; // gsettings unusable: Aska's own shortcut
     }
@@ -531,13 +565,15 @@ async function settingsSave(patch) {
   if (r.error) return { errors: { _: r.error } };
   const values = { ...v.values };
   const run = gnomeRunner();
-  if (run && Object.hasOwn(values, 'shortcut')) {
+  // GNOME handles the global shortcuts: Aska does not register them too.
+  for (const [k, entry] of [['shortcut', gnome.ENTRIES.toggle], ['selectionShortcut', gnome.ENTRIES.selection]]) {
+    if (!run || !Object.hasOwn(values, k)) continue;
     try {
-      await gnome.writeShortcut(run, values.shortcut, gnome.toggleCommand({ appPath: app.getAppPath() }));
+      await gnome.writeShortcut(run, values[k], gnome.toggleCommand({ appPath: app.getAppPath(), flag: entry.flag }), entry);
     } catch (e) {
-      return { errors: { shortcut: t('settings.errors.gnome', { error: e.message }) } };
+      return { errors: { [k]: t('settings.errors.gnome', { error: e.message }) } };
     }
-    values.shortcut = false; // GNOME handles it: Aska does not register it too
+    values[k] = false;
   }
   try {
     const merged = mergeConfig(r.missing ? {} : r.data, values);
@@ -570,7 +606,23 @@ function send(payload) {
   if (win && !win.isDestroyed()) win.webContents.send('aska:run-event', payload);
 }
 
-function startRun(req) {
+// A conversation with documents: their text is loaded first (files read, pages
+// fetched, both cached), then the request starts as usual.
+async function run(req) {
+  const tab = req && typeof req === 'object' && typeof req.tabId === 'string' ? tabs.get(req.tabId) : null;
+  if (!tab || !(tab.conv.sources || []).length) return startRun(req);
+  if (tab.run || tab.loading) return { error: t('errors.tabBusy') };
+  tab.loading = true;
+  let loaded;
+  try {
+    loaded = await loader.load(tab.conv.sources);
+  } finally {
+    tab.loading = false;
+  }
+  return startRun(req, loaded);
+}
+
+function startRun(req, loaded = []) {
   if (!req || typeof req !== 'object') return { error: t('errors.invalidRequest') };
   const tab = typeof req.tabId === 'string' ? tabs.get(req.tabId) : null;
   if (!tab) return { error: t('errors.tabNotFound') };
@@ -604,9 +656,21 @@ function startRun(req) {
 
   // Follow-up in a conversation: native resume if the CLI already has the whole
   // thread in its session (same agent, same folder), otherwise the context is fed back in.
+  // Documents of the conversation: sent with the request, except when the resumed
+  // session already has them as they are now.
+  const docs = src.buildSourcesBlock(loaded, src.budgetFor(agent));
+  const docsHash = src.blockHash(docs);
   const sess = conv.sessions[agent.id];
-  const resume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length ? sess.id : null;
-  const fullPrompt = resume ? prompt : buildContextPrompt(conv.turns, prompt);
+  // A session that was given documents since removed is not resumed: it would still use them.
+  const canResume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length && !(sess.sources && !docs);
+  const resume = canResume ? sess.id : null;
+  const sendDocs = docs && !(resume && sess.sources === docsHash);
+  const used = docs ? loaded.filter((l) => !l.error) : [];
+  // The request as sent: the history unless the session is resumed, the documents unless it has them.
+  const fullPrompt = (maxChars) => {
+    const body = resume ? prompt : buildContextPrompt(conv.turns, prompt, maxChars);
+    return sendDocs ? src.withSources(docs, body, { hasHistory: body !== prompt }) : body;
+  };
   // A "/" command of the config may name a model for this request only (null: the CLI's default).
   let model = modelFor(agent) || defaultModel(agent);
   if (req.model !== undefined && canPickModel(agent)) {
@@ -614,15 +678,32 @@ function startRun(req) {
     model = req.model;
   }
 
+  // The history fed back is cut down if the command would exceed the system's
+  // limit (prompt passed as an argument: Copilot, Cursor).
+  const env = agentEnv(agent);
+  const excess = (i) => {
+    let cmd;
+    try {
+      cmd = buildCommand(agent.launch, i.argv);
+    } catch {
+      return 0; // refused by cmd.exe: launchAgent reports it
+    }
+    return commandLineExcess(cmd.command, cmd.args, { verbatim: cmd.verbatim, env });
+  };
   let inv;
   try {
-    inv = buildInvocation(agent, mode, fullPrompt, { model, resume, trusted: true });
+    inv = fitInvocation(
+      (maxChars) => buildInvocation(agent, mode, fullPrompt(maxChars), { model, resume, trusted: true }),
+      excess,
+      HISTORY_CHARS
+    );
   } catch (e) {
     return { error: e.message };
   }
 
   const thread = conv;
   const turn = { agent: agent.id, label: agent.label, model, mode, prompt, answer: '', status: 'running', ts: new Date().toISOString() };
+  if (used.length) turn.sources = used.length;
   thread.turns.push(turn);
   thread.cwd = dir.path;
   let sessionId = null;
@@ -681,7 +762,7 @@ function startRun(req) {
       };
     }
     // The CLI session only "covers" the thread if this turn succeeded.
-    if (ok && sessionId && agent.resumeFlag) thread.sessions[agent.id] = { id: sessionId, cwd: dir.path, upTo: thread.turns.length };
+    if (ok && sessionId && agent.resumeFlag) thread.sessions[agent.id] = { id: sessionId, cwd: dir.path, upTo: thread.turns.length, sources: docsHash };
     else if (!ok) delete thread.sessions[agent.id];
     store.save(thread);
     sec.appendAudit(P.audit, {
@@ -694,6 +775,8 @@ function startRun(req) {
       conversation: thread.id,
       model: turn.model,
       prompt: cfg.savePrompts ? prompt : undefined,
+      // What was sent along with the request (documents of the conversation).
+      sources: used.length ? (cfg.savePrompts ? used.map((l) => (l.source.kind === 'url' ? l.source.url : l.source.path)) : used.length) : undefined,
       result: res.reason,
       code: res.code ?? null,
       durationMs: res.durationMs,
@@ -786,7 +869,7 @@ function registerIpc() {
     return true;
   });
   handle('aska:state', () => publicState());
-  handle('aska:run', startRun);
+  handle('aska:run', run);
   handle('aska:cancel', (tabId) => {
     const tab = typeof tabId === 'string' ? tabs.get(tabId) : tabs.active();
     if (tab && tab.run) tab.run.handle.cancel();
@@ -841,6 +924,63 @@ function registerIpc() {
     syncCwd();
     saveState();
     return publicList();
+  });
+  // ----- documents and links of the active tab's conversation -----
+  const setSources = (conv, list) => {
+    conv.sources = list;
+    store.save(conv); // only once the conversation has a first message
+  };
+  const addToActive = (raws) => {
+    const conv = tabs.active().conv;
+    // A relative path starts from the tab's folder (from home in the scratch space).
+    const r = src.addSources(conv.sources || [], raws, { base: cwd === P.workspace ? os.homedir() : cwd });
+    if (r.added) setSources(conv, r.sources);
+    // Loaded right away: the first request does not wait, and the list shows what was read.
+    if (r.added) loader.load(conv.sources).catch(() => {});
+    return { ...publicState(), added: r.added, errors: r.errors };
+  };
+  handle('aska:sources-add', (raws) => {
+    if (!Array.isArray(raws) || !raws.length || raws.some((x) => typeof x !== 'string')) return { ...publicState(), added: 0, errors: [t('sources.invalidPath')] };
+    return addToActive(raws);
+  });
+  handle('aska:sources-pick', async () => {
+    dialogOpen = true;
+    try {
+      const r = await dialog.showOpenDialog(win, {
+        title: t('sources.pickTitle'),
+        defaultPath: cwd === P.workspace ? os.homedir() : cwd,
+        properties: ['openFile', 'multiSelections'],
+      });
+      if (!r.canceled && r.filePaths.length) return addToActive(r.filePaths);
+    } finally {
+      dialogOpen = false;
+      if (win) win.focus();
+    }
+    return { ...publicState(), added: 0, errors: [] };
+  });
+  handle('aska:sources-remove', (key) => {
+    const conv = tabs.active().conv;
+    const list = conv.sources || [];
+    if (key != null && typeof key !== 'string') return publicState();
+    // No key: every source of the conversation.
+    const gone = key == null ? list : list.filter((s) => src.keyOf(s) === key);
+    for (const s of gone) loader.forget(s);
+    if (gone.length) setSources(conv, list.filter((s) => !gone.includes(s)));
+    return publicState();
+  });
+  // What each source gave: its size once read, or why it could not be.
+  handle('aska:sources-list', async (req) => {
+    const conv = tabs.active().conv;
+    const loaded = await loader.load(conv.sources || [], { refresh: !!(req && req.refresh === true) });
+    return loaded.map((l) => ({
+      key: src.keyOf(l.source),
+      kind: l.source.kind,
+      label: l.source.kind === 'url' ? l.source.url : tilde(l.source.path),
+      title: l.title || null,
+      chars: l.text ? l.text.length : 0,
+      error: l.error || null,
+      note: l.unreadable || l.stale || null,
+    }));
   });
   handle('aska:settings-get', () => settingsGet());
   handle('aska:settings-save', (values) => settingsSave(values));
@@ -941,7 +1081,7 @@ if (wantsCliOutput(argv)) {
 }
 const wants = (flag) => argv.includes(flag);
 
-const APP_FLAGS = ['--toggle', '--hidden', '--reload', '--restart', '--replaced', '--quit', '--no-autostart'];
+const APP_FLAGS = ['--toggle', '--selection', '--hidden', '--reload', '--restart', '--replaced', '--quit', '--no-autostart'];
 
 // Replaces the running instance: a helper instance sends it "--quit"
 // (understood even by old versions), then we relaunch in its place.
@@ -1010,6 +1150,8 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     if (secondArgv.includes('--quit')) {
       quitting = true;
       app.quit();
+    } else if (secondArgv.includes('--selection')) {
+      askAboutSelection();
     } else if (secondArgv.includes('--reload')) {
       loadEverything();
       registerShortcut();
@@ -1042,7 +1184,8 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     createWindow();
     setupTray();
     win.webContents.once('did-finish-load', () => {
-      if (!wants('--hidden')) showWindow();
+      if (wants('--selection')) askAboutSelection();
+      else if (!wants('--hidden')) showWindow();
     });
   });
 
