@@ -1201,8 +1201,14 @@ function tasksModule() {
 
 // A subtask's agent, run like a tab's request: its bot (personality, model,
 // allowed commands: granted when the task was approved), in its worktree.
+// The bot of a subtask: one of ~/.aska/bots, or its temporary bot (read again from its folder).
+function subtaskBot(s) {
+  if (s.botDir) return require('./tasks/bots').loadTempBot(s.botDir, s.n, { agents, allowAutoMode: cfg.allowAutoMode });
+  return Object.hasOwn(bots, s.botId) ? bots[s.botId] : null;
+}
+
 function launchSubtask(task, s) {
-  const bot = Object.hasOwn(bots, s.botId) ? bots[s.botId] : null;
+  const bot = subtaskBot(s);
   if (!bot) return { error: t('errors.unknownBot') };
   const agent = agents[bot.agent];
   if (!agent || !agent.binPath) return { error: t('errors.agentUnavailable', { agent: bot.agent, error: agent ? agent.binError : '' }) };
@@ -1251,8 +1257,9 @@ function publicTask(task) {
   return {
     ...task,
     subtasks: task.subtasks.map((s) => {
-      const b = bots[s.botId];
-      return { ...s, repo: tilde(s.repo), worktree: s.worktree ? tilde(s.worktree) : null, bot: b ? { id: b.id, label: b.label, color: b.color, avatar: b.avatar, image: b.image } : { id: s.botId, label: s.botId } };
+      const b = subtaskBot(s);
+      const { botDir, ...rest } = s;
+      return { ...rest, temporary: !!botDir, repo: tilde(s.repo), worktree: s.worktree ? tilde(s.worktree) : null, bot: b ? { id: b.id, label: b.label, color: b.color, avatar: b.avatar, image: b.image } : { id: s.botId, label: s.botLabel || s.botId } };
     }),
     root: tilde(task.root),
   };
@@ -1270,14 +1277,41 @@ function setupTaskIpc() {
   handle('aska:task-create', (input) =>
     engineOr((e) => {
       const { checkTask } = require('./tasks/check');
-      const c = checkTask(input, { bots, agents, allowAutoMode: cfg.allowAutoMode, gitBin: e.gitBin });
+      const draft = draftAgent();
+      const c = checkTask(input, { bots, agents, allowAutoMode: cfg.allowAutoMode, gitBin: e.gitBin, defaultAgent: draft ? draft.id : undefined });
       if (c.error) return c;
-      return { task: publicTask(e.add(e.store.create(c))) };
+      // Temporary bots: written into the task's folder once it has its id.
+      const task = e.store.create(c);
+      const { writeTempBot } = require('./tasks/bots');
+      for (const s of task.subtasks) {
+        if (!s.temp) continue;
+        s.botDir = path.join(e.store.botsDir(task.id), String(s.n));
+        s.botLabel = s.temp.label;
+        writeTempBot(s.botDir, s.temp);
+        delete s.temp;
+      }
+      return { task: publicTask(e.add(task)) };
     })
   );
   handle('aska:task-start', (req) => engineOr((e) => e.start(req && req.id, req && Array.isArray(req.numbers) ? req.numbers : null)));
   handle('aska:task-cancel', (req) => engineOr((e) => e.cancel(req && req.id, req && Number.isInteger(req.n) ? req.n : null)));
   handle('aska:task-cleanup', (id) => engineOr((e) => e.cleanup(id)));
+  // Keeps a temporary bot: copied into ~/.aska/bots, offered with "@" from now on.
+  handle('aska:task-keep-bot', (req) =>
+    engineOr((e) => {
+      const task = req && typeof req.id === 'string' ? e.get(req.id) : null;
+      const s = task && Number.isInteger(req.n) ? task.subtasks.find((x) => x.n === req.n) : null;
+      if (!s || !s.botDir) return { error: t('tasks.unknown') };
+      if (s.kept) return { error: t('tasks.alreadyKept', { bot: s.kept }) };
+      const taken = [...Object.values(bots), ...Object.values(offBots)].map((b) => b.label);
+      const r = require('./tasks/bots').keepTempBot(s.botDir, { botsDir: P.bots, taken, agents, allowAutoMode: cfg.allowAutoMode });
+      if (r.errors) return { error: Object.values(r.errors)[0] };
+      s.kept = r.id;
+      e.changed(task);
+      reloadBots();
+      return { botId: r.id, task: publicTask(task), state: publicState() };
+    })
+  );
 }
 
 // Bots read again after a change made from the window (their warnings were shown at startup).

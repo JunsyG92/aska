@@ -94,10 +94,18 @@ class TaskStore {
       .slice(0, MAX_TASKS);
   }
 
+  /** Where the temporary bots of a task live. */
+  botsDir(id) {
+    if (!ID_RE.test(id)) throw new Error('Invalid task id');
+    return path.join(this.dir, id, 'bots');
+  }
+
   remove(id) {
     try {
       fs.unlinkSync(this.file(id));
     } catch { /* already gone */ }
+    // Its temporary bots go with it (those kept were copied to ~/.aska/bots).
+    if (ID_RE.test(id)) fs.rmSync(path.join(this.dir, id), { recursive: true, force: true });
   }
 }
 
