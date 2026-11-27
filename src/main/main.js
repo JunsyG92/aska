@@ -6,7 +6,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, isModel, buildInvocation, canPickModel } = require('./agents');
+const { MODES, MODE_ORDER, resolveAgents, isModel, buildInvocation, canPickModel, chooseModel } = require('./agents');
 const { ConversationStore, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
 const src = require('./sources');
@@ -366,6 +366,15 @@ function publicState() {
 function defaultModel(agent) {
   const known = agent.requiresModel && discovered[agent.id] && discovered[agent.id].models[0];
   return known ? known.id : null;
+}
+
+/**
+ * The model of a request: the bot's (on its own agent; null: the CLI's default,
+ * unless the agent needs one), else the one picked for the agent, else its
+ * default one. The same everywhere: tabs, subtasks, orchestrator, drafts.
+ */
+function modelOf(agent, bot = null) {
+  return chooseModel(agent, { bot, picked: modelFor(agent), fallback: () => defaultModel(agent) });
 }
 
 function createWindow() {
@@ -820,7 +829,7 @@ function startRun(req, loaded = []) {
   const used = docs ? loaded.filter((l) => !l.error) : [];
   // Model: the request's ("/" command, null: the CLI's default), else the bot's
   // (on its own agent), else the one picked for the agent, else its default one.
-  let model = bot && bot.agent === agent.id && bot.model !== undefined ? bot.model : modelFor(agent) || defaultModel(agent);
+  let model = modelOf(agent, bot);
   if (req.model !== undefined && canPickModel(agent)) {
     if (req.model !== null && !isModel(req.model)) return { error: t('errors.invalidModel') };
     model = req.model;
@@ -1259,6 +1268,7 @@ function registerIpc() {
     const bot = id && Object.hasOwn(bots, id) ? bots[id] : id && Object.hasOwn(offBots, id) ? offBots[id] : null;
     if (!bot) return { errors: { _: t('errors.unknownBot') } };
     if (req.values && req.values.enabled === false && botBusy(id)) return { errors: { enabled: t('bots.busy', { bot: bot.label }) } };
+    if (req.values && req.values.enabled === false && botInTask(id)) return { errors: { enabled: t('bots.inTask', { bot: bot.label }) } };
     const r = saveBot(bot.dir, req.values, { agents, allowAutoMode: cfg.allowAutoMode });
     if (r.errors) return r;
     reloadBots();
@@ -1300,7 +1310,7 @@ function registerIpc() {
     if (!agent || !agent.binPath) return { error: t('errors.unknownAgent') };
     let inv;
     try {
-      inv = buildInvocation(agent, 'read', draftPrompt(description.trim(), getLanguage()), { model: modelFor(agent), trusted: true });
+      inv = buildInvocation(agent, 'read', draftPrompt(description.trim(), getLanguage()), { model: modelOf(agent), trusted: true });
     } catch (e) {
       return { error: e.message };
     }
@@ -1328,6 +1338,7 @@ function registerIpc() {
     const bot = typeof id === 'string' && Object.hasOwn(bots, id) ? bots[id] : typeof id === 'string' && Object.hasOwn(offBots, id) ? offBots[id] : null;
     if (!bot) return { error: t('errors.unknownBot') };
     if (botBusy(id)) return { error: t('bots.busy', { bot: bot.label }) };
+    if (botInTask(id)) return { error: t('bots.inTask', { bot: bot.label }) };
     // ASKA_NO_TRASH: the tests never fill the trash of the machine that runs them.
     const r = await deleteBot(P.bots, id, { trash: process.env.ASKA_NO_TRASH ? null : (p) => shell.trashItem(p) });
     reloadBots();
@@ -1385,6 +1396,9 @@ function draftAgent() {
 
 // A bot answering in a tab: it can be neither deleted nor turned off.
 const botBusy = (id) => tabs.list.some((x) => x.run && x.run.botId === id);
+// A bot a task still needs: one of its subtasks running, queued or waiting to start.
+const botInTask = (id) =>
+  !!taskEngine && taskEngine.list().some((task) => task.subtasks.some((s) => !s.botDir && s.botId === id && ['pending', 'queued', 'running'].includes(s.status)));
 
 // ---------- tasks (several bots at once, each in its worktree) ----------
 // Loaded on first use only: Aska starts and runs as before for whoever never opens them.
@@ -1434,7 +1448,7 @@ function launchSubtask(task, s) {
   const dir = sec.checkWorkdir(s.worktree, s.mode, os.homedir(), [fs.realpathSync(s.worktree)]);
   if (dir.error) return { error: dir.error };
   const { excess, canPass } = commandFit(agent);
-  const model = bot.model !== undefined ? bot.model : modelFor(agent);
+  const model = modelOf(agent, bot);
   // Its instruction, then how to report (read when it ends, see tasks/report.js).
   const prompt = [s.prompt, require('./tasks/report').reportInstruction(getLanguage())].join('\n\n');
   const inv = invocationFor({ agent, mode: s.mode, prompt, turns: [], bot, model, excess, canPass, allow: s.allow });
@@ -1569,7 +1583,7 @@ function setupTaskIpc() {
     let inv;
     try {
       // Read-only, without the orchestrator's allowed commands: a plan changes nothing.
-      inv = invocationFor({ agent, mode: 'read', prompt, turns: [], bot: orchestrator, model: orchestrator && orchestrator.model !== undefined ? orchestrator.model : modelFor(agent), excess, canPass, allow: [] });
+      inv = invocationFor({ agent, mode: 'read', prompt, turns: [], bot: orchestrator, model: modelOf(agent, orchestrator), excess, canPass, allow: [] });
     } catch (err) {
       return { error: err.message };
     }

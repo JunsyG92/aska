@@ -850,3 +850,19 @@ test('remote actions: "always for this folder" remembered per bot and command', 
   assert.equal(store.isRemoteTrusted(project, 'other', ['git push']), false, 'per bot');
   if (POSIX) assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });
+
+test('model of a request: the one of the bot on its own agent, else the one picked, else the default one (Ollama)', () => {
+  const { chooseModel } = require('../src/main/agents');
+  const claude = { id: 'claude' };
+  const ollama = { id: 'ollama', requiresModel: true };
+  const fallback = () => 'llama3.2';
+  assert.equal(chooseModel(claude, { bot: { agent: 'claude', model: 'haiku' }, picked: 'opus' }), 'haiku');
+  assert.equal(chooseModel(claude, { bot: { agent: 'claude', model: null }, picked: 'opus' }), null, 'null: the CLI default');
+  assert.equal(chooseModel(claude, { bot: { agent: 'codex', model: 'gpt-5' }, picked: 'opus' }), 'opus', 'another agent: not its model');
+  assert.equal(chooseModel(claude, { picked: null }), null);
+  // Ollama needs a model: a bot or a subtask without one gets the first one installed.
+  assert.equal(chooseModel(ollama, { bot: { agent: 'ollama', model: null }, fallback }), 'llama3.2');
+  assert.equal(chooseModel(ollama, { fallback }), 'llama3.2', 'orchestrator, draft: no bot');
+  assert.equal(chooseModel(ollama, { picked: 'qwen3', fallback }), 'qwen3');
+  assert.equal(chooseModel(ollama, { bot: { agent: 'ollama', model: 'mistral' }, fallback }), 'mistral');
+});

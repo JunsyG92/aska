@@ -1265,6 +1265,9 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
       subtasks: [{ repo: root + '/api', botId: 'trad', prompt: 'Mets à jour Node' }, { repo: root + '/web', botId: 'trad', prompt: 'Mets à jour Node' }],
     }), taskRoot);
     assert.equal(created.task.subtasks.length, 2);
+    // A bot a task still needs can be neither deleted nor turned off.
+    assert.match((await page.evaluate(() => window.aska.deleteBot('trad'))).error, /Une tâche a encore besoin de Traducteur 2/);
+    assert.match((await page.evaluate(() => window.aska.saveBot('trad', { enabled: false }))).errors.enabled, /Une tâche a encore besoin/);
     const taskCallsFrom = calls().length;
     await page.evaluate((id) => window.aska.startTask(id), created.task.id);
     let taskNow;
