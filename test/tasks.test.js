@@ -352,3 +352,33 @@ test('plan: repositories of the folder only, unknown bots and refused commands l
   for (const bad of ['no json', '{"subtasks": "x"}', JSON.stringify({ subtasks: [] })]) assert.ok(parsePlan(bad, { root, repos, bots }).error, bad);
   assert.equal(parsePlan(JSON.stringify({ subtasks: Array.from({ length: 25 }, () => ({ repo: 'api', bot: 'up', instruction: 'x' })) }), { root, repos, bots }).plan.subtasks.length, 20);
 });
+
+// ---------- ticket 16: the plan's rights, as the Tasks view shows them ----------
+
+const { rightsOf } = require('../src/main/tasks/check');
+
+test('plan review: each subtask with its modes, its commands and the remote ones', () => {
+  const agents = installedAgents();
+  const bots = {
+    up: { id: 'up', label: 'Updater', agent: 'claude', maxMode: 'edit', allow: ['git add', 'git commit', 'git push', 'gh pr create'], soul: 'You update.', avatar: {}, color: '#123456' },
+    cur: { id: 'cur', label: 'Cursor bot', agent: 'cursor', maxMode: 'edit', allow: [], soul: 'x', avatar: {} },
+  };
+  const deps = { bots, agents, defaultAgent: 'claude' };
+  const r = rightsOf({ botId: 'up' }, 1, deps).rights;
+  assert.deepEqual([r.bot.id, r.maxMode, r.modes, r.commands], ['up', 'edit', ['read', 'edit'], true]);
+  assert.deepEqual(r.allow, ['git add', 'git commit', 'git push', 'gh pr create']);
+  assert.deepEqual(r.remote, ['git push', 'gh pr create'], 'the remote ones, to be warned about');
+  // Autonomous only when the config allows it.
+  const autoBot = { ...bots, up: { ...bots.up, maxMode: 'auto' } };
+  assert.deepEqual(rightsOf({ botId: 'up' }, 1, { ...deps, bots: autoBot }).rights.modes, ['read', 'edit']);
+  assert.deepEqual(rightsOf({ botId: 'up' }, 1, { ...deps, bots: autoBot, allowAutoMode: true }).rights.modes, ['read', 'edit', 'auto']);
+  // A copy with fewer commands, a bot made for the task (read-only unless said).
+  const copy = rightsOf({ bot: { copyOf: 'up', allow: ['git commit'] } }, 2, deps).rights;
+  assert.deepEqual([copy.bot.id, copy.bot.copyOf, copy.bot.label, copy.allow, copy.remote], [null, 'up', 'Updater', ['git commit'], []]);
+  const made = rightsOf({ bot: { label: 'Bumper', soul: 'You bump.' } }, 3, deps).rights;
+  assert.deepEqual([made.bot.label, made.modes, made.allow], ['Bumper', ['read'], []]);
+  // An agent without commands one by one: none granted, whatever the bot says.
+  assert.equal(rightsOf({ botId: 'cur' }, 1, deps).rights.commands, false);
+  assert.match(rightsOf({ botId: 'nope' }, 4, deps).error, /Subtask 4: unknown bot/);
+  assert.match(rightsOf({ bot: { copyOf: 'up', allow: ['rm'] } }, 5, deps).error, /Subtask 5: bot refused/);
+});

@@ -99,6 +99,13 @@ process.stdin.on('end', async () => {
     await sleep(Number(process.env.FAKE_DELAY || 15) * 10);
     j({ type: 'assistant', message: { content: [{ type: 'text', text: 'Voici la proposition :\n' + JSON.stringify(draft) }] } });
     j({ type: 'result', subtype: 'success', is_error: false, result: 'fin' });
+  } else if (mode === 'stream' && prompt.includes('[slow]')) {
+    // A long subtask (tasks view): a first sentence, then nothing until it is stopped.
+    j({ type: 'system', subtype: 'init', model: 'fake-model-1', session_id: 'sess-0004-slow' });
+    j({ type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'text' } } });
+    j({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Je commence par **package.json**.' } } });
+    await sleep(60000);
+    j({ type: 'result', subtype: 'success', is_error: false, result: 'fin' });
   } else if (mode === 'stream') {
     const resumed = args.includes('--resume');
     const chosen = args.includes('--model') ? args[args.indexOf('--model') + 1] : 'fake-model-1';

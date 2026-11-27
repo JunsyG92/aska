@@ -9,6 +9,7 @@ const { checkWorkdir, within } = require('../security');
 const { MODE_ORDER } = require('../agents');
 const { repoRoot, realPath } = require('./worktree');
 const { checkTempBot } = require('./bots');
+const { isRemote } = require('../bots');
 const { t } = require('../../i18n');
 
 const MAX_SUBTASKS = 20;
@@ -65,4 +66,37 @@ function checkTask(input, { bots, agents, allowAutoMode = false, gitBin, home, d
   return { goal, root: realPath(root.path), subtasks };
 }
 
-module.exports = { checkTask, MAX_SUBTASKS };
+/**
+ * The rights of a subtask of a plan, for the review: its bot (an existing one,
+ * or the temporary one it describes), the modes it may get, its commands
+ * (granted only in a writing mode, by an agent that allows them one by one)
+ * and the remote ones among them. The window only lets the user lower them.
+ * Returns { rights: { bot, agent, maxMode, modes, allow, remote, commands } } or { error }.
+ */
+function rightsOf(sub, n, { bots, agents, allowAutoMode = false, defaultAgent }) {
+  let bot;
+  if (sub && sub.bot !== undefined) {
+    const c = checkTempBot(sub.bot, n, { bots, agents, allowAutoMode, defaultAgent });
+    if (c.error) return c;
+    bot = { id: null, label: c.temp.label, agent: c.temp.agent, maxMode: c.temp.maxMode, allow: c.temp.allow, avatar: c.temp.avatar, color: c.temp.color, copyOf: c.temp.copyOf };
+  } else bot = sub && typeof sub.botId === 'string' && Object.hasOwn(bots, sub.botId) ? bots[sub.botId] : null;
+  if (!bot) return { error: t('tasks.badBot', { n }) };
+  const agent = agents[bot.agent];
+  if (!agent || !agent.binPath) return { error: t('tasks.badAgent', { n, bot: bot.label }) };
+  const max = MODE_ORDER.indexOf(bot.maxMode);
+  const modes = MODE_ORDER.filter((m, i) => i <= max && agent.modes[m] && (m !== 'auto' || allowAutoMode));
+  const commands = !!agent.allowFlag;
+  return {
+    rights: {
+      bot: { id: bot.id, label: bot.label, color: bot.color || null, avatar: bot.avatar || {}, image: bot.image || null, copyOf: bot.copyOf || null },
+      agent: agent.label,
+      maxMode: bot.maxMode,
+      modes,
+      allow: commands ? [...bot.allow] : [],
+      remote: commands ? bot.allow.filter(isRemote) : [],
+      commands,
+    },
+  };
+}
+
+module.exports = { checkTask, rightsOf, MAX_SUBTASKS };

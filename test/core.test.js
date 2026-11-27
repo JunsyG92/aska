@@ -580,7 +580,7 @@ test('system tray icon: menu wired to actions, rebuilt only when needed', () => 
     nativeImage: { createFromPath: (p) => path.basename(p) },
   };
   const called = [];
-  const actions = Object.fromEntries(['toggle', 'new', 'cancel', 'settings', 'quit'].map((k) => [k, () => called.push(k)]));
+  const actions = Object.fromEntries(['toggle', 'new', 'cancel', 'tasks', 'settings', 'quit'].map((k) => [k, () => called.push(k)]));
   const handle = createTray(electron, actions);
 
   handle.update({ running: 0, visible: false });
@@ -599,7 +599,7 @@ test('system tray icon: menu wired to actions, rebuilt only when needed', () => 
   // Each entry calls its action; clicking the icon shows or hides.
   for (const it of tray.menu) if (it.click) it.click();
   tray.handlers.click();
-  assert.deepEqual(called, ['toggle', 'new', 'cancel', 'settings', 'quit', 'toggle']);
+  assert.deepEqual(called, ['toggle', 'new', 'cancel', 'tasks', 'settings', 'quit', 'toggle']);
 
   handle.destroy();
   handle.destroy();
@@ -1362,7 +1362,7 @@ test('commands: suggestions while typing', () => {
   // Not a command being typed.
   for (const s of ['hello', '//x', '/new\n', '', ' /new']) assert.equal(commands.suggest(s, ctx), null, s);
   // "/" alone: every command, then the agents.
-  assert.equal(names('/').length, 16, 'every command and agent');
+  assert.equal(names('/').length, 18, 'every command and agent');
   assert.equal(commands.suggest('/', { agents: Array.from({ length: 50 }, (_, i) => ({ id: 'a' + i, label: 'A' })) }).length, 40, 'capped');
   assert.deepEqual(names('/c'), ['clear', 'close', 'cd', 'copy', 'claude', 'codex']);
   assert.deepEqual(names('/MO'), ['mode', 'model']);

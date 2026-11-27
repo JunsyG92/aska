@@ -1189,7 +1189,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
       gitIn(d, 'commit', '-qm', 'init');
     }
     const firstList = await page.evaluate(() => window.aska.listTasks());
-    assert.deepEqual(firstList, { tasks: [] }, JSON.stringify(firstList));
+    assert.deepEqual(firstList.tasks, [], JSON.stringify(firstList));
+    assert.equal(firstList.root, '~' + path.sep + 'botproject', 'a new task starts from the tab’s folder');
     const refused = await page.evaluate((root) => window.aska.createTask({ goal: 'x', root, subtasks: [{ repo: root, botId: 'trad', prompt: 'p' }] }), taskRoot);
     assert.match(refused.error, /n’est pas un dépôt git du dossier choisi/);
     const created = await page.evaluate((root) => window.aska.createTask({
@@ -1276,6 +1277,92 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     const before2 = calls().length;
     assert.match((await page.evaluate((root) => window.aska.planTask({ goal: 'x', root }), emptyDir)).error, /Aucun dépôt git/);
     assert.equal(calls().length, before2);
+
+    // ---------- Tasks view: new task, plan to review, live board, actions ----------
+    await send('/tache');
+    await page.waitForSelector('#tasks:not([hidden]) .tk-goal');
+    assert.equal(await page.isHidden('#thread'), true);
+    assert.equal(await page.getAttribute('.set-tab[data-page="new"]', 'aria-selected'), 'true', 'no task yet: the form first');
+    await page.fill('.tk-goal', 'Passer les apps à Node 26');
+    await page.fill('.tk-root', taskRoot);
+    await page.click('[data-action="propose"]');
+    await page.waitForSelector('.tk-plan-item', { timeout: 20000 });
+    const planItem = (n) => page.locator(`.tk-plan-item[data-n="${n}"]`);
+    assert.equal(await page.locator('.tk-plan-item').count(), 2);
+    assert.match(await page.textContent('.tk-notes'), /commandes refusées et retirées \(rm\)/);
+    assert.deepEqual(await planItem(1).locator('.tk-badge').allTextContents(), [], 'read-only: nothing to warn about');
+    assert.deepEqual(await planItem(2).locator('.tk-badge').allTextContents(), ['écrit', 'lance']);
+    assert.match(await planItem(2).locator('.tk-who').textContent(), /Bumper.*temporaire.*web/);
+    await page.waitForTimeout(400);
+    await shot('20-tasks-review-light');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(150);
+    await shot('20-tasks-review-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    // Reviewed: the first subtask removed, the second without its command, its instruction changed.
+    await planItem(1).locator('.tk-check').uncheck();
+    assert.equal(await page.textContent('[data-action="approve"]'), 'Valider et lancer (1)');
+    await planItem(2).locator('.tk-cmd input').uncheck();
+    assert.deepEqual(await planItem(2).locator('.tk-badge').allTextContents(), ['écrit'], 'fewer rights, fewer warnings');
+    await planItem(2).locator('textarea').fill('Passe à Node 26 [slow]');
+    const viewCallsFrom = calls().length;
+    await page.click('[data-action="approve"]');
+    await page.waitForSelector('.tk-sub[data-status="running"]', { timeout: 20000 });
+    assert.equal(await page.locator('.tk-sub').count(), 1);
+    // Its journal, live, rendered as the thread.
+    await page.click('.tk-sub [data-action="log"]');
+    await page.waitForFunction(() => /Je commence par package\.json/.test(document.querySelector('.tk-answer')?.textContent || ''), null, { timeout: 20000 });
+    assert.equal(await page.locator('.tk-answer strong').textContent(), 'package.json');
+    assert.match(await page.textContent('.tk-sub .tk-facts'), /aska\/passer-les-apps-a-node-26\/1/);
+    await shot('21-tasks-board-light');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(150);
+    await shot('21-tasks-board-dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    const viewCall = calls()[viewCallsFrom];
+    assert.ok(viewCall.args.includes('acceptEdits'), 'Edit mode, as approved');
+    assert.ok(!viewCall.args.includes('--allowedTools'), 'the command unchecked is not granted');
+    assert.match(viewCall.stdin, /Passe à Node 26 \[slow\]/);
+    assert.ok(samePath(path.dirname(path.dirname(viewCall.cwd)), path.join(P.dataDir, 'worktrees')), `in its worktree: ${viewCall.cwd}`);
+    // Cancel, run again, cancel everything.
+    await page.click('.tk-sub [data-action="cancel"]');
+    await page.waitForSelector('.tk-sub[data-status="cancelled"]', { timeout: 20000 });
+    await page.click('.tk-sub [data-action="rerun"]');
+    await page.waitForSelector('.tk-sub[data-status="running"]', { timeout: 20000 });
+    await page.click('[data-action="cancel-all"]');
+    await page.waitForSelector('.tk-sub[data-status="cancelled"]', { timeout: 20000 });
+    assert.equal(calls().length - viewCallsFrom, 2, 'run twice');
+    // Keep its temporary bot, then clean up (two clicks): the branch stays.
+    await page.click('.tk-sub [data-action="keep"]');
+    await page.waitForFunction(() => /Bot gardé : @bumper/.test(document.querySelector('#tasks .set-message').textContent));
+    assert.ok((await page.evaluate(() => window.aska.getState())).bots.some((b) => b.id === 'bumper'));
+    await page.click('[data-action="cleanup"]');
+    assert.equal(await page.textContent('[data-action="cleanup"]'), 'Confirmer le nettoyage');
+    await page.click('[data-action="cleanup"]');
+    await page.waitForSelector('#tasks .hist-empty');
+    assert.deepEqual(await page.evaluate(() => window.aska.listTasks().then((r) => r.tasks.length)), 0);
+    assert.equal(gitIn(path.join(taskRoot, 'web'), 'rev-parse', '--verify', 'aska/passer-les-apps-a-node-26/1').status, 0, 'branch kept');
+    assert.equal(gitIn(path.join(taskRoot, 'web'), 'worktree', 'list').stdout.trim().split('\n').length, 1, 'worktree removed');
+    await page.evaluate(() => window.aska.deleteBot('bumper'));
+    // A second task, run to the end: done, with its journal; Esc goes back to the list, then to the chat.
+    await page.click('[data-action="new"]');
+    await page.fill('.tk-goal', 'Lire les README');
+    await page.fill('.tk-root', taskRoot);
+    await page.click('[data-action="propose"]');
+    await page.waitForSelector('.tk-plan-item', { timeout: 20000 });
+    await planItem(2).locator('.tk-check').uncheck();
+    await page.click('[data-action="approve"]');
+    await page.waitForSelector('.tk-sub[data-status="done"]', { timeout: 20000 });
+    await page.click('.tk-sub [data-action="log"]');
+    assert.match(await page.textContent('.tk-answer'), /Here are three points/);
+    assert.equal(await page.locator('.tk-sub [data-action="keep"]').count(), 0, 'an existing bot: nothing to keep');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.tk-item');
+    assert.match(await page.textContent('.tk-item'), /Lire les README.*terminée/);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#tasks', { state: 'hidden' });
+    assert.equal(await page.isVisible('#thread'), true);
+    for (const x of (await page.evaluate(() => window.aska.listTasks())).tasks) await page.evaluate((id) => window.aska.cleanupTask(id), x.id);
 
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
