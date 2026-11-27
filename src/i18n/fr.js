@@ -19,6 +19,7 @@ module.exports = {
     emptyPrompt: 'Prompt vide',
     promptTooLong: "Cette demande est trop longue pour être passée à cet agent en ligne de commande : raccourcissez-la, ou utilisez un agent qui la lit sur l'entrée standard (Claude, Codex)",
     invalidModel: 'Nom de modèle invalide',
+    modelRequired: "Choisissez d'abord un modèle {agent} ({key:modelMenu})",
     invalidSession: 'Identifiant de session invalide',
     modeNotOffered: '{agent} ne propose pas le mode « {mode} »',
     timeout: 'Arrêté : délai de {sec} s dépassé',
@@ -183,6 +184,7 @@ module.exports = {
     missingTarget: 'le lanceur {launcher} vise un fichier absent ({target})',
     unsupportedPath: 'chemin du lanceur non pris en charge : {path}',
     cmdInterpret: "ce CLI passe par cmd.exe, qui interpréterait l'argument « {arg} ». Indiquez son exécutable (.exe) ou son script (.js) avec \"bin\" dans la configuration.",
+    thinking: 'Réflexion…',
   },
 
   models: {
@@ -223,6 +225,7 @@ module.exports = {
     sources: 'Documents et liens donnés à l\'agent',
     listen: 'Écouter le micro et répondre à ce qui est demandé  /  arrêter',
     collapse: 'Réduire en pastille',
+    wide: 'Grande vue (70 % de l\'écran) / taille normale',
     pin: 'Épingler / désépingler (un chat épinglé ne se masque pas au clic extérieur)',
     copyLast: 'Copier la dernière réponse',
     settings: 'Réglages',
@@ -312,6 +315,7 @@ module.exports = {
         copyAnswer: 'Copier la dernière réponse',
         rerun: 'Relancer dans le mode suivant, après des actions refusées',
         toggleMini: 'Réduire / agrandir',
+        toggleWide: 'Grande vue / taille normale',
         togglePin: 'Épingler / désépingler',
         settings: 'Réglages',
       },
@@ -363,6 +367,12 @@ module.exports = {
       pinnedTitle: 'Épinglé : reste affiché quand vous cliquez ailleurs ({key:togglePin} pour désépingler)',
       pinned: 'Épinglé',
       hidesOnBlur: 'Se masque au clic extérieur',
+    },
+    wide: {
+      enlarge: 'Grande vue',
+      enlargeTitle: 'Grande vue, pour lire les réponses ({key:toggleWide})',
+      reduce: 'Taille normale',
+      reduceTitle: 'Revenir à la taille normale ({key:toggleWide})',
     },
     mini: {
       expand: 'Agrandir',
@@ -477,6 +487,9 @@ module.exports = {
       chars: { one: '{count} caractère', other: '{count} caractères' },
       loading: 'Lecture…',
       used: { one: '{count} document', other: '{count} documents' },
+      attached: "Documents donnés à l'agent",
+      drop: "Déposez pour donner ces documents à l'agent",
+      dropNothing: 'Rien à ajouter : déposez des fichiers, ou un lien depuis le navigateur',
     },
     listen: {
       label: 'Écouter',

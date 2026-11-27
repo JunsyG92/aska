@@ -21,6 +21,7 @@ module.exports = {
     emptyPrompt: 'Empty prompt',
     promptTooLong: 'This request is too long to be passed to this agent on the command line: shorten it, or use an agent that reads it from standard input (Claude, Codex)',
     invalidModel: 'Invalid model name',
+    modelRequired: 'Pick a model for {agent} first ({key:modelMenu})',
     invalidSession: 'Invalid session id',
     modeNotOffered: '{agent} does not offer the "{mode}" mode',
     timeout: 'Stopped: {sec} s timeout exceeded',
@@ -185,6 +186,7 @@ module.exports = {
     missingTarget: 'the launcher {launcher} targets a missing file ({target})',
     unsupportedPath: 'unsupported launcher path: {path}',
     cmdInterpret: 'this CLI goes through cmd.exe, which would interpret the argument "{arg}". Set its executable (.exe) or script (.js) with "bin" in the config.',
+    thinking: 'Thinking…',
   },
 
   models: {
@@ -225,6 +227,7 @@ module.exports = {
     sources: 'Documents and links given to the agent',
     listen: 'Listen to the microphone and answer what is asked  /  stop',
     collapse: 'Collapse into a pill',
+    wide: 'Large view (70% of the screen) / normal size',
     pin: 'Pin / unpin (a pinned chat does not hide on an outside click)',
     copyLast: 'Copy the last answer',
     settings: 'Settings',
@@ -314,6 +317,7 @@ module.exports = {
         copyAnswer: 'Copy the last answer',
         rerun: 'Run again in the next mode, after denied actions',
         toggleMini: 'Collapse / expand',
+        toggleWide: 'Large view / normal size',
         togglePin: 'Pin / unpin',
         settings: 'Settings',
       },
@@ -365,6 +369,12 @@ module.exports = {
       pinnedTitle: 'Pinned: stays visible when you click elsewhere ({key:togglePin} to unpin)',
       pinned: 'Pinned',
       hidesOnBlur: 'Hides when clicking outside',
+    },
+    wide: {
+      enlarge: 'Large view',
+      enlargeTitle: 'Large view, to read the answers ({key:toggleWide})',
+      reduce: 'Normal size',
+      reduceTitle: 'Back to the normal size ({key:toggleWide})',
     },
     mini: {
       expand: 'Expand',
@@ -479,6 +489,9 @@ module.exports = {
       chars: { one: '{count} character', other: '{count} characters' },
       loading: 'Reading…',
       used: { one: '{count} document', other: '{count} documents' },
+      attached: 'Documents given to the agent',
+      drop: 'Drop to give these documents to the agent',
+      dropNothing: 'Nothing to add: drop files, or a link from the browser',
     },
     listen: {
       label: 'Listen',

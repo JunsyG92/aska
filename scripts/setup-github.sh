@@ -9,7 +9,8 @@
 #      message; branches deleted after merge; auto-merge allowed;
 #      Discussions enabled;
 #   2. GitHub Actions: read-only token by default, PR creation allowed
-#      (needed by release-please);
+#      (needed by release-please); CI of a PR from an external contributor waits
+#      for your approval before running its code;
 #   3. Dependabot alerts and security fixes, secret scanning and push protection;
 #   4. protection rules from .github/rulesets/ (created or updated);
 #   5. labels used by the issue templates and Dependabot;
@@ -57,6 +58,9 @@ run api -X PATCH "repos/$REPO" \
 step "GitHub Actions: read-only token, PR creation allowed (release-please)"
 run api -X PUT "repos/$REPO/actions/permissions/workflow" \
   -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+# A PR from a fork can change CI: its code only runs once you approve it.
+run api -X PUT "repos/$REPO/actions/permissions/fork-pr-contributor-approval" \
+  -f approval_policy=all_external_contributors
 
 step "Security: Dependabot alerts and fixes, secret scanning"
 run api -X PUT "repos/$REPO/vulnerability-alerts"
@@ -113,4 +117,5 @@ fi
 echo
 echo "Done. Next steps, if needed:"
 echo "  - RELEASE_TOKEN secret so that CI runs on the release PR (see CONTRIBUTING.md);"
+echo "  - ANTHROPIC_API_KEY secret for the AI review of PRs: gh secret set ANTHROPIC_API_KEY --repo $REPO;"
 echo "  - Settings → Collaborators: give the \"Write\" role to regular contributors."

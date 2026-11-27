@@ -36,6 +36,8 @@
         </div>
       </section>
 
+      <div id="attach" class="attach" role="list" hidden aria-label="Documents given to the agent" data-i18n-aria-label="sources.attached"></div>
+      <div id="drop-zone" class="drop-zone" aria-hidden="true"><span data-i18n="sources.drop">Drop to give these documents to the agent</span></div>
       <header class="bar">
         <span class="grip" title="Move" data-i18n-title="move" aria-hidden="true"></span>
         <button id="agent" class="agent" type="button" title="Switch agent (Tab)" data-i18n-title="switchAgent">
@@ -66,6 +68,9 @@
         <button id="new-btn" class="win-btn full-only" type="button" title="New tab (Ctrl+T)" aria-label="New tab"
                 data-i18n-title="tabs.newTabTitle" data-i18n-aria-label="tabs.newTab">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
+        </button>
+        <button id="wide-btn" class="win-btn full-only" type="button" aria-pressed="false" title="Large view (Ctrl+E)" aria-label="Large view">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path class="i-grow" d="M9.5 3h3.5v3.5M6.5 13H3V9.5M13 3 9 7M3 13l4-4"/><path class="i-shrink" d="M12.5 7H9V3.5M3.5 9H7v3.5M9 7l4-4M7 9l-4 4"/></svg>
         </button>
         <button id="mini-btn" class="win-btn" type="button" title="Minimize (Ctrl+M)" aria-label="Minimize">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path class="i-min" d="M4 8h8"/><path class="i-max" d="M4 9.5 8 5.5 12 9.5"/></svg>

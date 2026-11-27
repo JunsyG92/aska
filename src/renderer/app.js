@@ -56,6 +56,8 @@
   let tabList = []; // tabs: [{ id, title, color, running, unread, active }]
   const tabUi = new Map(); // per tab: { draft, agentId, mode }, kept when switching tabs
   let closeArmed = null; // working tab waiting for the close confirmation
+  let wide = false; // large view: 70 % of the screen, as soon as the agent answers
+  const wideChoice = new Map(); // conversation id -> large view chosen (true) or refused (false) by hand
   let lastPrompt = ''; // last request of the active conversation, for /retry
   let customCommands = []; // "/" commands of the config: [{ name, prompt, description?, agent?, mode?, model? }]
 
@@ -106,6 +108,8 @@
     document.querySelectorAll('.code-copy').forEach((b) => { b.textContent = t('copy'); });
     document.querySelectorAll('.turn .meta').forEach((m) => { m.dataset.cancelled = t('cancelled'); });
     syncMiniLabels();
+    syncWideLabels();
+    if (sources.length) renderAttach();
     setKeys();
   }
 
@@ -443,6 +447,9 @@
     turnCount = conversation.turns.length;
     thread.replaceChildren();
     conversation.turns.forEach((t, i) => addTurn(t, true, i === conversation.turns.length - 1));
+    const choice = wideChoice.get(conversation.id);
+    wideOnShow = false;
+    setWide(choice !== undefined ? choice : conversation.turns.some((t) => t.answer || t.status !== 'running'));
     const last = conversation.turns[turnCount - 1];
     lastAnswer = last ? last.answer : '';
     lastPrompt = last ? last.prompt : '';
@@ -457,6 +464,60 @@
     if (!live) return;
     live.answerEl.replaceChildren(window.renderMarkdown(live.text));
     scrollEnd(false);
+  }
+
+  // Widened as soon as the AI answers; an empty tab goes back to the normal size.
+  // Large view as soon as the agent answers (unless reduced by hand in this
+  // conversation); an empty conversation goes back to the normal size.
+  // The window animates to its new size (main process) while the panel fills it:
+  // the panel follows the edges exactly, then takes its final layout.
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let layoutSeq = 0;
+  function setWide(v) {
+    if (wide === v) return;
+    wide = v;
+    syncWideLabels();
+    const seq = ++layoutSeq;
+    const animate = !document.hidden && !mini && !reduceMotion.matches;
+    const settle = () => {
+      if (seq !== layoutSeq) return; // another change since: it settles itself
+      panel.classList.toggle('wide', wide);
+      panel.classList.remove('morphing');
+      scrollEnd(false);
+    };
+    if (wide) {
+      panel.classList.add('wide', 'morphing'); // fills the window, and grows with it
+      api.setWide(true, { animate }).then(settle, settle);
+      return;
+    }
+    // Size of the panel at the normal size, measured now (same task: nothing is drawn
+    // in between), so that the window shrinks right onto it.
+    panel.classList.remove('wide');
+    const pad = 2 * parseFloat(getComputedStyle(document.body).paddingLeft);
+    const compact = { w: panel.offsetWidth + pad, h: panel.offsetHeight + pad };
+    if (animate) panel.classList.add('wide', 'morphing'); // keeps filling the window while it shrinks
+    api.setWide(false, { compact, animate }).then(settle, settle);
+  }
+
+  let wideOnShow = false; // large view due while the window was hidden
+  function autoWide() {
+    if (wide || wideChoice.get(convId) === false) return;
+    // Hidden window: the large view waits until it shows (no layout out of sight).
+    if (document.hidden) wideOnShow = true;
+    else setWide(true);
+  }
+
+  function toggleWide() {
+    if (mini) return;
+    wideChoice.set(convId, !wide);
+    setWide(!wide);
+  }
+
+  function syncWideLabels() {
+    const btn = $('wide-btn');
+    btn.title = t(wide ? 'wide.reduceTitle' : 'wide.enlargeTitle');
+    btn.setAttribute('aria-label', t(wide ? 'wide.reduce' : 'wide.enlarge'));
+    btn.setAttribute('aria-pressed', String(wide));
   }
 
   function applyState(s) {
@@ -700,6 +761,7 @@
     switch (ev.type) {
       case 'text':
         live.text += ev.text;
+        if (ev.text.trim()) autoWide(); // first answer: more room to read it
         // The longer the answer, the less often it is redrawn.
         if (!renderTimer) renderTimer = setTimeout(renderLive, Math.min(400, 45 + live.text.length / 400));
         break;
@@ -724,6 +786,7 @@
     clearTimeout(renderTimer);
     renderTimer = null;
     live.text = turn.answer || live.text;
+    autoWide();
     renderLive();
     live.node.classList.remove('live');
     live.node.dataset.status = turn.status;
@@ -955,10 +1018,56 @@
   }
 
   function setSources(list) {
+    const changed = list.map((x) => x.key).join('\n') !== sources.map((x) => x.key).join('\n');
     sources = list;
     $('sources-count').textContent = list.length ? String(list.length) : '';
     $('sources').classList.toggle('on', list.length > 0);
     if (srcOpen) renderSources();
+    if (changed) renderAttach();
+    if (changed && list.length) loadSourceInfo(false);
+  }
+
+  // Short name of a source on its chip: the file name, or the host and path of a link.
+  function shortName(s) {
+    if (s.kind === 'url') {
+      try {
+        const u = new URL(s.label);
+        const p = u.pathname.replace(/\/$/, '');
+        return u.host + (p ? (p.length > 24 ? '/…' + p.slice(-22) : p) : '');
+      } catch {
+        return s.label;
+      }
+    }
+    return s.label.split(/[\\/]/).pop() || s.label;
+  }
+
+  // The documents of the conversation, above the field: one chip each, with its ×.
+  function renderAttach() {
+    const bar = $('attach');
+    bar.hidden = !sources.length;
+    bar.replaceChildren(
+      ...sources.map((s) => {
+        const info = srcInfo.get(s.key);
+        const chip = el('div', 'att' + (info && info.error ? ' err' : !info ? ' loading' : ''));
+        chip.setAttribute('role', 'listitem');
+        const sub = !info ? t('sources.loading') : info.error || [info.title, info.chars ? t('sources.chars', { count: info.chars }) : null, info.note].filter(Boolean).join(' · ');
+        chip.title = sub ? `${s.label}\n${sub}` : s.label;
+        const name = el('button', 'att-name', shortName(s));
+        name.type = 'button';
+        name.prepend(icon(SRC_ICON[s.kind] || SRC_ICON.file));
+        name.addEventListener('click', openSources);
+        const del = el('button', 'att-del', '×');
+        del.type = 'button';
+        del.title = t('sources.removeTitle', { name: s.label });
+        del.setAttribute('aria-label', t('sources.removeTitle', { name: s.label }));
+        del.addEventListener('click', (e) => {
+          e.stopPropagation();
+          removeSource(s.key);
+        });
+        chip.append(name, del);
+        return chip;
+      })
+    );
   }
 
   function highlightSource(i, scroll) {
@@ -1007,6 +1116,7 @@
     if (forConv !== convId) return;
     srcInfo = new Map(list.map((x) => [x.key, x]));
     if (srcOpen) renderSources();
+    renderAttach();
   }
 
   function openSources() {
@@ -1040,7 +1150,6 @@
     if (srcOpen) renderSources();
     if (srcError) setStatus(srcError, 'err');
     else if (res.added) setStatus(t('sources.added', { count: res.added }), 'ok');
-    if (res.added) loadSourceInfo(false);
     return !(res.errors && res.errors.length);
   }
 
@@ -1064,7 +1173,7 @@
     if (srcOpen) {
       highlightSource(Math.min(keep, sources.length - 1), false);
       srcInput.focus();
-    }
+    } else input.focus();
   }
 
   // ---------- listening (recording: listen.js; transcription: the main process) ----------
@@ -1187,6 +1296,58 @@
   }
 
   listenBtn.addEventListener('click', toggleListen);
+
+  // ---------- drag and drop: files, or a link from the browser ----------
+
+  // What a drag carries that can become sources: file paths, or http(s) links.
+  function droppedItems(dt) {
+    const files = [...(dt.files || [])].map((f) => api.pathForFile(f)).filter(Boolean);
+    if (files.length) return files;
+    const uris = (dt.getData('text/uri-list') || '').split(/\r?\n/).filter((l) => l && !l.startsWith('#'));
+    const text = uris.length ? uris : [(dt.getData('text/plain') || '').trim()];
+    return text.filter((u) => /^https?:\/\/\S+$/i.test(u)).slice(0, 20);
+  }
+
+  const canDrop = (dt) => !!dt && [...(dt.types || [])].some((x) => x === 'Files' || x === 'text/uri-list' || x === 'text/plain');
+  let dragDepth = 0;
+
+  function dragDone(state) {
+    dragDepth = 0;
+    panel.classList.remove('dropping');
+    api.drag(state);
+  }
+
+  document.addEventListener('dragenter', (e) => {
+    if (!canDrop(e.dataTransfer)) return;
+    e.preventDefault();
+    if (dragDepth++ === 0) {
+      panel.classList.add('dropping');
+      panel.classList.remove('fading');
+      api.drag('over');
+    }
+  });
+  document.addEventListener('dragover', (e) => {
+    // Always handled here: otherwise the page would open the dropped file.
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = canDrop(e.dataTransfer) && !pendingTrust ? 'copy' : 'none';
+  });
+  document.addEventListener('dragleave', () => {
+    // Entering a child element comes before leaving the previous one: the count reaches 0 only outside.
+    if (dragDepth && --dragDepth === 0) dragDone('leave');
+  });
+  document.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const items = droppedItems(e.dataTransfer);
+    dragDone('drop');
+    if (pendingTrust || view !== 'chat') return;
+    if (mini) setMini(false);
+    if (!items.length) {
+      setStatus(t('sources.dropNothing'), 'err');
+      return;
+    }
+    reportSources(await api.addSources(items));
+    input.focus();
+  });
 
   // ---------- conversation history ----------
 
@@ -1402,6 +1563,11 @@
       setMini(!mini);
       return;
     }
+    if (is('toggleWide') && !mini) {
+      e.preventDefault();
+      toggleWide();
+      return;
+    }
     if (is('togglePin') && !mini) {
       e.preventDefault();
       setPinned(!pinned, true);
@@ -1581,6 +1747,12 @@
   $('trust-always').addEventListener('click', () => submit('always'));
   $('trust-cancel').addEventListener('click', closeConfirm);
   $('mini-btn').addEventListener('click', () => setMini(!mini));
+  $('wide-btn').addEventListener('click', () => {
+    toggleWide();
+    input.focus();
+  });
+  // Click outside: the panel fades for a moment before hiding (time to drop a file on it).
+  api.onFading((on) => panel.classList.toggle('fading', on === true && !panel.classList.contains('dropping')));
   $('close-btn').addEventListener('click', () => api.hide());
   $('new-btn').addEventListener('click', newConversation);
   $('hist-btn').addEventListener('click', () => showHistory(view !== 'history'));
@@ -1632,6 +1804,10 @@
   api.onShown((s) => {
     applyState(s);
     setMini(false);
+    if (wideOnShow) {
+      wideOnShow = false;
+      if (thread.childElementCount && wideChoice.get(convId) !== false) setWide(true);
+    }
     panel.classList.remove('out', 'in');
     void panel.offsetWidth;
     panel.classList.add('in');

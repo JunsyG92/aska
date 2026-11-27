@@ -24,6 +24,7 @@ const DEFAULT_KEYBINDINGS = {
   copyAnswer: ['Ctrl+Shift+C'],
   rerun: ['Ctrl+R'], // run again in a wider mode, after denied actions
   toggleMini: ['Ctrl+M'],
+  toggleWide: ['Ctrl+E'], // large view (70 % of the screen) / normal size
   togglePin: ['Ctrl+P'],
   settings: ['Ctrl+,'],
 };
