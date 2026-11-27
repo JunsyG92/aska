@@ -50,6 +50,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   };
   wrap('claude', 'stream');
   wrap('cursor-agent', 'stream');
+  wrap('ollama', 'ollama');
   wrap('codex', ''); // behavior chosen by a [mode] tag in the prompt
   wrap('gh', '', path.join(ROOT, 'test', 'fixtures', 'fake-gh.js')); // "Push and open the pull request" (tasks)
   const calls = () => fs.readFileSync(callLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
@@ -112,6 +113,14 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
   const page = await app.firstWindow();
   const shot = (name) => page.screenshot({ path: path.join(OUT, name + '.png'), omitBackground: true });
   const bounds = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
+  // Large view: 70 % of the work area of the screen, centered (see wideBounds in main.js).
+  const wideBounds = () => app.evaluate(({ BrowserWindow, screen }) => {
+    const wa = screen.getDisplayMatching(BrowserWindow.getAllWindows()[0].getBounds()).workArea;
+    const size = (total, min) => Math.round(Math.min(total - 16, Math.max(min, total * 0.7)));
+    const width = size(wa.width, 748);
+    const height = size(wa.height, 420);
+    return { x: Math.round(wa.x + (wa.width - width) / 2), y: Math.round(wa.y + (wa.height - height) / 2), width, height };
+  });
   const visible = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible());
   const send = async (text) => {
     await page.fill('#input', text);
@@ -174,9 +183,23 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await page.getAttribute('#pin-btn', 'aria-pressed'), 'false');
     await blur();
     await page.waitForTimeout(400);
+    // It first fades (time to drag a file onto it from another window), then hides.
+    assert.equal(await visible(), true);
+    assert.ok(await page.locator('.panel.fading').count(), 'fading after an outside click');
+    await page.waitForTimeout(1500);
     assert.equal(await visible(), false);
     await toggle();
     await page.waitForTimeout(400);
+    assert.equal(await visible(), true);
+    assert.equal(await page.locator('.panel.fading').count(), 0);
+    // Something dragged over it in the meantime: it stays, and comes back on the drop.
+    await blur();
+    await page.waitForTimeout(300);
+    await page.evaluate(() => window.aska.drag('over'));
+    await page.waitForTimeout(1800);
+    assert.equal(await visible(), true, 'kept while a file is dragged over it');
+    await page.evaluate(() => window.aska.drag('drop'));
+    await page.waitForTimeout(300);
     assert.equal(await visible(), true);
     // ...unless it is pinned (Ctrl+P), a remembered choice.
     await page.keyboard.press('Control+p');
@@ -208,12 +231,28 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await page.textContent('.turn .notice .rerun'), 'Run again in "Edit" modeCtrl+R');
     assert.match(await page.textContent('.turn .meta'), /Claude · fake-model-1 · Read-only · /);
     await page.waitForTimeout(400);
+    // From the first answer: large view, 70 % of the screen, centered.
+    assert.ok(await page.locator('.panel.wide').count(), 'large view');
     const grown = await bounds();
-    assert.ok(grown.height > 300, `height with answer ${grown.height}`);
-    // The bottom edge does not move, unless the window reached the top of the screen (small CI
-    // screen, macOS): it then stays below the menu bar.
+    assert.deepEqual(grown, await wideBounds(), 'large view: 70 % of the screen, centered');
+    assert.equal(await page.getAttribute('#wide-btn', 'aria-pressed'), 'true');
+    // The thread fills the height: the answer is read in a large area.
+    const threadH = await page.evaluate(() => document.querySelector('#thread').getBoundingClientRect().height);
+    assert.ok(threadH > grown.height * 0.55, `thread height ${threadH} in ${grown.height}`);
+    await shot('2b-wide-light');
+    // Reduced by hand: back to the normal size, where the window was (bottom edge fixed).
+    await page.click('#wide-btn');
+    await page.waitForTimeout(500);
+    const reduced = await bounds();
+    assert.equal(reduced.width, idle.width, 'normal size again');
+    assert.equal(reduced.x, idle.x);
     const top = await app.evaluate(({ BrowserWindow, screen }) => screen.getDisplayMatching(BrowserWindow.getAllWindows()[0].getBounds()).workArea.y);
-    if (grown.y > top) assert.equal(grown.y + grown.height, idle.y + idle.height, 'the bottom edge (the input) must not move');
+    if (reduced.y > top) assert.equal(reduced.y + reduced.height, idle.y + idle.height, 'the bottom edge (the input) must not move');
+    assert.ok(reduced.height > 300, `height with answer ${reduced.height}`);
+    // And back with the shortcut.
+    await page.keyboard.press('Control+e');
+    await page.waitForTimeout(500);
+    assert.deepEqual(await bounds(), grown);
 
     // 2nd message: same thread, and Claude resumes its session instead of starting over.
     await send('And the preload file?');
@@ -334,7 +373,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await shot('5-mini-light');
     await page.click('#mini-btn');
     await page.waitForTimeout(500);
-    assert.equal((await bounds()).width, 748);
+    // Restored in the large view: the conversation has answers.
+    assert.deepEqual(await bounds(), await wideBounds());
     assert.equal(await turns(), 6);
 
     // History: new conversation, list, reopen, delete.
@@ -423,6 +463,8 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     // so the full context is re-injected instead of the old session.
     await page.keyboard.press('Tab');
     assert.equal(await page.textContent('#agent-name'), 'Cursor');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.textContent('#agent-name'), 'Ollama');
     await page.keyboard.press('Tab');
     assert.equal(await page.textContent('#agent-name'), 'Claude');
     await send('Back to it');
@@ -528,6 +570,10 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.equal(await page.locator('.tab').count(), 2);
     assert.equal(await activeTitle(), 'New conversation');
     assert.equal(await turns(), 0, 'new tab: empty thread');
+    // New conversation: back to the normal size.
+    await page.waitForTimeout(500);
+    assert.equal(await page.locator('.panel.wide').count(), 0);
+    assert.equal((await bounds()).width, idle.width, 'empty tab: normal size');
     // A long request in tab 2…
     await page.keyboard.type('Long analysis in the second tab');
     await page.keyboard.press('Enter');
@@ -791,6 +837,23 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.match(await page.locator('.hist-time').first().textContent(), /^\d\d:\d\d$/);
     assert.match(await page.textContent('.hist-sub'), / · \d+ messages · Espace temporaire/);
     await page.keyboard.press('Escape');
+
+    // ---------- Ollama: local models, no tools ----------
+    for (let i = 0; i < 6 && (await page.textContent('#agent-name')) !== 'Ollama'; i++) await page.keyboard.press('Tab');
+    assert.equal(await page.textContent('#agent-name'), 'Ollama');
+    assert.equal(await page.textContent('#mode-name'), 'Lecture seule');
+    // First installed model ("ollama list"), used and shown by default.
+    await page.waitForFunction(() => document.querySelector('#model-name').textContent === 'qwen3:8b', null, { timeout: 10000 });
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.textContent('#mode-name'), 'Lecture seule', 'no other mode for Ollama');
+    const beforeOllama = calls().length;
+    await send('Bonjour Ollama');
+    await settled('done');
+    const ollamaAnswer = await page.locator('.turn .output').last().textContent();
+    assert.equal(ollamaAnswer.trim(), 'Local answer from qwen3:8b.');
+    assert.ok(!(await page.textContent('.thread')).includes('thinks out loud'), 'the thinking is not shown as the answer');
+    assert.deepEqual(calls()[beforeOllama].args, ['run', 'qwen3:8b']);
+    for (let i = 0; i < 6 && (await page.textContent('#agent-name')) !== 'Claude'; i++) await page.keyboard.press('Tab');
 
     // Cursor requires --trust when headless: granted automatically in Aska's empty folder.
     const before = calls().length;
@@ -1474,6 +1537,118 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.keyboard.press('Escape');
     await page.waitForSelector('#tasks', { state: 'hidden' });
     for (const x of (await page.evaluate(() => window.aska.listTasks())).tasks) await page.evaluate((id) => window.aska.cleanupTask(id), x.id);
+    // ---------- documents and links of a conversation ----------
+    // (the window is in French at this point: the checks do not depend on the language)
+    const brief = path.join(home, 'brief.md');
+    fs.writeFileSync(brief, 'Launch date: 14 March.\n');
+    await send('/new');
+    await send('/agent claude');
+    assert.equal(await page.textContent('#sources-count'), '');
+    // The main process revalidates what the window sends.
+    const badSources = await page.evaluate(async () => [
+      (await window.aska.addSources(['file:///etc/passwd', 'ftp://example.com/a'])).errors.length,
+      (await window.aska.addSources('brief.md')).errors.length,
+      (await window.aska.addSources([42])).errors.length,
+      (await window.aska.removeSource(42)).conversation.sources.length,
+    ]);
+    assert.deepEqual(badSources, [2, 1, 1, 0]);
+    await send('/add ' + brief);
+    await page.waitForFunction(() => document.querySelector('#sources-count').textContent === '1');
+    assert.equal(await page.inputValue('#input'), '');
+    // Above the field: one chip per document, with its name.
+    await page.waitForSelector('#attach:not([hidden]) .att');
+    assert.equal(await page.textContent('#attach .att-name'), 'brief.md');
+    // Drag and drop: a link dropped from the browser (served here by a local page).
+    const http = require('http');
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Meeting notes: budget approved.');
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const link = `http://127.0.0.1:${server.address().port}/notes`;
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.setData('text/uri-list', 'x');
+      document.querySelector('#input').dispatchEvent(new DragEvent('dragenter', { bubbles: true, dataTransfer: dt }));
+    });
+    assert.ok(await page.locator('.panel.dropping').count(), 'drop zone shown while dragging');
+    await page.evaluate((url) => {
+      const dt = new DataTransfer();
+      dt.setData('text/uri-list', url);
+      document.querySelector('#input').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }, link);
+    await page.waitForFunction(() => document.querySelectorAll('#attach .att').length === 2);
+    assert.equal(await page.locator('.panel.dropping').count(), 0);
+    assert.equal(await page.locator('#attach .att-name').nth(1).textContent(), `127.0.0.1:${server.address().port}/notes`);
+    await page.waitForFunction(() => /31/.test(document.querySelectorAll('#attach .att')[1].title));
+    await page.waitForTimeout(250);
+    await shot('12-attach-light');
+    // Something that is not a document: nothing is added.
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', 'just some words');
+      document.querySelector('#input').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    });
+    await page.waitForSelector('#status.err');
+    assert.equal(await page.locator('#attach .att').count(), 2);
+    // × on its chip removes it.
+    await page.locator('#attach .att-del').nth(1).click();
+    await page.waitForFunction(() => document.querySelectorAll('#attach .att').length === 1);
+    assert.equal(await page.textContent('#sources-count'), '1');
+    server.close();
+    // The panel lists them, with what was read.
+    await page.keyboard.press('Control+d');
+    await page.waitForSelector('#src-menu:not([hidden])');
+    await page.waitForFunction(() => /^22 /.test((document.querySelector('.src-item .src-sub') || {}).textContent || ''));
+    assert.match(await page.textContent('.src-item .src-name'), /brief\.md$/);
+    await page.keyboard.type('ftp://example.com/a');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#src-note.err');
+    assert.equal(await page.locator('.src-item').count(), 1);
+    await page.waitForTimeout(250);
+    await shot('12-sources-light');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#src-menu', { state: 'hidden' });
+    assert.equal(await visible(), true);
+    // Their text goes before the request.
+    await send('When do we launch?');
+    await settled('running');
+    await settled('done');
+    let docCall = calls().at(-1);
+    assert.match(docCall.stdin, /<documents>\n<document index="1" source="[^"]*brief\.md">\nLaunch date: 14 March\.\n<\/document>\n<\/documents>/);
+    assert.ok(docCall.stdin.endsWith('Request from the user:\nWhen do we launch?'));
+    assert.ok(!docCall.args.includes('--resume'));
+    assert.match(await page.locator('.turn .meta').last().textContent(), / · 1 document · /);
+    // The resumed session already has them: they are not sent twice.
+    await send('And who decides?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(docCall.args.includes('--resume'));
+    assert.equal(docCall.stdin, 'And who decides?');
+    // A document that changed is sent again.
+    fs.writeFileSync(brief, 'Launch date: 21 March, decided by the board.\n');
+    await send('Any change?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(docCall.args.includes('--resume'));
+    assert.match(docCall.stdin, /Launch date: 21 March, decided by the board\./);
+    // Removed (Del on the selected line): the session that knows it is not resumed.
+    await page.click('#sources');
+    await page.waitForSelector('.src-item');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Delete');
+    await page.waitForFunction(() => document.querySelector('#sources-count').textContent === '');
+    assert.equal(await page.isHidden('#attach'), true, 'no chip left');
+    await page.keyboard.press('Escape');
+    await send('Still there?');
+    await settled('running');
+    await settled('done');
+    docCall = calls().at(-1);
+    assert.ok(!docCall.args.includes('--resume'));
+    assert.ok(!docCall.stdin.includes('<documents>'));
+    assert.match(docCall.stdin, /<history>[\s\S]*New request from the user:\nStill there\?$/);
 
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.

@@ -671,13 +671,15 @@ function botBlock(bot) {
  * excess(inv): how far the command goes beyond the system's limit (see fitInvocation);
  * canPass(args): whether these arguments can be passed at all.
  */
-function invocationFor({ agent, mode, prompt, turns, bot = null, model, resume = null, excess = () => 0, canPass = () => true, allow }) {
+function invocationFor({ agent, mode, prompt, turns, bot = null, model, resume = null, excess = () => 0, canPass = () => true, allow, withDocs = null }) {
   // allow: the commands granted for this request (remote ones left out when not confirmed); by default the bot's.
   const granted = allow !== undefined ? allow : bot ? bot.allow : [];
   const persona = bot ? systemText(bot) : '';
   const build = (asSystem) => (maxChars) => {
     const preamble = persona && !asSystem && !resume ? botBlock(bot) : '';
-    const text = resume ? prompt : buildContextPrompt(turns, prompt, maxChars, preamble);
+    const body = resume ? prompt : buildContextPrompt(turns, prompt, maxChars, preamble);
+    // withDocs(body): the conversation's documents put before it (see sources.js).
+    const text = withDocs ? withDocs(body) : body;
     return buildInvocation(agent, mode, text, { model, resume, trusted: true, system: asSystem ? persona : undefined, allow: granted });
   };
   if (persona && agent.systemFlag && canPass([agent.systemFlag, persona])) {

@@ -16,6 +16,8 @@
     { name: 'mode', arg: 'mode', required: true },
     { name: 'model', arg: 'model' },
     { name: 'cd', arg: 'path' },
+    { name: 'add', arg: 'source' },
+    { name: 'sources' },
     { name: 'retry' },
     { name: 'copy' },
     { name: 'history' },

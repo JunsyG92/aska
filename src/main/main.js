@@ -6,9 +6,10 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const { paths, loadConfig } = require('./config');
-const { MODES, MODE_ORDER, resolveAgents, isModel, buildInvocation } = require('./agents');
+const { MODES, MODE_ORDER, resolveAgents, isModel, buildInvocation, canPickModel } = require('./agents');
 const { ConversationStore, MAX_ANSWER } = require('./conversations');
 const { discoverModels } = require('./models');
+const src = require('./sources');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
 const { isRemote, loadBots, saveBot, createBot, deleteBot, draftPrompt, parseDraft, DESCRIPTION_MAX, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
@@ -55,8 +56,18 @@ let pinned = null; // pinned: stays visible when clicking elsewhere (null = per 
 let unread = 0; // answers that arrived while the chat was out of sight
 let notifier = null;
 let savedPos = null; // anchor chosen by the user: left edge and BOTTOM edge of the window
+let wide = false; // large view: 70 % of the screen, centered, to read the answers
+let compactBounds = null; // window bounds just before the large view, to go back to them
+let pendingSize = null; // size asked while the window was hidden, applied when it shows
+let dragging = false; // something is being dragged over the window (documents to attach)
+let blurTimer = null;
+// Click outside: the chat fades, then hides after this delay. It leaves time to drag a
+// file from another window onto it: the click that starts the drag takes the focus away.
+const BLUR_GRACE_MS = 1500;
+const WIDE_RATIO = 0.7;
 let saveTimer = null;
 let store = null; // saved conversations
+let loader = null; // text of the documents and links attached to conversations (see sources.js)
 let tabs = null; // open tabs (see tabs.js); each one carries its conversation and its running request
 let savedTabs = null; // saved tabs, reopened at startup
 const picked = {}; // model chosen per agent: { claude: 'opus' } (missing = default)
@@ -182,6 +193,10 @@ function loadEverything() {
     },
   });
   store = new ConversationStore(P.conversations, { persist: cfg.savePrompts });
+  // PDFs are read through pdftotext when it is installed (same checks as an agent's binary).
+  const pdftotext = sec.resolveBinary(['pdftotext'], { envPath: searchPath() }).path || null;
+  if (!loader) loader = new src.SourceLoader({ pdftotext });
+  else loader.pdftotext = pdftotext;
   if (!tabs) {
     tabs = new Tabs(store);
     tabs.restore(cfg.savePrompts && savedTabs ? savedTabs.ids : [], savedTabs && savedTabs.active, cwd);
@@ -281,7 +296,13 @@ function publicTurn(t) {
     status: t.status,
     notice: t.notice || null,
     durationMs: t.durationMs || 0,
+    sources: Number.isInteger(t.sources) ? t.sources : 0,
   };
+}
+
+// Documents and links of a conversation, for the UI (readable paths).
+function publicSources(conv) {
+  return (conv.sources || []).map((s) => ({ key: src.keyOf(s), kind: s.kind, label: s.kind === 'url' ? s.url : tilde(s.path) }));
 }
 
 // Conversation list for the UI: agent colors and readable folder.
@@ -306,9 +327,10 @@ function publicState() {
     error: a.binError,
     install: a.install || null,
     modes: MODE_ORDER.filter((m) => a.modes[m] && (m !== 'auto' || cfg.allowAutoMode)),
-    canPickModel: !!a.modelFlag,
+    canPickModel: canPickModel(a),
     models: [...new Set([...(a.models || []), ...(extraModels[a.id] || [])])],
-    model: modelFor(a),
+    // An agent that needs a model (Ollama): show the one that will really be used.
+    model: modelFor(a) || defaultModel(a),
   }));
   return {
     lang: getLanguage(),
@@ -332,12 +354,18 @@ function publicState() {
     running: !!tabs.active().run,
     // Running request of the active tab: the interface reattaches to it to follow the answer.
     run: tabs.active().run ? { id: tabs.active().run.id } : null,
-    conversation: { id: tabs.active().conv.id, title: tabs.active().conv.title, turns: tabs.active().conv.turns.map(publicTurn) },
+    conversation: { id: tabs.active().conv.id, title: tabs.active().conv.title, turns: tabs.active().conv.turns.map(publicTurn), sources: publicSources(tabs.active().conv) },
     tabs: publicTabs(),
     historyEnabled: cfg.savePrompts,
     pinned,
     unread,
   };
+}
+
+/** Agent that needs a model (Ollama) with none chosen: the first one installed. */
+function defaultModel(agent) {
+  const known = agent.requiresModel && discovered[agent.id] && discovered[agent.id].models[0];
+  return known ? known.id : null;
 }
 
 function createWindow() {
@@ -365,6 +393,9 @@ function createWindow() {
       webSecurity: true,
       webviewTag: false,
       spellcheck: false,
+      // Answers keep arriving while the chat is hidden: a throttled hidden window could
+      // stall right after a resize (seen on X11), and the reply would never show.
+      backgroundThrottling: false,
       devTools: !app.isPackaged && process.env.ASKA_DEVTOOLS === '1',
     },
   });
@@ -374,6 +405,7 @@ function createWindow() {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // The position chosen by moving the window is kept.
   win.on('moved', () => {
+    if (wide && !mini) return; // the large view is centered: the anchor stays the compact one
     const b = win.getBounds();
     savedPos = { x: b.x, bottom: b.y + b.height };
     clearTimeout(saveTimer);
@@ -389,8 +421,15 @@ function createWindow() {
   // Click outside: the chat hides, unless it is pinned or collapsed into a pill
   // (whose whole point is to stay visible while you work).
   win.on('blur', () => {
-    if (!pinned && !mini && !dialogOpen && !win.webContents.isDevToolsOpened()) hideWindow();
+    if (pinned || mini || dialogOpen || dragging || win.webContents.isDevToolsOpened() || !win.isVisible()) return;
+    clearTimeout(blurTimer);
+    win.webContents.send('aska:fading', true);
+    blurTimer = setTimeout(() => {
+      blurTimer = null;
+      if (win && !win.isDestroyed() && !dragging) hideWindow();
+    }, BLUR_GRACE_MS);
   });
+  win.on('focus', cancelBlurHide);
   win.on('show', refreshTray);
   win.on('hide', refreshTray);
   win.on('close', (e) => {
@@ -402,9 +441,64 @@ function createWindow() {
   win.loadFile(INDEX);
 }
 
+function setBoundsNow(b) {
+  win.setResizable(true);
+  win.setBounds(b);
+  win.setResizable(false);
+}
+
+/** Large view: 70 % of the screen the window is on, centered. */
+function wideBounds() {
+  const wa = screen.getDisplayMatching(win.getBounds()).workArea;
+  const size = (total, min) => Math.round(Math.min(total - 16, Math.max(min, total * WIDE_RATIO)));
+  const width = size(wa.width, 748);
+  const height = size(wa.height, 420);
+  return { x: Math.round(wa.x + (wa.width - width) / 2), y: Math.round(wa.y + (wa.height - height) / 2), width, height };
+}
+
+// The window is only moved or resized while it is shown: on X11, resizing a window
+// that is being hidden can end the X connection (and Aska with it).
+const canMove = () => !!win && win.isVisible() && !hideTimer;
+
+/** Applies the large view (or leaves it) to the shown window. */
+function applyLayout() {
+  if (!canMove() || mini) return;
+  if (wide) {
+    const b = win.getBounds();
+    if (!compactBounds) compactBounds = b;
+    const target = wideBounds();
+    if (b.x !== target.x || b.y !== target.y || b.width !== target.width || b.height !== target.height) setBoundsNow(target);
+  } else if (compactBounds) {
+    // Back where it was: the panel then sets its own height (bottom edge fixed).
+    setBoundsNow(compactBounds);
+    compactBounds = null;
+  }
+}
+
+function cancelBlurHide() {
+  clearTimeout(blurTimer);
+  blurTimer = null;
+  if (win && !win.isDestroyed()) win.webContents.send('aska:fading', false);
+}
+
 function showWindow() {
   if (!win) return;
-  if (!win.isVisible()) {
+  cancelBlurHide();
+  if (!win.isVisible() && wide && !mini) {
+    if (!compactBounds) compactBounds = win.getBounds();
+    setBoundsNow(wideBounds());
+  } else if (!win.isVisible()) {
+    if (compactBounds) {
+      // The large view was left while hidden.
+      setBoundsNow(compactBounds);
+      compactBounds = null;
+    }
+    if (pendingSize) {
+      win.setResizable(true);
+      win.setSize(pendingSize.w, pendingSize.h);
+      win.setResizable(false);
+      pendingSize = null;
+    }
     const [w, h] = win.getSize();
     let pos = null;
     if (savedPos) {
@@ -429,6 +523,7 @@ function showWindow() {
 
 let hideTimer = null;
 function hideWindow() {
+  cancelBlurHide();
   if (!win || !win.isVisible() || hideTimer) return;
   win.webContents.send('aska:will-hide');
   hideTimer = setTimeout(() => {
@@ -636,7 +731,23 @@ function send(payload) {
   if (win && !win.isDestroyed()) win.webContents.send('aska:run-event', payload);
 }
 
-function startRun(req) {
+// A conversation with documents: their text is loaded first (files read, pages
+// fetched, both cached), then the request starts as usual.
+async function run(req) {
+  const tab = req && typeof req === 'object' && typeof req.tabId === 'string' ? tabs.get(req.tabId) : null;
+  if (!tab || !(tab.conv.sources || []).length) return startRun(req);
+  if (tab.run || tab.loading) return { error: t('errors.tabBusy') };
+  tab.loading = true;
+  let loaded;
+  try {
+    loaded = await loader.load(tab.conv.sources);
+  } finally {
+    tab.loading = false;
+  }
+  return startRun(req, loaded);
+}
+
+function startRun(req, loaded = []) {
   if (!req || typeof req !== 'object') return { error: t('errors.invalidRequest') };
   const tab = typeof req.tabId === 'string' ? tabs.get(req.tabId) : null;
   if (!tab) return { error: t('errors.tabNotFound') };
@@ -698,10 +809,19 @@ function startRun(req) {
   const persona = bot ? systemText(bot) : '';
   const sessionKey = bot ? `${agent.id}:${bot.id}:${fingerprint(persona)}` : agent.id;
   const sess = Object.hasOwn(conv.sessions, sessionKey) ? conv.sessions[sessionKey] : null;
-  const resume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length ? sess.id : null;
-  // Model: the request's ("/" command), else the bot's (on its own agent), else the one picked for the agent.
-  let model = bot && bot.agent === agent.id && bot.model !== undefined ? bot.model : modelFor(agent);
-  if (req.model !== undefined && agent.modelFlag) {
+  // Documents of the conversation: sent with the request, except when the resumed
+  // session already has them as they are now.
+  const docs = src.buildSourcesBlock(loaded, src.budgetFor(agent));
+  const docsHash = src.blockHash(docs);
+  // A session that was given documents since removed is not resumed: it would still use them.
+  const canResume = agent.resumeFlag && sess && sess.cwd === dir.path && sess.upTo === conv.turns.length && !(sess.sources && !docs);
+  const resume = canResume ? sess.id : null;
+  const sendDocs = docs && !(resume && sess.sources === docsHash);
+  const used = docs ? loaded.filter((l) => !l.error) : [];
+  // Model: the request's ("/" command, null: the CLI's default), else the bot's
+  // (on its own agent), else the one picked for the agent, else its default one.
+  let model = bot && bot.agent === agent.id && bot.model !== undefined ? bot.model : modelFor(agent) || defaultModel(agent);
+  if (req.model !== undefined && canPickModel(agent)) {
     if (req.model !== null && !isModel(req.model)) return { error: t('errors.invalidModel') };
     model = req.model;
   }
@@ -709,7 +829,9 @@ function startRun(req) {
   const { excess, canPass } = commandFit(agent);
   let inv;
   try {
-    inv = invocationFor({ agent, mode, prompt, turns: conv.turns, bot, model, resume, excess, canPass, allow: granted });
+    // The documents, unless the resumed session has them, before the bot block and the history.
+    const withDocs = sendDocs ? (body) => src.withSources(docs, body, { hasHistory: body !== prompt }) : null;
+    inv = invocationFor({ agent, mode, prompt, turns: conv.turns, bot, model, resume, excess, canPass, allow: granted, withDocs });
   } catch (e) {
     return { error: e.message };
   }
@@ -717,6 +839,7 @@ function startRun(req) {
   const thread = conv;
   const turn = { agent: agent.id, label: agent.label, model, mode, prompt, answer: '', status: 'running', ts: new Date().toISOString() };
   if (bot) Object.assign(turn, { bot: bot.id, botLabel: bot.label });
+  if (used.length) turn.sources = used.length;
   const who = bot ? bot.label : agent.label;
   thread.turns.push(turn);
   thread.cwd = dir.path;
@@ -777,7 +900,7 @@ function startRun(req) {
       };
     }
     // The CLI session only "covers" the thread if this turn succeeded.
-    if (ok && sessionId && agent.resumeFlag) thread.sessions[sessionKey] = { id: sessionId, cwd: dir.path, upTo: thread.turns.length };
+    if (ok && sessionId && agent.resumeFlag) thread.sessions[sessionKey] = { id: sessionId, cwd: dir.path, upTo: thread.turns.length, sources: docsHash };
     else if (!ok) delete thread.sessions[sessionKey];
     store.save(thread);
     sec.appendAudit(P.audit, {
@@ -793,12 +916,14 @@ function startRun(req) {
       conversation: thread.id,
       model: turn.model,
       prompt: cfg.savePrompts ? prompt : undefined,
+      // What was sent along with the request (documents of the conversation).
+      sources: used.length ? (cfg.savePrompts ? used.map((l) => (l.source.kind === 'url' ? l.source.url : l.source.path)) : used.length) : undefined,
       result: res.reason,
       code: res.code ?? null,
       durationMs: res.durationMs,
     });
     // Answer arrived out of view (another tab, or hidden window): the tab flags it.
-    const onScreen = !!win && win.isVisible() && !hideTimer && !mini && tabs.activeId === tab.id;
+    const onScreen = !!win && win.isVisible() && !hideTimer && !blurTimer && !mini && tabs.activeId === tab.id;
     if (turn.status !== 'cancel' && !onScreen && tabs.get(tab.id)) tab.unread = true;
     saveState();
     send({
@@ -810,7 +935,7 @@ function startRun(req) {
       tabs: publicTabs(),
     });
     // A window that is hiding (exit animation) counts as hidden.
-    const seen = { visible: !!win && win.isVisible() && !hideTimer, focused: !!win && win.isFocused(), mini, status: turn.status };
+    const seen = { visible: !!win && win.isVisible() && !hideTimer && !blurTimer, focused: !!win && win.isFocused(), mini, status: turn.status };
     if (shouldNotify(cfg.notify, seen)) {
       const content = notificationContent({
         agentLabel: who,
@@ -831,7 +956,7 @@ function startRun(req) {
 // demand), plus the built-in list, the config and models typed in by hand.
 async function listModels(req) {
   const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
-  if (!a || !a.modelFlag) return { models: [], current: null, error: null };
+  if (!a || !canPickModel(a)) return { models: [], current: null, error: null };
   if (a.binPath && (!discovered[a.id] || req.refresh === true)) {
     const cwdForList = fsRealWorkspace();
     discovered[a.id] = await discoverModels(a.id, (args, { stdin = '', timeoutMs = 12000 } = {}) => {
@@ -885,7 +1010,7 @@ function registerIpc() {
     return true;
   });
   handle('aska:state', () => publicState());
-  handle('aska:run', startRun);
+  handle('aska:run', run);
   handle('aska:cancel', (tabId) => {
     const tab = typeof tabId === 'string' ? tabs.get(tabId) : tabs.active();
     if (tab && tab.run) tab.run.handle.cancel();
@@ -941,11 +1066,68 @@ function registerIpc() {
     saveState();
     return publicList();
   });
+  // ----- documents and links of the active tab's conversation -----
+  const setSources = (conv, list) => {
+    conv.sources = list;
+    store.save(conv); // only once the conversation has a first message
+  };
+  const addToActive = (raws) => {
+    const conv = tabs.active().conv;
+    // A relative path starts from the tab's folder (from home in the scratch space).
+    const r = src.addSources(conv.sources || [], raws, { base: cwd === P.workspace ? os.homedir() : cwd });
+    if (r.added) setSources(conv, r.sources);
+    // Loaded right away: the first request does not wait, and the list shows what was read.
+    if (r.added) loader.load(conv.sources).catch(() => {});
+    return { ...publicState(), added: r.added, errors: r.errors };
+  };
+  handle('aska:sources-add', (raws) => {
+    if (!Array.isArray(raws) || !raws.length || raws.some((x) => typeof x !== 'string')) return { ...publicState(), added: 0, errors: [t('sources.invalidPath')] };
+    return addToActive(raws);
+  });
+  handle('aska:sources-pick', async () => {
+    dialogOpen = true;
+    try {
+      const r = await dialog.showOpenDialog(win, {
+        title: t('sources.pickTitle'),
+        defaultPath: cwd === P.workspace ? os.homedir() : cwd,
+        properties: ['openFile', 'multiSelections'],
+      });
+      if (!r.canceled && r.filePaths.length) return addToActive(r.filePaths);
+    } finally {
+      dialogOpen = false;
+      if (win) win.focus();
+    }
+    return { ...publicState(), added: 0, errors: [] };
+  });
+  handle('aska:sources-remove', (key) => {
+    const conv = tabs.active().conv;
+    const list = conv.sources || [];
+    if (key != null && typeof key !== 'string') return publicState();
+    // No key: every source of the conversation.
+    const gone = key == null ? list : list.filter((s) => src.keyOf(s) === key);
+    for (const s of gone) loader.forget(s);
+    if (gone.length) setSources(conv, list.filter((s) => !gone.includes(s)));
+    return publicState();
+  });
+  // What each source gave: its size once read, or why it could not be.
+  handle('aska:sources-list', async (req) => {
+    const conv = tabs.active().conv;
+    const loaded = await loader.load(conv.sources || [], { refresh: !!(req && req.refresh === true) });
+    return loaded.map((l) => ({
+      key: src.keyOf(l.source),
+      kind: l.source.kind,
+      label: l.source.kind === 'url' ? l.source.url : tilde(l.source.path),
+      title: l.title || null,
+      chars: l.text ? l.text.length : 0,
+      error: l.error || null,
+      note: l.unreadable || l.stale || null,
+    }));
+  });
   handle('aska:settings-get', () => settingsGet());
   handle('aska:settings-save', (values) => settingsSave(values));
   handle('aska:set-model', (req) => {
     const a = req && typeof req.agentId === 'string' && Object.hasOwn(agents, req.agentId) ? agents[req.agentId] : null;
-    if (!a || !a.modelFlag) return publicState();
+    if (!a || !canPickModel(a)) return publicState();
     if (req.model === null) delete picked[a.id];
     else if (isModel(req.model)) {
       picked[a.id] = req.model;
@@ -959,20 +1141,45 @@ function registerIpc() {
   handle('aska:set-mini', (v) => {
     mini = v === true;
     if (!mini && win && win.isVisible()) setUnread(0);
+    if (!mini) applyLayout();
+  });
+  handle('aska:set-wide', (v) => {
+    if (typeof v !== 'boolean' || v === wide) return;
+    wide = v;
+    applyLayout();
+  });
+  // Files or a link dragged over the window: it must not hide in the meantime.
+  handle('aska:drag', (state) => {
+    if (state === 'over') {
+      dragging = true;
+      cancelBlurHide();
+    } else if (state === 'drop' || state === 'leave') {
+      dragging = false;
+      if (!win || !win.isVisible()) return;
+      if (state === 'drop') {
+        // Dropped: back to the window, to write the request (after this call returns).
+        if (!win.isFocused()) setImmediate(() => win && !win.isDestroyed() && win.focus());
+      } else if (!win.isFocused() && !pinned && !mini) hideWindow();
+    }
   });
   // The window fits the panel: no transparent area blocks clicks around it.
   handle('aska:resize', (size) => {
     if (!size || !Number.isFinite(size.w) || !Number.isFinite(size.h)) return;
-    const w = Math.round(Math.min(Math.max(size.w, 120), 900));
-    const h = Math.round(Math.min(Math.max(size.h, 40), 800));
+    // In the large view the window has a fixed size: the panel fills it.
+    if (wide && !mini) return;
     const b = win.getBounds();
+    const wa = screen.getDisplayMatching(b).workArea;
+    const w = Math.round(Math.min(Math.max(size.w, 120), wa.width - 16));
+    const h = Math.round(Math.min(Math.max(size.h, 40), wa.height - 16));
+    if (!canMove()) {
+      pendingSize = { w, h };
+      return;
+    }
     if (b.width === w && b.height === h) return;
     // The bottom edge stays put: the input area does not move when the thread grows.
-    const wa = screen.getDisplayMatching(b).workArea;
     const y = Math.max(wa.y, b.y + b.height - h);
-    win.setResizable(true);
-    win.setBounds({ x: b.x, y, width: w, height: h });
-    win.setResizable(false);
+    const x = Math.min(Math.max(b.x, wa.x), wa.x + wa.width - w);
+    setBoundsNow({ x, y, width: w, height: h });
   });
   handle('aska:copy', (text) => {
     if (typeof text === 'string' && text.length < 5_000_000) clipboard.writeText(text);
@@ -1727,6 +1934,8 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     loadEverything();
     registerIpc();
     setupTaskIpc();
+    // Agents that need a model (Ollama): list preloaded, to have a default one.
+    for (const a of Object.values(agents)) if (a.requiresModel && a.binPath) listModels({ agentId: a.id }).catch(() => {});
     registerShortcut();
     createWindow();
     setupTray();

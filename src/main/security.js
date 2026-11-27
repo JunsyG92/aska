@@ -163,7 +163,8 @@ function checkWorkdir(dir, mode, home = os.homedir(), ownDirs = []) {
     }
     const first = inHome ? path.relative(realHome, real).split(path.sep)[0] : '';
     // .aska: the bots' settings and personalities (a bot must not rewrite its own maxMode).
-    if (inHome && /^(\.(ssh|gnupg|config|local|aws|azure|kube|docker|aska)|appdata)$/i.test(first)) {
+    // ~/Library (macOS): keychains, preferences and the data of every app.
+    if (inHome && /^(\.(ssh|gnupg|config|local|aws|azure|kube|docker|aska)|appdata|library)$/i.test(first)) {
       return { error: t('security.sensitiveRefused', { path: `~${path.sep}${path.relative(realHome, real)}` }) };
     }
   }

@@ -18,6 +18,7 @@
   const status = $('status');
   const keys = $('keys');
   const cmdMenu = $('cmd-menu');
+  const srcMenu = $('src-menu');
   const api = window.aska;
 
   let agents = [];
@@ -40,6 +41,8 @@
   let activityText = '';
   let view = 'chat'; // 'chat' | 'history' | 'settings' | 'tasks'
   let menuOpen = false;
+  let srcOpen = false; // documents and links of the conversation
+  let sources = []; // [{ key, kind, label }]
   let pinned = false;
   let unread = 0;
   let tabList = []; // tabs: [{ id, title, color, running, unread, active }]
@@ -48,6 +51,8 @@
   let botId = null; // bot of the active tab (null: the agent alone)
   let modelOverride; // model picked by hand while a bot brings its own (undefined: none)
   let closeArmed = null; // working tab waiting for the close confirmation
+  let wide = false; // large view: 70 % of the screen, as soon as the agent answers
+  const wideChoice = new Map(); // conversation id -> large view chosen (true) or refused (false) by hand
   let lastPrompt = ''; // last request of the active conversation, for /retry
   let customCommands = []; // "/" commands of the config: [{ name, prompt, description?, agent?, mode?, model? }]
 
@@ -98,6 +103,8 @@
     document.querySelectorAll('.code-copy').forEach((b) => { b.textContent = t('copy'); });
     document.querySelectorAll('.turn .meta').forEach((m) => { m.dataset.cancelled = t('cancelled'); });
     syncMiniLabels();
+    syncWideLabels();
+    if (sources.length) renderAttach();
     setKeys();
   }
 
@@ -120,6 +127,8 @@
   function setKeys() {
     const items = view === 'settings' || view === 'tasks'
       ? [[t('keys.esc'), t('footer.back')]]
+      : srcOpen
+      ? [['⏎', t('footer.add')], [t('keys.del'), t('footer.remove')], [t('keys.esc'), t('footer.close')]]
       : cmdOpen()
       ? [['↑ ↓', t('footer.select')], ['Tab', t('footer.complete')], ['⏎', t('footer.run')], [t('keys.esc'), t('footer.close')]]
       : running
@@ -424,6 +433,7 @@
     const a = agent();
     if (running || !a || !a.canPickModel) return;
     if (menuOpen) return closeModelMenu();
+    if (srcOpen) closeSources();
     modelAll = a.models.map((id) => ({ id, label: null }));
     modelDefault = null;
     modelCurrent = currentModel() || null;
@@ -452,7 +462,8 @@
   function fillMeta(metaEl, turn) {
     const secs = turn.durationMs ? t('duration', { secs: (turn.durationMs / 1000).toLocaleString(locale, { maximumFractionDigits: 1 }) }) : null;
     // A bot's turn: "Translator · Claude · haiku…".
-    const parts = [turn.botLabel ? turn.label : null, turn.model, modes[turn.mode] ? modes[turn.mode].label : null, secs].filter(Boolean);
+    const docs = turn.sources ? t('sources.used', { count: turn.sources }) : null;
+    const parts = [turn.botLabel ? turn.label : null, turn.model, modes[turn.mode] ? modes[turn.mode].label : null, docs, secs].filter(Boolean);
     metaEl.dataset.cancelled = t('cancelled');
     const mark = turn.botLabel ? botAvatarEl(turn.botLabel, turn.bot) : el('i');
     metaEl.replaceChildren(mark, el('b', null, turn.botLabel || turn.label), parts.length ? ' · ' + parts.join(' · ') : '');
@@ -508,6 +519,9 @@
     turnCount = conversation.turns.length;
     thread.replaceChildren();
     conversation.turns.forEach((t, i) => addTurn(t, true, i === conversation.turns.length - 1));
+    const choice = wideChoice.get(conversation.id);
+    wideOnShow = false;
+    setWide(choice !== undefined ? choice : conversation.turns.some((t) => t.answer || t.status !== 'running'));
     const last = conversation.turns[turnCount - 1];
     lastAnswer = last ? last.answer : '';
     lastPrompt = last ? last.prompt : '';
@@ -524,6 +538,39 @@
     scrollEnd(false);
   }
 
+  // Widened as soon as the AI answers; an empty tab goes back to the normal size.
+  // Large view as soon as the agent answers (unless reduced by hand in this
+  // conversation); an empty conversation goes back to the normal size.
+  function setWide(v) {
+    if (wide === v) return;
+    wide = v;
+    panel.classList.toggle('wide', wide);
+    syncWideLabels();
+    api.setWide(wide);
+    scrollEnd(false);
+  }
+
+  let wideOnShow = false; // large view due while the window was hidden
+  function autoWide() {
+    if (wide || wideChoice.get(convId) === false) return;
+    // Hidden window: the large view waits until it shows (no layout out of sight).
+    if (document.hidden) wideOnShow = true;
+    else setWide(true);
+  }
+
+  function toggleWide() {
+    if (mini) return;
+    wideChoice.set(convId, !wide);
+    setWide(!wide);
+  }
+
+  function syncWideLabels() {
+    const btn = $('wide-btn');
+    btn.title = t(wide ? 'wide.reduceTitle' : 'wide.enlargeTitle');
+    btn.setAttribute('aria-label', t(wide ? 'wide.reduce' : 'wide.enlarge'));
+    btn.setAttribute('aria-pressed', String(wide));
+  }
+
   function applyState(s) {
     setLanguage(s);
     modes = s.modes;
@@ -532,6 +579,7 @@
     warnings = s.warnings || [];
     customCommands = s.commands || [];
     bots = s.bots || [];
+    setSources(s.conversation.sources || []);
     $('cwd-name').textContent = s.cwd;
     $('cwd').title = t('cwdTitle', { path: s.cwdIsScratch ? t('cwdScratch') : s.cwd });
     $('hist-btn').hidden = !s.historyEnabled;
@@ -603,6 +651,7 @@
     closeArmed = null;
     pendingTrust = null;
     confirmBox.hidden = true;
+    if (srcOpen) closeSources(true);
     if (view === 'history') showHistory(false);
     showNotice('');
     renderThread(s.conversation);
@@ -787,7 +836,7 @@
     }
     showNotice('');
     thread.querySelectorAll('.notice .rerun').forEach((b) => b.remove()); // only on the last turn
-    live = addTurn({ label: a.label, bot: b ? b.id : null, botLabel: b ? b.label : null, color: a.color, model: model !== undefined ? model : currentModel(), mode, prompt, answer: '', status: 'running' }, false);
+    live = addTurn({ label: a.label, bot: b ? b.id : null, botLabel: b ? b.label : null, color: a.color, model: model !== undefined ? model : currentModel(), mode, prompt, answer: '', status: 'running', sources: sources.length }, false);
     live.node.classList.add('live');
     turnCount += 1;
     panel.dataset.state = 'running';
@@ -806,6 +855,7 @@
     switch (ev.type) {
       case 'text':
         live.text += ev.text;
+        if (ev.text.trim()) autoWide(); // first answer: more room to read it
         // The longer the answer, the less often it is redrawn.
         if (!renderTimer) renderTimer = setTimeout(renderLive, Math.min(400, 45 + live.text.length / 400));
         break;
@@ -830,6 +880,7 @@
     clearTimeout(renderTimer);
     renderTimer = null;
     live.text = turn.answer || live.text;
+    autoWide();
     renderLive();
     live.node.classList.remove('live');
     live.node.dataset.status = turn.status;
@@ -897,7 +948,7 @@
 
   // Palette above the footer while a command is typed (not while recalling with ↑).
   function refreshPalette() {
-    const quiet = view !== 'chat' || mini || pendingTrust || menuOpen || histIdx !== -1 || input.value === cmdDismissed;
+    const quiet = view !== 'chat' || mini || pendingTrust || menuOpen || srcOpen || histIdx !== -1 || input.value === cmdDismissed;
     const items = quiet ? null : window.AskaCommands.suggest(input.value, cmdCtx());
     if (input.value !== cmdDismissed) cmdDismissed = null;
     const wasOpen = cmdOpen();
@@ -1003,6 +1054,17 @@
         done();
         return setStatus(t('commands.folder', { path: res.cwd }), 'ok');
       }
+      case 'add': {
+        if (!arg) {
+          done();
+          return pickSources();
+        }
+        if (await addSource(arg)) done();
+        return;
+      }
+      case 'sources':
+        done();
+        return openSources();
       case 'retry':
         if (running) return busy();
         if (!lastPrompt) return setStatus(t('commands.noRetry'), 'err');
@@ -1037,6 +1099,239 @@
     if (view === 'history') showHistory(false);
     await newTab();
   }
+
+  // ---------- documents and links (read by the main process, see sources.js) ----------
+
+  const srcList = $('src-list');
+  const srcInput = $('src-input');
+  let srcInfo = new Map(); // key -> what the main process read: { title, chars, error, note }
+  let srcSel = -1;
+  let srcError = ''; // why the last entry was refused, shown in the panel
+  const SRC_ICON = {
+    file: 'M4 2.5h5l3 3v8H4zM9 2.5v3h3',
+    url: 'M6.7 9.3a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.8.8M9.3 6.7a2.6 2.6 0 0 0-3.7 0L3.4 8.9a2.6 2.6 0 0 0 3.7 3.7l.8-.8',
+  };
+
+  function icon(d) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+    return svg;
+  }
+
+  function setSources(list) {
+    const changed = list.map((x) => x.key).join('\n') !== sources.map((x) => x.key).join('\n');
+    sources = list;
+    $('sources-count').textContent = list.length ? String(list.length) : '';
+    $('sources').classList.toggle('on', list.length > 0);
+    if (srcOpen) renderSources();
+    if (changed) renderAttach();
+    if (changed && list.length) loadSourceInfo(false);
+  }
+
+  // Short name of a source on its chip: the file name, or the host and path of a link.
+  function shortName(s) {
+    if (s.kind === 'url') {
+      try {
+        const u = new URL(s.label);
+        const p = u.pathname.replace(/\/$/, '');
+        return u.host + (p ? (p.length > 24 ? '/…' + p.slice(-22) : p) : '');
+      } catch {
+        return s.label;
+      }
+    }
+    return s.label.split(/[\\/]/).pop() || s.label;
+  }
+
+  // The documents of the conversation, above the field: one chip each, with its ×.
+  function renderAttach() {
+    const bar = $('attach');
+    bar.hidden = !sources.length;
+    bar.replaceChildren(
+      ...sources.map((s) => {
+        const info = srcInfo.get(s.key);
+        const chip = el('div', 'att' + (info && info.error ? ' err' : !info ? ' loading' : ''));
+        chip.setAttribute('role', 'listitem');
+        const sub = !info ? t('sources.loading') : info.error || [info.title, info.chars ? t('sources.chars', { count: info.chars }) : null, info.note].filter(Boolean).join(' · ');
+        chip.title = sub ? `${s.label}\n${sub}` : s.label;
+        const name = el('button', 'att-name', shortName(s));
+        name.type = 'button';
+        name.prepend(icon(SRC_ICON[s.kind] || SRC_ICON.file));
+        name.addEventListener('click', openSources);
+        const del = el('button', 'att-del', '×');
+        del.type = 'button';
+        del.title = t('sources.removeTitle', { name: s.label });
+        del.setAttribute('aria-label', t('sources.removeTitle', { name: s.label }));
+        del.addEventListener('click', (e) => {
+          e.stopPropagation();
+          removeSource(s.key);
+        });
+        chip.append(name, del);
+        return chip;
+      })
+    );
+  }
+
+  function highlightSource(i, scroll) {
+    const rows = srcList.children;
+    srcSel = rows.length ? Math.min(Math.max(i, -1), rows.length - 1) : -1;
+    [...rows].forEach((r, j) => {
+      r.classList.toggle('active', j === srcSel);
+      r.setAttribute('aria-selected', String(j === srcSel));
+    });
+    if (scroll && srcSel >= 0) rows[srcSel].scrollIntoView({ block: 'nearest' });
+  }
+
+  function renderSources() {
+    srcList.replaceChildren(
+      ...sources.map((s, i) => {
+        const info = srcInfo.get(s.key);
+        const row = el('div', 'src-item');
+        row.setAttribute('role', 'option');
+        const sub = !info
+          ? t('sources.loading')
+          : info.error || [info.title, info.chars ? t('sources.chars', { count: info.chars }) : null, info.note].filter(Boolean).join(' · ');
+        const del = el('button', 'src-del', t('sources.remove'));
+        del.type = 'button';
+        del.tabIndex = -1;
+        del.title = t('sources.removeTitle', { name: s.label });
+        del.addEventListener('click', () => removeSource(s.key));
+        row.append(icon(SRC_ICON[s.kind] || SRC_ICON.file), el('div', 'src-name', s.label), del, el('div', 'src-sub' + (info && info.error ? ' err' : ''), sub));
+        row.title = s.label;
+        row.addEventListener('mousemove', () => { if (pointerMoved && srcSel !== i) highlightSource(i, false); });
+        return row;
+      })
+    );
+    $('src-note').textContent = srcError || t(sources.length ? 'sources.note' : 'sources.empty');
+    $('src-note').classList.toggle('err', !!srcError);
+    highlightSource(Math.min(srcSel, sources.length - 1), false);
+  }
+
+  // What each source gave once read (size, title, or why it could not be read).
+  async function loadSourceInfo(refresh) {
+    if (!sources.length) return;
+    const btn = $('src-refresh');
+    const forConv = convId;
+    btn.classList.add('busy');
+    const list = await api.listSources(refresh);
+    btn.classList.remove('busy');
+    if (forConv !== convId) return;
+    srcInfo = new Map(list.map((x) => [x.key, x]));
+    if (srcOpen) renderSources();
+    renderAttach();
+  }
+
+  function openSources() {
+    if (mini || pendingTrust) return;
+    if (srcOpen) return closeSources();
+    if (menuOpen) closeModelMenu();
+    if (view !== 'chat') return;
+    srcOpen = true;
+    srcMenu.hidden = false;
+    srcInput.value = '';
+    srcSel = -1;
+    srcError = '';
+    refreshPalette();
+    renderSources();
+    setKeys();
+    srcInput.focus();
+    loadSourceInfo(false);
+  }
+
+  function closeSources(quiet) {
+    srcOpen = false;
+    srcMenu.hidden = true;
+    if (quiet) return;
+    setKeys();
+    input.focus();
+  }
+
+  function reportSources(res) {
+    srcError = res.errors && res.errors.length ? res.errors[0] : '';
+    applyState(res);
+    if (srcOpen) renderSources();
+    if (srcError) setStatus(srcError, 'err');
+    else if (res.added) setStatus(t('sources.added', { count: res.added }), 'ok');
+    return !(res.errors && res.errors.length);
+  }
+
+  /** A link or a file path, typed or pasted (several lines: one per line). */
+  async function addSource(text) {
+    const items = String(text).split('\n').map((x) => x.trim()).filter(Boolean);
+    if (!items.length) return false;
+    return reportSources(await api.addSources(items));
+  }
+
+  async function pickSources() {
+    const ok = reportSources(await api.pickSources());
+    (srcOpen ? srcInput : input).focus();
+    return ok;
+  }
+
+  async function removeSource(key) {
+    const keep = srcSel;
+    applyState(await api.removeSource(key));
+    setStatus(t('sources.removed'), 'ok');
+    if (srcOpen) {
+      highlightSource(Math.min(keep, sources.length - 1), false);
+      srcInput.focus();
+    } else input.focus();
+  }
+
+  // ---------- drag and drop: files, or a link from the browser ----------
+
+  // What a drag carries that can become sources: file paths, or http(s) links.
+  function droppedItems(dt) {
+    const files = [...(dt.files || [])].map((f) => api.pathForFile(f)).filter(Boolean);
+    if (files.length) return files;
+    const uris = (dt.getData('text/uri-list') || '').split(/\r?\n/).filter((l) => l && !l.startsWith('#'));
+    const text = uris.length ? uris : [(dt.getData('text/plain') || '').trim()];
+    return text.filter((u) => /^https?:\/\/\S+$/i.test(u)).slice(0, 20);
+  }
+
+  const canDrop = (dt) => !!dt && [...(dt.types || [])].some((x) => x === 'Files' || x === 'text/uri-list' || x === 'text/plain');
+  let dragDepth = 0;
+
+  function dragDone(state) {
+    dragDepth = 0;
+    panel.classList.remove('dropping');
+    api.drag(state);
+  }
+
+  document.addEventListener('dragenter', (e) => {
+    if (!canDrop(e.dataTransfer)) return;
+    e.preventDefault();
+    if (dragDepth++ === 0) {
+      panel.classList.add('dropping');
+      panel.classList.remove('fading');
+      api.drag('over');
+    }
+  });
+  document.addEventListener('dragover', (e) => {
+    // Always handled here: otherwise the page would open the dropped file.
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = canDrop(e.dataTransfer) && !pendingTrust ? 'copy' : 'none';
+  });
+  document.addEventListener('dragleave', () => {
+    // Entering a child element comes before leaving the previous one: the count reaches 0 only outside.
+    if (dragDepth && --dragDepth === 0) dragDone('leave');
+  });
+  document.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const items = droppedItems(e.dataTransfer);
+    dragDone('drop');
+    if (pendingTrust || view !== 'chat') return;
+    if (mini) setMini(false);
+    if (!items.length) {
+      setStatus(t('sources.dropNothing'), 'err');
+      return;
+    }
+    reportSources(await api.addSources(items));
+    input.focus();
+  });
 
   // ---------- conversation history ----------
 
@@ -1164,6 +1459,7 @@
 
   async function showSettings(on) {
     if (on && view === 'settings') return;
+    if (on && srcOpen) closeSources(true);
     if (on && view === 'history') await showHistory(false);
     if (on && view === 'tasks') await showTasks(false);
     view = on ? 'settings' : 'chat';
@@ -1184,6 +1480,7 @@
   }
 
   async function showHistory(on) {
+    if (on && srcOpen) closeSources(true);
     view = on ? 'history' : 'chat';
     refreshPalette();
     $('hist-btn').setAttribute('aria-pressed', String(on));
@@ -1277,6 +1574,11 @@
       setMini(!mini);
       return;
     }
+    if (is('toggleWide') && !mini) {
+      e.preventDefault();
+      toggleWide();
+      return;
+    }
     if (is('togglePin') && !mini) {
       e.preventDefault();
       setPinned(!pinned, true);
@@ -1299,17 +1601,17 @@
       }
       return;
     }
-    if (is('settings') && !mini && !pendingTrust && !menuOpen) {
+    if (is('settings') && !mini && !pendingTrust && !menuOpen && !srcOpen) {
       e.preventDefault();
       showSettings(true);
       return;
     }
-    if (is('tasks') && !mini && !pendingTrust && !menuOpen) {
+    if (is('tasks') && !mini && !pendingTrust && !menuOpen && !srcOpen) {
       e.preventDefault();
       showTasks(true);
       return;
     }
-    if (!mini && !pendingTrust && !menuOpen) {
+    if (!mini && !pendingTrust && !menuOpen && !srcOpen) {
       // Ctrl+1 to Ctrl+9 stay fixed: tab n°1 to 8, Ctrl+9 the last one.
       const tabNumber = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key) && tabList.length > 1;
       const tabKey =
@@ -1345,6 +1647,23 @@
       else if (e.key === 'Enter') {
         e.preventDefault();
         if (modelItems[modelSel]) chooseModel(modelItems[modelSel].id);
+      } else if (e.key === 'Tab') e.preventDefault();
+      return;
+    }
+    if (srcOpen) {
+      const sel = sources[srcSel];
+      if (e.key === 'Escape' || is('sources')) { e.preventDefault(); closeSources(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); highlightSource(srcSel + 1, true); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); highlightSource(srcSel - 1, true); }
+      else if (e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault();
+        // Nothing typed: the file picker.
+        if (!srcInput.value.trim()) pickSources();
+        else addSource(srcInput.value).then((ok) => { if (ok) srcInput.value = ''; });
+      } else if (e.key === 'Delete' && sel && srcInput.selectionStart === srcInput.value.length) {
+        // "Del" targets the selected document when there is nothing left to erase in the field.
+        e.preventDefault();
+        removeSource(sel.key);
       } else if (e.key === 'Tab') e.preventDefault();
       return;
     }
@@ -1414,6 +1733,9 @@
     } else if (is('history')) {
       e.preventDefault();
       if (!$('hist-btn').hidden) showHistory(true);
+    } else if (is('sources')) {
+      e.preventDefault();
+      openSources();
     } else if (e.key === 'ArrowUp' && e.target === input && !input.value.slice(0, input.selectionStart).includes('\n')) {
       if (historyMove(-1)) e.preventDefault();
     } else if (e.key === 'ArrowDown' && e.target === input && histIdx !== -1) {
@@ -1442,6 +1764,10 @@
     e.preventDefault();
     if (!running) api.resetDir().then(applyState);
   });
+  $('sources').addEventListener('click', openSources);
+  srcInput.addEventListener('input', () => { if (srcError) { srcError = ''; renderSources(); } });
+  $('src-pick').addEventListener('click', pickSources);
+  $('src-refresh').addEventListener('click', () => { loadSourceInfo(true); srcInput.focus(); });
   // The same buttons answer the folder question or the remote one.
   const answerConfirm = (choice) => (pendingTrust && pendingTrust.kind === 'remote' ? submit(undefined, undefined, choice) : submit(choice));
   $('trust-once').addEventListener('click', () => answerConfirm('once'));
@@ -1449,6 +1775,12 @@
   $('trust-without').addEventListener('click', () => answerConfirm('without'));
   $('trust-cancel').addEventListener('click', closeConfirm);
   $('mini-btn').addEventListener('click', () => setMini(!mini));
+  $('wide-btn').addEventListener('click', () => {
+    toggleWide();
+    input.focus();
+  });
+  // Click outside: the panel fades for a moment before hiding (time to drop a file on it).
+  api.onFading((on) => panel.classList.toggle('fading', on === true && !panel.classList.contains('dropping')));
   $('close-btn').addEventListener('click', () => api.hide());
   $('new-btn').addEventListener('click', newConversation);
   $('hist-btn').addEventListener('click', () => showHistory(view !== 'history'));
@@ -1511,10 +1843,14 @@
   api.onShown((s) => {
     applyState(s);
     setMini(false);
+    if (wideOnShow) {
+      wideOnShow = false;
+      if (thread.childElementCount && wideChoice.get(convId) !== false) setWide(true);
+    }
     panel.classList.remove('out', 'in');
     void panel.offsetWidth;
     panel.classList.add('in');
-    if (!pendingTrust && !menuOpen && view === 'chat') input.focus();
+    if (!pendingTrust && !menuOpen && !srcOpen && view === 'chat') input.focus();
     setKeys();
     autosize();
   });

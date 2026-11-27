@@ -698,15 +698,27 @@ test('allowed commands: given to Claude in a writing mode only', () => {
   assert.equal(edit.argv[at + 1], 'Bash(git add),Bash(git add *),Bash(git commit),Bash(git commit *)', 'one argument');
   assert.ok(!buildInvocation(AGENTS.claude, 'read', 'x', { allow }).argv.includes('--allowedTools'), 'never in read-only mode');
   assert.ok(!buildInvocation(AGENTS.claude, 'edit', 'x').argv.includes('--allowedTools'), 'none given');
-  // Copilot and Codex: not supported yet, nothing added (Copilot keeps its shell denied).
+  // Copilot and Codex: not supported yet, nothing added (Copilot keeps its closed list of shell commands).
   for (const id of ['codex', 'copilot']) {
     const argv = buildInvocation(AGENTS[id], 'edit', 'x', { allow }).argv;
     assert.ok(!argv.includes('--allowedTools') && !argv.some((a) => a.includes('git commit')), id);
   }
-  assert.ok(buildInvocation(AGENTS.copilot, 'edit', 'x', { allow }).argv.join(' ').includes('--deny-tool shell'));
+  assert.ok(!buildInvocation(AGENTS.copilot, 'edit', 'x', { allow }).argv.includes('--allow-all-tools'));
   // Through a bot.
   const inv = invocationFor({ agent: AGENTS.claude, mode: 'edit', prompt: 'x', turns: [], bot: { ...BOT, allow } });
   assert.ok(inv.argv.includes('--allowedTools'));
+});
+
+test('bots and documents of the conversation: the documents first, then the bot block and the request', () => {
+  const withDocs = (body) => `<documents>D</documents>\n\n${body}`;
+  // Codex: no system prompt option, the bot block goes into the prompt, after the documents.
+  const codex = invocationFor({ agent: AGENTS.codex, mode: 'read', prompt: 'Résume', turns: [], bot: BOT, withDocs });
+  assert.match(codex.stdin, /^<documents>D<\/documents>\n\n<bot [\s\S]*<\/bot>[\s\S]*Résume$/);
+  // Claude: the personality as a system prompt, the documents with the request.
+  const claude = invocationFor({ agent: AGENTS.claude, mode: 'read', prompt: 'Résume', turns: [], bot: BOT, withDocs });
+  assert.ok(claude.argv.includes('--append-system-prompt'));
+  assert.match(claude.stdin, /^<documents>D<\/documents>\n\n[\s\S]*Résume$/);
+  assert.ok(!claude.stdin.includes('<bot '));
 });
 
 test('bot.json "allow" and maxMode: loaded, checked, saved from the settings', () => {
