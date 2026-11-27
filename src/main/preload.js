@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('aska', {
   cancelTask: (id, n) => ipcRenderer.invoke('aska:task-cancel', { id, n }),
   cleanupTask: (id) => ipcRenderer.invoke('aska:task-cleanup', id),
   keepTaskBot: (id, n) => ipcRenderer.invoke('aska:task-keep-bot', { id, n }),
+  planTask: (req) => ipcRenderer.invoke('aska:task-plan', req),
+  cancelTaskPlan: () => ipcRenderer.invoke('aska:task-plan-cancel'),
   onRunEvent: on('aska:run-event'),
   onShown: on('aska:shown'),
   onWillHide: on('aska:will-hide'),

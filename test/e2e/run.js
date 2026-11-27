@@ -1252,6 +1252,31 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.ok(!fs.existsSync(path.join(P.stateDir, 'tasks', tempTask.id)), 'the temporary bots go with the task');
     assert.ok(fs.existsSync(path.join(P.bots, 'auditeur', 'SOUL.md')), 'the kept one stays');
 
+    // The orchestrator's plan: read-only in the folder; then created as reviewed.
+    const planCallsFrom = calls().length;
+    const planned = await page.evaluate((root) => window.aska.planTask({ goal: 'Passer les apps à Node 26', root }), taskRoot);
+    assert.equal(planned.error, undefined, planned.error);
+    const planCall = calls()[planCallsFrom];
+    assert.ok(planCall.args.includes('plan') && !planCall.args.includes('--allowedTools'), 'the orchestrator only reads');
+    assert.ok(samePath(planCall.cwd, fs.realpathSync(taskRoot)), 'in the task’s folder');
+    assert.match(planCall.stdin, /Repositories \(relative to the folder\):\n- api\n- web/);
+    assert.match(planCall.stdin, /- trad: Traducteur 2/);
+    assert.match(planCall.stdin, /<goal>\nPasser les apps à Node 26\n<\/goal>/);
+    assert.equal(planned.plan.summary, 'Deux dépôts à mettre à jour.');
+    assert.deepEqual(planned.plan.subtasks.map((s) => [s.repoLabel, s.botId || s.bot.label]), [['api', 'trad'], ['web', 'Bumper']]);
+    assert.deepEqual(planned.plan.subtasks[1].bot.allow, ['git commit']);
+    assert.match(planned.plan.notes.join('\n'), /commandes refusées et retirées \(rm\)[\s\S]*« \.\.\/ailleurs » n’est pas un dépôt/);
+    // Reviewed as is, then created: checked again like any task.
+    const fromPlan = await page.evaluate((p) => window.aska.createTask({ goal: p.goal, root: p.root, subtasks: p.subtasks }), planned.plan);
+    assert.deepEqual(fromPlan.task.subtasks.map((s) => [s.botId, s.mode, s.temporary]), [['trad', 'read', false], ['tmp-2', 'edit', true]]);
+    assert.deepEqual(await page.evaluate((id) => window.aska.cleanupTask(id), fromPlan.task.id), { ok: true });
+    // A folder without any repository: said at once, no agent started.
+    const emptyDir = path.join(home, 'empty-folder');
+    fs.mkdirSync(emptyDir);
+    const before2 = calls().length;
+    assert.match((await page.evaluate((root) => window.aska.planTask({ goal: 'x', root }), emptyDir)).error, /Aucun dépôt git/);
+    assert.equal(calls().length, before2);
+
     // ---------- settings panel ----------
     // Config at this point: { shortcut: false, selectionShortcut: false, language: 'fr', keybindings: { history: 'Ctrl+J', modelMenu: 'Alt+Shift+M' } }.
     const readConfig = () => JSON.parse(fs.readFileSync(P.config, 'utf8'));
