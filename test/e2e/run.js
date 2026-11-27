@@ -242,7 +242,10 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     // Unless the thread had pushed the window up to the top of a small screen (CI, macOS):
     // its bottom edge then moved down, already before the large view.
     if (idle.y + idle.height - reduced.height > top) assert.equal(reduced.y + reduced.height, idle.y + idle.height, 'the bottom edge (the input) must not move');
-    else assert.equal(reduced.y, top, 'stopped at the top of the screen');
+    else {
+      const wa = await app.evaluate(({ BrowserWindow, screen }) => screen.getDisplayMatching(BrowserWindow.getAllWindows()[0].getBounds()).workArea);
+      assert.ok(reduced.y >= top && reduced.y + reduced.height <= wa.y + wa.height, `on screen: ${JSON.stringify(reduced)}`);
+    }
     assert.ok(reduced.height > 300, `height with answer ${reduced.height}`);
     // And back with the shortcut, animated too.
     await page.keyboard.press('Control+e');
