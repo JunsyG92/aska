@@ -1323,7 +1323,7 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.ok(viewCall.args.includes('acceptEdits'), 'Edit mode, as approved');
     assert.ok(!viewCall.args.includes('--allowedTools'), 'the command unchecked is not granted');
     assert.match(viewCall.stdin, /Passe à Node 26 \[slow\]/);
-    assert.ok(samePath(path.dirname(path.dirname(viewCall.cwd)), path.join(P.dataDir, 'worktrees')), `in its worktree: ${viewCall.cwd}`);
+    assert.ok(samePath(path.dirname(path.dirname(viewCall.cwd)), fs.realpathSync.native(path.join(P.dataDir, 'worktrees'))), `in its worktree: ${viewCall.cwd}`);
     // Cancel, run again, cancel everything.
     await page.click('.tk-sub [data-action="cancel"]');
     await page.waitForSelector('.tk-sub[data-status="cancelled"]', { timeout: 20000 });
