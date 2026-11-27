@@ -1376,7 +1376,7 @@ test('commands: suggestions while typing', () => {
   // Not a command being typed.
   for (const s of ['hello', '//x', '/new\n', '', ' /new']) assert.equal(commands.suggest(s, ctx), null, s);
   // "/" alone: every command, then the agents.
-  assert.equal(names('/').length, 20, 'every command and agent');
+  assert.equal(names('/').length, 22, 'every command and agent');
   assert.equal(commands.suggest('/', { agents: Array.from({ length: 50 }, (_, i) => ({ id: 'a' + i, label: 'A' })) }).length, 40, 'capped');
   assert.deepEqual(names('/c'), ['clear', 'close', 'cd', 'copy', 'claude', 'codex']);
   assert.deepEqual(names('/MO'), ['mode', 'model']);

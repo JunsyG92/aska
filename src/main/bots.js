@@ -19,6 +19,8 @@ const COLOR_RE = /^#[0-9a-f]{6}$/i;
 const SOUL_WARN = 4000; // characters: longer works, but costs on every request
 const SOUL_MAX = 8000; // characters: beyond, the bot is refused
 const MEMORY_MAX = 6000; // characters injected from MEMORY.md
+const MEMORY_FILE_MAX = 50000; // characters of MEMORY.md as a whole (edited in the settings)
+const ENTRY_MAX = 500; // characters of one /remember entry
 const FILE_MAX = 256 * 1024; // bytes read at most from SOUL.md or MEMORY.md
 const MAX_BOTS = 50;
 // Fields of later versions (shortcut, starters, output, fallbackAgent) and
@@ -228,6 +230,7 @@ function loadBot(dir, id, { agents, allowAutoMode, home }, warn) {
     else {
       const r = recentEntries(m.text.trim());
       bot.memory = r.text;
+      bot.memoryAll = m.text.trim(); // the whole file, for the settings
       if (r.cut) warn('memoryCut', { max: MEMORY_MAX });
     }
   }
@@ -321,6 +324,13 @@ function saveBot(dir, values, { agents = {}, allowAutoMode = false } = {}) {
     else if (v.enabled) delete raw.enabled; // on by default
     else raw.enabled = false;
   }
+  // MEMORY.md, edited in the settings: the whole file (only its newest entries are sent).
+  let memory;
+  if ('memory' in v) {
+    memory = typeof v.memory === 'string' ? v.memory.trim() : null;
+    if (memory === null || memory.includes('\0')) errors.memory = t('bots.memory.invalid');
+    else if (memory.length > MEMORY_FILE_MAX) errors.memory = t('bots.memory.tooBig', { length: memory.length, max: MEMORY_FILE_MAX });
+  }
   let soul;
   if ('soul' in v) {
     soul = typeof v.soul === 'string' ? v.soul.trim() : null;
@@ -332,10 +342,39 @@ function saveBot(dir, values, { agents = {}, allowAutoMode = false } = {}) {
   try {
     writePrivate(path.join(dir, 'bot.json'), JSON.stringify(raw, null, 2) + '\n');
     if (soul !== undefined) writePrivate(path.join(dir, 'SOUL.md'), soul + '\n');
+    if (memory !== undefined) writePrivate(path.join(dir, 'MEMORY.md'), memory ? memory + '\n' : '');
   } catch (e) {
     return { errors: { _: e.message } };
   }
   return {};
+}
+
+// The local day, as written in the entries: "2026-11-27".
+const day = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * /remember: one dated line added at the end of the bot's MEMORY.md
+ * ("- 2026-11-27 : text"). Written by Aska itself, never by an agent (~/.aska
+ * is out of reach of every write mode). One line, ENTRY_MAX characters at most.
+ * Returns { entry } or { error }.
+ */
+function addMemoryEntry(dir, text, now = new Date()) {
+  const s = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '';
+  if (!s) return { error: t('bots.memory.empty') };
+  if (s.length > ENTRY_MAX || s.includes('\0')) return { error: t('bots.memory.entryTooLong', { max: ENTRY_MAX }) };
+  const file = path.join(dir, 'MEMORY.md');
+  const cur = readOwnedText(file, FILE_MAX);
+  if (cur.error) return { error: cur.error };
+  const before = typeof cur.text === 'string' ? cur.text.trim() : '';
+  const entry = `- ${day(now)} : ${s}`;
+  const next = before ? `${before}\n${entry}\n` : `${entry}\n`;
+  if (next.length > MEMORY_FILE_MAX) return { error: t('bots.memory.tooBig', { length: next.length, max: MEMORY_FILE_MAX }) };
+  try {
+    writePrivate(file, next);
+  } catch (e) {
+    return { error: e.message };
+  }
+  return { entry };
 }
 
 /**
@@ -754,4 +793,4 @@ function fingerprint(text) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-module.exports = { loadBotFrom, COLOR_RE, isRemote, draftPrompt, parseDraft, DESCRIPTION_MAX, cleanAllow, loadBots, saveBot, createBot, deleteBot, idFromLabel, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, SOUL_WARN, SOUL_MAX, MEMORY_MAX };
+module.exports = { loadBotFrom, COLOR_RE, isRemote, draftPrompt, parseDraft, DESCRIPTION_MAX, cleanAllow, loadBots, saveBot, createBot, deleteBot, idFromLabel, seedBots, sanitizeSvg, importAvatar, clearAvatar, recentEntries, systemText, botBlock, fingerprint, invocationFor, addMemoryEntry, SOUL_WARN, SOUL_MAX, MEMORY_MAX, MEMORY_FILE_MAX, ENTRY_MAX };
