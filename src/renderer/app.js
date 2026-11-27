@@ -456,13 +456,34 @@
   // Widened as soon as the AI answers; an empty tab goes back to the normal size.
   // Large view as soon as the agent answers (unless reduced by hand in this
   // conversation); an empty conversation goes back to the normal size.
+  // The window animates to its new size (main process) while the panel fills it:
+  // the panel follows the edges exactly, then takes its final layout.
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let layoutSeq = 0;
   function setWide(v) {
     if (wide === v) return;
     wide = v;
-    panel.classList.toggle('wide', wide);
     syncWideLabels();
-    api.setWide(wide);
-    scrollEnd(false);
+    const seq = ++layoutSeq;
+    const animate = !document.hidden && !mini && !reduceMotion.matches;
+    const settle = () => {
+      if (seq !== layoutSeq) return; // another change since: it settles itself
+      panel.classList.toggle('wide', wide);
+      panel.classList.remove('morphing');
+      scrollEnd(false);
+    };
+    if (wide) {
+      panel.classList.add('wide', 'morphing'); // fills the window, and grows with it
+      api.setWide(true, { animate }).then(settle, settle);
+      return;
+    }
+    // Size of the panel at the normal size, measured now (same task: nothing is drawn
+    // in between), so that the window shrinks right onto it.
+    panel.classList.remove('wide');
+    const pad = 2 * parseFloat(getComputedStyle(document.body).paddingLeft);
+    const compact = { w: panel.offsetWidth + pad, h: panel.offsetHeight + pad };
+    if (animate) panel.classList.add('wide', 'morphing'); // keeps filling the window while it shrinks
+    api.setWide(false, { compact, animate }).then(settle, settle);
   }
 
   let wideOnShow = false; // large view due while the window was hidden

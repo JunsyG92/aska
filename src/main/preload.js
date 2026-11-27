@@ -25,7 +25,8 @@ contextBridge.exposeInMainWorld('aska', {
   openUrl: (url) => ipcRenderer.invoke('aska:open-url', url),
   resize: (size) => ipcRenderer.invoke('aska:resize', size),
   setMini: (v) => ipcRenderer.invoke('aska:set-mini', v),
-  setWide: (v) => ipcRenderer.invoke('aska:set-wide', v === true),
+  // Large view or normal size; resolves once the window has its new size.
+  setWide: (wide, opts = {}) => ipcRenderer.invoke('aska:set-wide', { wide: wide === true, compact: opts.compact || null, animate: opts.animate === true }),
   // Something dragged over the window: 'over', then 'drop' or 'leave'.
   drag: (state) => ipcRenderer.invoke('aska:drag', String(state)),
   // Path of a dropped file (the UI has no access to paths otherwise); '' if it has none.

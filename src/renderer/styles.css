@@ -63,7 +63,6 @@ body { padding: 14px; }
 .panel {
   position: relative;
   width: 720px;
-  transition: width 0.32s cubic-bezier(0.25, 1, 0.35, 1);
   border-radius: 18px;
   opacity: 0;
   transform: translateY(14px) scale(0.965);
@@ -1168,6 +1167,11 @@ kbd {
 .panel.wide:not(.mini) .hist-list { flex: 1 1 auto; max-height: none; }
 .panel.wide:not(.mini) .thread { padding: 18px 28px 4px; }
 .panel.wide:not(.mini) .output { font-size: 15px; line-height: 1.6; max-width: 980px; }
+/* The text settles with the window rather than jumping when the size changes. */
+.thread { transition: max-height 0.32s cubic-bezier(0.25, 1, 0.35, 1), padding 0.26s ease-out; }
+.output { transition: font-size 0.26s ease-out, line-height 0.26s ease-out; }
+/* While the window animates, the thread does not show a scrollbar that comes and goes. */
+.panel.morphing .thread { overflow-y: hidden; }
 .panel.mini.wide { width: max-content; }
 .panel.fading:not(.dropping) { opacity: 0.4; transition: opacity 0.25s ease-out; }
 

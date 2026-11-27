@@ -219,19 +219,34 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     const threadH = await page.evaluate(() => document.querySelector('#thread').getBoundingClientRect().height);
     assert.ok(threadH > grown.height * 0.55, `thread height ${threadH} in ${grown.height}`);
     await shot('2b-wide-light');
-    // Reduced by hand: back to the normal size, where the window was (bottom edge fixed).
+    // Reduced by hand: back to the normal size, where the window was (bottom edge fixed),
+    // through intermediate sizes (the window animates).
+    const samples = async (ms) => {
+      const out = [];
+      for (const end = Date.now() + ms; Date.now() < end;) out.push(await bounds());
+      return out;
+    };
     await page.click('#wide-btn');
-    await page.waitForTimeout(500);
+    const shrinking = await samples(450);
+    await page.waitForTimeout(200);
     const reduced = await bounds();
+    // Animated: at least one frame differs from both the start and the end (on a small
+    // screen the width may not change, only the height and the position).
+    const same = (a, b) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+    const between = (list, a, b) => list.some((x) => !same(x, a) && !same(x, b));
+    const trace = (list) => list.map((b) => `${b.width}x${b.height}@${b.x},${b.y}`).join(' ');
+    assert.ok(between(shrinking, grown, reduced), `animated: ${trace(shrinking)}`);
     assert.equal(reduced.width, idle.width, 'normal size again');
     assert.equal(reduced.x, idle.x);
     const top = await app.evaluate(({ BrowserWindow, screen }) => screen.getDisplayMatching(BrowserWindow.getAllWindows()[0].getBounds()).workArea.y);
     if (reduced.y > top) assert.equal(reduced.y + reduced.height, idle.y + idle.height, 'the bottom edge (the input) must not move');
     assert.ok(reduced.height > 300, `height with answer ${reduced.height}`);
-    // And back with the shortcut.
+    // And back with the shortcut, animated too.
     await page.keyboard.press('Control+e');
-    await page.waitForTimeout(500);
+    const growing = await samples(450);
+    await page.waitForTimeout(200);
     assert.deepEqual(await bounds(), grown);
+    assert.ok(between(growing, reduced, grown), `animated: ${trace(growing)}`);
 
     // 2nd message: same thread, and Claude resumes its session instead of starting over.
     await send('And the preload file?');
