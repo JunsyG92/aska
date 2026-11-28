@@ -1442,3 +1442,6 @@ kbd {
 .tk-proposal { border-bottom: 0; }
 .tk-wave-note { margin: 8px 0 0; color: var(--ok); font-size: 13px; }
 .panel.wide:not(.mini) .set-body { flex: 1 1 auto; min-height: 0; max-height: none; }
+.tk-remember { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.tk-remember-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.tk-remembered { color: var(--ok); font-size: 12px; font-weight: 600; }

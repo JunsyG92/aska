@@ -53,6 +53,8 @@ function checkTempBot(spec, n, { bots, agents, allowAutoMode = false, defaultAge
       avatar: source ? source.avatar : emblem ? { emblem } : {},
       color: source && source.ownColor ? source.color : undefined,
       copyOf: source ? source.id : undefined,
+      // A copy knows what the original was told to remember (read-only: a subtask never writes it).
+      memory: source && source.memoryAll ? source.memoryAll : undefined,
       sourceDir: source ? source.dir : undefined,
     },
   };
@@ -68,6 +70,7 @@ function writeTempBot(dir, temp) {
   if (temp.avatar && Object.keys(temp.avatar).length) json.avatar = temp.avatar;
   writePrivate(path.join(dir, 'bot.json'), JSON.stringify(json, null, 2) + '\n');
   writePrivate(path.join(dir, 'SOUL.md'), withSafety(temp.soul) + '\n');
+  if (temp.memory) writePrivate(path.join(dir, 'MEMORY.md'), temp.memory + '\n');
   if (temp.sourceDir) {
     for (const f of ['avatar.png', 'avatar.svg']) {
       const from = path.join(temp.sourceDir, f);
@@ -98,6 +101,9 @@ function keepTempBot(dir, { botsDir, taken, agents, allowAutoMode }) {
   if (raw.model) values.model = raw.model;
   if (raw.color) values.color = raw.color;
   if (raw.avatar) values.avatar = raw.avatar;
+  // Its memory goes with it (a copy's: what the original was told to remember).
+  const memory = readOwnedText(path.join(dir, 'MEMORY.md'));
+  if (typeof memory.text === 'string' && memory.text.trim()) values.memory = memory.text;
   const s = saveBot(target, values, { agents, allowAutoMode });
   if (s.errors) {
     fs.rmSync(target, { recursive: true, force: true });

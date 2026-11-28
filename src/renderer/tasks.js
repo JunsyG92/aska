@@ -423,6 +423,22 @@
       if (s.report.summary) rep.append(el('p', 'tk-summary', s.report.summary));
       if (s.report.status === 'partial') rep.append(el('p', 'set-hint', t('tasks.partial')));
       if (s.report.followUp) rep.append(el('p', 'set-hint', t('tasks.followUp', { text: s.report.followUp })));
+      // Facts the bot proposes to remember: written into its memory only on a click.
+      const facts = Array.isArray(s.report.remember) ? s.report.remember : [];
+      if (facts.length) {
+        const target = s.temporary ? s.kept : s.bot.id;
+        rep.append(el('div', 'tk-log-title', t('tasks.rememberTitle')));
+        facts.forEach((fact, i) => {
+          const line = el('div', 'tk-remember');
+          line.dataset.i = String(i);
+          line.append(el('span', 'tk-remember-text', fact));
+          if ((s.remembered || []).includes(i)) line.append(el('span', 'tk-remembered', t('tasks.remembered')));
+          else if (target) {
+            line.append(button(t('tasks.rememberFor', { bot: target }), () => act(() => opts.api.rememberFromTask(x.id, s.n, i)).then((r) => r && r.bot && setMessage(t('tasks.rememberDone', { bot: r.bot }), 'ok')), 'set-btn small', 'remember'));
+          } else line.append(el('span', 'set-hint', t('tasks.rememberKeepFirst')));
+          rep.append(line);
+        });
+      }
       row.append(rep);
     } else if (s.status === 'check') row.append(el('div', 'set-hint', t('tasks.noReport')));
 

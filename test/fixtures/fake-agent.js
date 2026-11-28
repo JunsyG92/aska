@@ -165,7 +165,7 @@ process.stdin.on('end', async () => {
         g('commit', '-q', '-m', 'chore: node 26');
         commits.push(g('log', '-1', '--format=%h %s').stdout.trim());
       }
-      report = '\n\n' + JSON.stringify({ status: 'done', summary: 'Node 26 en place. Les tests passent.', commits, followUp: '' });
+      report = '\n\n' + JSON.stringify({ status: 'done', summary: 'Node 26 en place. Les tests passent.', commits, followUp: '', remember: prompt.includes('[remember]') ? ['Les tests se lancent avec npm test'] : [] });
       j({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: report } } });
     }
     j({ type: 'assistant', message: { content: [{ type: 'text', text: words.join('') + report }, { type: 'tool_use', name: 'Read', input: { file_path: 'src/main/main.js' } }] } });

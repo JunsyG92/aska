@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('aska', {
   approveWave: (id, subtasks) => ipcRenderer.invoke('aska:task-wave-approve', { id, subtasks }),
   dismissWave: (id) => ipcRenderer.invoke('aska:task-wave-dismiss', id),
   openTaskPr: (id, n) => ipcRenderer.invoke('aska:task-pr', { id, n }),
+  rememberFromTask: (id, n, i) => ipcRenderer.invoke('aska:task-remember', { id, n, i }),
   pickTaskRoot: (from) => ipcRenderer.invoke('aska:task-pick-root', from),
   onRunEvent: on('aska:run-event'),
   onShown: on('aska:shown'),
