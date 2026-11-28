@@ -59,7 +59,8 @@ const LINE_RULES = [
   },
   {
     id: 'process', level: 'medium',
-    test: (t) => /child_process|\b(?:spawn|exec|execFile|fork)(?:Sync)?\s*\(/.test(t),
+    // A method call such as regex.exec( or cp.fork( is left out: what starts programs comes from child_process.
+    test: (t) => /child_process|(?<![.\w])(?:spawn|exec|execFile|fork)(?:Sync)?\s*\(/.test(t),
     why: 'Starts a program. Aska should only start the agent CLIs, without a shell.',
   },
   {

