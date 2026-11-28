@@ -1345,6 +1345,12 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     // No web permission (camera, geolocation, web notifications…) is granted.
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
+    // No spell checker: Chromium would download its dictionaries from Google's
+    // servers. Aska makes no network request of its own besides the documents.
+    try {
+      session.defaultSession.setSpellCheckerEnabled(false);
+      session.defaultSession.setSpellCheckerDictionaryDownloadURL('https://127.0.0.1/');
+    } catch { /* not available on this system: nothing to download either */ }
 
     loadEverything();
     registerIpc();

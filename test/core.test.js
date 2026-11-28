@@ -1766,3 +1766,90 @@ test('sources: a document already sent with a message stays marked as sent', () 
     { kind: 'url', url: 'https://example.com/a' },
   ]);
 });
+
+// ---------- documents: secrets and addresses that must not reach an agent ----------
+
+test('sources: files of secrets are refused, in the home folder and anywhere', () => {
+  const src = require('../src/main/sources');
+  const home = tmp();
+  const elsewhere = tmp();
+  const make = (base, rel) => {
+    const f = path.join(base, rel);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, 'secret');
+    return f;
+  };
+  // Folders of secrets: the machine's, the agents', the apps'.
+  for (const rel of ['.config/gh/hosts.yml', '.local/share/keyrings/login.keyring', '.codex/auth.json', '.claude/settings.json', '.copilot/config.json', '.mozilla/firefox/cookies.sqlite', 'Library/Keychains/login.keychain-db']) {
+    assert.match(src.checkFile(make(home, rel), { home }).error || '', /folder of secrets/, rel);
+  }
+  // Files of secrets, wherever they are (here a project folder outside the home folder).
+  for (const name of ['.env', '.env.production', '.npmrc', '.netrc', '.git-credentials', '.pgpass', '.claude.json', 'credentials.json', 'id_rsa', 'server.pem', 'tls.key', 'vault.kdbx', 'prod.tfvars']) {
+    assert.match(src.checkFile(make(elsewhere, name), { home }).error || '', /holds secrets/, name);
+  }
+  // Ordinary documents pass.
+  for (const name of ['notes.md', 'README.md', 'env.md', 'keys-of-success.txt', 'report.pdf']) {
+    assert.equal(src.checkFile(make(elsewhere, name), { home }).error, undefined, name);
+  }
+  // System: the process environment and devices are not documents.
+  if (process.platform === 'linux') {
+    assert.match(src.checkFile('/proc/self/environ', { home }).error, /holds secrets/);
+  }
+});
+
+test('sources: a file swapped for a link to a secret after being added is not read', async () => {
+  if (process.platform === 'win32') return; // symbolic links need extra rights on Windows
+  const src = require('../src/main/sources');
+  const home = tmp();
+  const doc = path.join(home, 'notes.md');
+  fs.writeFileSync(doc, 'notes');
+  fs.mkdirSync(path.join(home, '.ssh'));
+  fs.writeFileSync(path.join(home, '.ssh', 'id_ed25519'), 'PRIVATE KEY');
+  const loader = new src.SourceLoader({ home });
+  const [first] = await loader.load([{ kind: 'file', path: doc }]);
+  assert.equal(first.text, 'notes');
+  fs.rmSync(doc);
+  fs.symlinkSync(path.join(home, '.ssh', 'id_ed25519'), doc);
+  const [again] = await loader.load([{ kind: 'file', path: doc }], { refresh: true });
+  assert.equal(again.text, undefined);
+  assert.match(again.error, /folder of secrets/);
+});
+
+test('sources: a page cannot redirect to the machine or the local network', async () => {
+  const src = require('../src/main/sources');
+  for (const ip of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.1.10', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1']) {
+    assert.equal(src.isPrivateIp(ip), true, ip);
+  }
+  for (const ip of ['93.184.216.34', '8.8.8.8', '172.32.0.1', '2606:4700::1111']) assert.equal(src.isPrivateIp(ip), false, ip);
+  // Names: resolved (here by a fake resolver), "localhost" always local.
+  const lookup = async (h) => [{ address: h === 'intranet.corp' ? '10.0.0.5' : '93.184.216.34' }];
+  assert.equal(await src.isLocalHost('localhost', lookup), true);
+  assert.equal(await src.isLocalHost('intranet.corp', lookup), true);
+  assert.equal(await src.isLocalHost('example.com', lookup), false);
+
+  // A fake web: a public page that redirects elsewhere.
+  const seen = [];
+  const web = {
+    'https://example.com/ok': () => new Response('fine', { headers: { 'content-type': 'text/plain' } }),
+    'https://example.com/hop': () => new Response('', { status: 302, headers: { location: '/ok' } }),
+    'https://example.com/metadata': () => new Response('', { status: 302, headers: { location: 'http://169.254.169.254/latest/meta-data/' } }),
+    'https://example.com/intranet': () => new Response('', { status: 301, headers: { location: 'https://intranet.corp/wiki' } }),
+    'https://example.com/file': () => new Response('', { status: 302, headers: { location: 'file:///etc/passwd' } }),
+    'https://example.com/loop': () => new Response('', { status: 302, headers: { location: '/loop' } }),
+    'http://127.0.0.1:8080/notes': () => new Response('local notes', { headers: { 'content-type': 'text/plain' } }),
+  };
+  const fetchImpl = async (url, init) => {
+    seen.push({ url, redirect: init.redirect });
+    return (web[url] || (() => new Response('no', { status: 404 })))();
+  };
+  const get = (url) => src.fetchUrlSource(url, { fetchImpl, lookup });
+  assert.equal((await get('https://example.com/hop')).text, 'fine', 'a redirect between public pages is followed');
+  assert.ok(seen.every((s) => s.redirect === 'manual'), 'every hop is checked by Aska');
+  assert.match((await get('https://example.com/metadata')).error, /redirects to an address of this machine or of the local network/);
+  assert.match((await get('https://example.com/intranet')).error, /local network/);
+  assert.match((await get('https://example.com/file')).error, /not http\(s\)/);
+  assert.match((await get('https://example.com/loop')).error, /Too many redirects/);
+  assert.ok(!seen.some((s) => /169\.254|intranet\.corp|file:/.test(s.url)), 'never fetched');
+  // A local address typed by the user is their choice.
+  assert.equal((await get('http://127.0.0.1:8080/notes')).text, 'local notes');
+});

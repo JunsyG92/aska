@@ -5,6 +5,8 @@
 // Independent of Electron.
 
 const crypto = require('crypto');
+const dns = require('dns');
+const net = require('net');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -17,8 +19,41 @@ const URL_TTL_MS = 10 * 60 * 1000; // a page is fetched again after this long
 const FETCH_TIMEOUT_MS = 10000;
 const PDF_TIMEOUT_MS = 15000;
 
-// Folders of the home folder whose files are never sent to an agent.
-const SENSITIVE_RE = /^\.(ssh|gnupg|aws|azure|kube|docker|password-store)$/i;
+// Folders of the home folder whose files are never sent to an agent: keys, tokens
+// and passwords of the machine, of the agents themselves, of browsers and apps.
+const SENSITIVE_RE = new RegExp(
+  '^(\\.(ssh|gnupg|aws|azure|kube|docker|password-store|config|local|gcloud|oci|terraform\\.d|vault-token|'
+  + 'claude|codex|copilot|cursor|gemini|ollama|mozilla|thunderbird|pki|cert|keychain)|library|appdata)$',
+  'i'
+);
+
+// Files that hold secrets wherever they are: environment files, credentials,
+// private keys, keystores.
+const SECRET_FILE_RE = new RegExp(
+  '^(\\.env(\\..*)?|\\.npmrc|\\.yarnrc(\\.yml)?|\\.pypirc|\\.netrc|_netrc|\\.git-credentials|\\.pgpass|\\.my\\.cnf|'
+  + '\\.claude\\.json|\\.boto|\\.s3cfg|\\.dockercfg|credentials(\\.json|\\.xml|\\.toml)?|auth\\.json|secrets?\\.(json|ya?ml|toml)|'
+  + 'id_(rsa|dsa|ecdsa|ed25519)(_sk)?|.*\\.(pem|key|p12|pfx|jks|keystore|kdbx|ovpn|gpg|asc|tfstate|tfvars))$',
+  'i'
+);
+
+// System folders that are not documents: process memory and environment, devices,
+// kernel state (on Linux, /proc/self/environ holds Aska's environment).
+const SYSTEM_RE = /^\/(proc|sys|dev|run)(\/|$)|^\/etc\/(shadow|gshadow|sudoers)|^\/private\/var\/db\//;
+
+/** Why a real file path must not be sent to an agent, or null. */
+function secretReason(real, home) {
+  if (SYSTEM_RE.test(real.replace(/\\/g, '/'))) return t('sources.secretFile', { path: real });
+  let realHome = home;
+  try {
+    realHome = fs.realpathSync(home);
+  } catch { /* missing home: as is */ }
+  const rel = path.relative(realHome, real);
+  if (rel && !rel.startsWith('..') && !path.isAbsolute(rel) && SENSITIVE_RE.test(rel.split(path.sep)[0])) {
+    return t('sources.sensitive', { path: `~${path.sep}${rel}` });
+  }
+  if (SECRET_FILE_RE.test(path.basename(real))) return t('sources.secretFile', { path: real });
+  return null;
+}
 
 /**
  * Characters of documents sent with a request. A prompt passed as an argument
@@ -65,14 +100,8 @@ function checkFile(raw, { base = os.homedir(), home = os.homedir() } = {}) {
   } catch {
     return { error: t('sources.fileNotFound', { path: p }) };
   }
-  let realHome = home;
-  try {
-    realHome = fs.realpathSync(home);
-  } catch { /* missing home: as is */ }
-  const rel = path.relative(realHome, real);
-  if (rel && !rel.startsWith('..') && !path.isAbsolute(rel) && SENSITIVE_RE.test(rel.split(path.sep)[0])) {
-    return { error: t('sources.sensitive', { path: `~${path.sep}${rel}` }) };
-  }
+  const secret = secretReason(real, home);
+  if (secret) return { error: secret };
   return { path: real };
 }
 
@@ -270,15 +299,71 @@ async function readFileSource(file, { pdftotext = null } = {}) {
 // Content types read as text: text/*, and the usual structured formats.
 const TEXT_TYPE = /^(text\/|application\/(json|xml|xhtml\+xml|javascript|yaml|x-yaml|[a-z0-9.-]+\+(json|xml))(;|$))/;
 
-/** Text of a page, fetched without cookies or credentials. Only text content is accepted. */
-async function fetchUrlSource(url, { fetchImpl = globalThis.fetch, timeoutMs = FETCH_TIMEOUT_MS, maxBytes = MAX_READ_BYTES } = {}) {
+// ---------- local and private addresses ----------
+
+const MAX_REDIRECTS = 5;
+
+/** Loopback, private network, link-local (cloud metadata), CGNAT, multicast, unspecified. */
+function isPrivateIp(ip) {
+  let a = String(ip).toLowerCase();
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a);
+  if (mapped) a = mapped[1];
+  if (net.isIPv4(a)) {
+    const [x, y] = a.split('.').map(Number);
+    return x === 0 || x === 10 || x === 127 || (x === 100 && y >= 64 && y <= 127) || (x === 169 && y === 254)
+      || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 198 && (y === 18 || y === 19)) || x >= 224;
+  }
+  if (net.isIPv6(a)) return a === '::' || a === '::1' || /^f[cd]/.test(a) || /^fe[89ab]/.test(a) || /^ff/.test(a);
+  return false;
+}
+
+const defaultLookup = (host) => dns.promises.lookup(host, { all: true, verbatim: true });
+
+/**
+ * Does this host lead to the machine itself or to a private network? Names are
+ * resolved; when they cannot be, the fetch itself will fail, so they pass here.
+ */
+async function isLocalHost(hostname, lookup = defaultLookup) {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (net.isIP(host)) return isPrivateIp(host);
   try {
-    const res = await fetchImpl(url, {
-      redirect: 'follow',
-      credentials: 'omit',
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: { 'User-Agent': 'Aska', Accept: 'text/html,text/plain,text/markdown,application/json;q=0.9,*/*;q=0.5' },
-    });
+    const addrs = await lookup(host);
+    return (Array.isArray(addrs) ? addrs : [addrs]).some((x) => x && isPrivateIp(x.address));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Text of a page, fetched without cookies or credentials. Only text content is
+ * accepted. Redirects are followed one by one: a public page cannot lead Aska to
+ * an address of the machine or of the local network (whose content would then go
+ * to the agent). A local address typed by the user is their choice.
+ */
+async function fetchUrlSource(url, { fetchImpl = globalThis.fetch, lookup = defaultLookup, timeoutMs = FETCH_TIMEOUT_MS, maxBytes = MAX_READ_BYTES } = {}) {
+  try {
+    const signal = AbortSignal.timeout(timeoutMs);
+    const startLocal = await isLocalHost(new URL(url).hostname, lookup);
+    let current = url;
+    let res;
+    for (let hop = 0; ; hop++) {
+      res = await fetchImpl(current, {
+        redirect: 'manual',
+        credentials: 'omit',
+        signal,
+        headers: { 'User-Agent': 'Aska', Accept: 'text/html,text/plain,text/markdown,application/json;q=0.9,*/*;q=0.5' },
+      });
+      if (![301, 302, 303, 307, 308].includes(res.status)) break;
+      if (hop >= MAX_REDIRECTS) return { error: t('sources.tooManyRedirects') };
+      const location = res.headers.get('location');
+      const next = location ? normalizeUrl(new URL(location, current).href) : { error: true };
+      if (next.error) return { error: t('sources.redirectRefused', { url: String(location || '').slice(0, 200) }) };
+      if (!startLocal && (await isLocalHost(new URL(next.url).hostname, lookup))) {
+        return { error: t('sources.redirectLocal', { url: next.url.slice(0, 200) }) };
+      }
+      current = next.url;
+    }
     if (!res.ok) return { error: t('sources.httpError', { status: res.status }) };
     const type = String(res.headers.get('content-type') || '').toLowerCase();
     if (type && !TEXT_TYPE.test(type)) return { error: t('sources.unsupportedType', { type: type.split(';')[0] }) };
@@ -318,8 +403,10 @@ async function fetchUrlSource(url, { fetchImpl = globalThis.fetch, timeoutMs = F
  * changes (date or size), a page after URL_TTL_MS.
  */
 class SourceLoader {
-  constructor({ fetchImpl, pdftotext = null, now = Date.now } = {}) {
+  constructor({ fetchImpl, lookup, pdftotext = null, now = Date.now, home = os.homedir() } = {}) {
     this.fetchImpl = fetchImpl;
+    this.lookup = lookup;
+    this.home = home;
     this.pdftotext = pdftotext;
     this.now = now;
     this.cache = new Map();
@@ -330,7 +417,7 @@ class SourceLoader {
     const hit = this.cache.get(key);
     if (source.kind === 'url') {
       if (hit && !refresh && !hit.error && this.now() - hit.at < URL_TTL_MS) return hit;
-      const r = await fetchUrlSource(source.url, this.fetchImpl ? { fetchImpl: this.fetchImpl } : {});
+      const r = await fetchUrlSource(source.url, { ...(this.fetchImpl ? { fetchImpl: this.fetchImpl } : {}), ...(this.lookup ? { lookup: this.lookup } : {}) });
       // A page that cannot be fetched again keeps its last known text.
       const entry = r.error && hit && hit.text ? { ...hit, stale: r.error } : { ...r, at: this.now() };
       this.cache.set(key, entry);
@@ -342,7 +429,14 @@ class SourceLoader {
         if (st.mtimeMs === hit.mtimeMs && st.size === hit.size) return hit;
       } catch { /* gone: read below reports it */ }
     }
-    const entry = { ...(await readFileSource(source.path, { pdftotext: this.pdftotext })), at: this.now() };
+    // Checked again before each read: a saved conversation, or a link swapped since
+    // the file was added, must not lead to a file of secrets.
+    const ok = checkFile(source.path, { home: this.home });
+    if (ok.error) {
+      this.cache.delete(key);
+      return { error: ok.error, at: this.now() };
+    }
+    const entry = { ...(await readFileSource(ok.path, { pdftotext: this.pdftotext })), at: this.now() };
     this.cache.set(key, entry);
     return entry;
   }
@@ -424,6 +518,6 @@ function withSources(block, body, { hasHistory = false } = {}) {
 
 module.exports = {
   MAX_SOURCES, budgetFor, normalizeUrl, isUrl, checkFile, keyOf, sanitizeSources, addSources,
-  htmlToText, looksBinary, readFileSource, fetchUrlSource, SourceLoader,
+  htmlToText, looksBinary, readFileSource, fetchUrlSource, SourceLoader, isPrivateIp, isLocalHost, secretReason,
   allocate, buildSourcesBlock, blockHash, withSources,
 };
