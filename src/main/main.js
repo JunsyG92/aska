@@ -251,12 +251,27 @@ function publicTurn(t) {
     notice: t.notice || null,
     durationMs: t.durationMs || 0,
     sources: Number.isInteger(t.sources) ? t.sources : 0,
+    attached: Array.isArray(t.attached) ? t.attached : [],
   };
 }
 
 // Documents and links of a conversation, for the UI (readable paths).
 function publicSources(conv) {
-  return (conv.sources || []).map((s) => ({ key: src.keyOf(s), kind: s.kind, label: s.kind === 'url' ? s.url : tilde(s.path) }));
+  return (conv.sources || []).map((s) => ({ key: src.keyOf(s), kind: s.kind, label: sourceLabel(s), sent: s.sent === true }));
+}
+
+const sourceLabel = (s) => (s.kind === 'url' ? s.url : tilde(s.path));
+
+/**
+ * Documents added since the last message: they go with this one. They leave the
+ * field and show in the thread under the message; they stay in the conversation.
+ */
+function attachFresh(conv, turn, loaded) {
+  const fresh = (conv.sources || []).filter((s) => !s.sent);
+  if (!fresh.length) return;
+  const failed = new Set(loaded.filter((l) => l.error).map((l) => src.keyOf(l.source)));
+  turn.attached = fresh.map((s) => ({ kind: s.kind, label: sourceLabel(s), ...(failed.has(src.keyOf(s)) ? { error: true } : {}) }));
+  for (const s of fresh) s.sent = true;
 }
 
 // Conversation list for the UI: agent colors and readable folder.
@@ -831,6 +846,7 @@ function startRun(req, loaded = []) {
   const thread = conv;
   const turn = { agent: agent.id, label: agent.label, model, mode, prompt, answer: '', status: 'running', ts: new Date().toISOString() };
   if (used.length) turn.sources = used.length;
+  attachFresh(conv, turn, loaded);
   thread.turns.push(turn);
   thread.cwd = dir.path;
   let sessionId = null;
@@ -1329,6 +1345,12 @@ if (process.platform === 'win32' && wants('--install-shortcuts')) {
     // No web permission (camera, geolocation, web notifications…) is granted.
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
+    // No spell checker: Chromium would download its dictionaries from Google's
+    // servers. Aska makes no network request of its own besides the documents.
+    try {
+      session.defaultSession.setSpellCheckerEnabled(false);
+      session.defaultSession.setSpellCheckerDictionaryDownloadURL('https://127.0.0.1/');
+    } catch { /* not available on this system: nothing to download either */ }
 
     loadEverything();
     registerIpc();

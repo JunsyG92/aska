@@ -90,6 +90,13 @@ class ConversationStore {
     c.turns = c.turns.filter((t) => t && typeof t.prompt === 'string' && typeof t.agent === 'string');
     for (const t of c.turns) {
       if (typeof t.answer !== 'string') t.answer = '';
+      // Documents attached to this message: names to show in the thread, nothing more.
+      if (Array.isArray(t.attached)) {
+        t.attached = t.attached
+          .filter((a) => a && (a.kind === 'file' || a.kind === 'url') && typeof a.label === 'string')
+          .slice(0, 20)
+          .map((a) => ({ kind: a.kind, label: a.label.slice(0, 4096), ...(a.error === true ? { error: true } : {}) }));
+      } else delete t.attached;
       if (t.status === 'running') t.status = 'error'; // app closed mid-run
     }
     if (!c.sessions || typeof c.sessions !== 'object') c.sessions = {};

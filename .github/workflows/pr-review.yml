@@ -83,8 +83,10 @@ jobs:
             Context: Aska is an Electron desktop app (Linux, Windows, macOS) that starts AI
             agents through their command line tools (Claude Code, Codex, Copilot, Cursor,
             Ollama). Its owner uses it on a work computer that holds sensitive data. Aska
-            itself makes NO network call; only the agent CLIs connect. External contributors
-            are not necessarily trustworthy.
+            itself makes one kind of network call only: it fetches the web pages the user
+            attaches as documents (src/main/sources.js). Any other network call, or a change
+            to what sources.js fetches or reads, is suspicious. The agent CLIs connect on
+            their own. External contributors are not necessarily trustworthy.
 
             Read the PR with `gh pr view ${{ github.event.pull_request.number }}` then
             `gh pr diff ${{ github.event.pull_request.number }}`. You have no other tool.

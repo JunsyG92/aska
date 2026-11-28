@@ -45,7 +45,7 @@ const LINE_RULES = [
   {
     id: 'network', level: 'high',
     test: (t) => /\brequire\(\s*['"](?:node:)?(?:https?|http2|net|tls|dgram|dns)['"]\s*\)|\bfetch\s*\(|XMLHttpRequest|\bWebSocket\b|\bnet\.(?:request|fetch)\b|sendBeacon|\bundici\b|\baxios\b|\.connect\(\s*\d/.test(t),
-    why: 'New network access. Aska makes none itself (only the agent CLIs connect): it needs a reason.',
+    why: 'New network access. Aska itself only fetches the pages the user attaches as documents (src/main/sources.js); anything else needs a reason.',
   },
   {
     id: 'download', level: 'high',
@@ -59,7 +59,8 @@ const LINE_RULES = [
   },
   {
     id: 'process', level: 'medium',
-    test: (t) => /child_process|\b(?:spawn|exec|execFile|fork)(?:Sync)?\s*\(/.test(t),
+    // A method call such as regex.exec( or cp.fork( is left out: what starts programs comes from child_process.
+    test: (t) => /child_process|(?<![.\w])(?:spawn|exec|execFile|fork)(?:Sync)?\s*\(/.test(t),
     why: 'Starts a program. Aska should only start the agent CLIs, without a shell.',
   },
   {
@@ -108,7 +109,7 @@ function fileRules(file) {
     add('medium', 'github', 'Changes the GitHub settings of the repository (reviewers, rules, Dependabot...).');
   }
   if (/^scripts\/install|^scripts\/setup-/.test(p)) add('high', 'install', 'Script run on the machine of a user or maintainer.');
-  if (/^src\/main\/(?:main|security|launch|agents|runner|preload|config|settings)\.js$/.test(p)) {
+  if (/^src\/main\/(?:main|security|launch|agents|runner|preload|config|settings|sources)\.js$/.test(p)) {
     add('high', 'core', 'Core of Aska security (window, calls from the UI, agent launch, filtering, permissions).');
   }
   if (p === 'src/renderer/index.html') add('medium', 'ui', 'UI page: check the content security policy and the scripts it loads.');

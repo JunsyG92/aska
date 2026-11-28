@@ -963,10 +963,21 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     assert.ok(docCall.stdin.endsWith('Request from the user:\nWhen do we launch?'));
     assert.ok(!docCall.args.includes('--resume'));
     assert.match(await page.locator('.turn .meta').last().textContent(), / · 1 document · /);
+    // Sent: the document leaves the field and shows under the message, in the thread.
+    assert.equal(await page.isHidden('#attach'), true, 'nothing left above the field');
+    assert.deepEqual(await page.locator('.turn').last().locator('.q-doc').allTextContents(), ['brief.md']);
+    await shot('12-attached-light');
     // The resumed session already has them: they are not sent twice.
     await send('And who decides?');
     await settled('running');
     await settled('done');
+    assert.equal(await page.locator('.turn').last().locator('.q-doc').count(), 0, 'only with the message it was sent with');
+    assert.equal(await page.isHidden('#attach'), true);
+    // Saved with the message.
+    const savedConv = fs.readdirSync(P.conversations).map((f) => JSON.parse(fs.readFileSync(path.join(P.conversations, f), 'utf8')))
+      .find((c) => c.turns.some((t) => t.prompt === 'When do we launch?'));
+    assert.deepEqual(savedConv.turns.find((t) => t.prompt === 'When do we launch?').attached.map((x) => x.kind), ['file']);
+    assert.equal(savedConv.sources[0].sent, true);
     docCall = calls().at(-1);
     assert.ok(docCall.args.includes('--resume'));
     assert.equal(docCall.stdin, 'And who decides?');

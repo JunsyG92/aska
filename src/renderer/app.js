@@ -423,10 +423,26 @@
     fillMeta(meta, t);
     const answerEl = el('div', 'output');
     if (t.answer) answerEl.append(window.renderMarkdown(t.answer));
-    node.append(el('div', 'q', t.prompt), meta, answerEl);
+    node.append(el('div', 'q', t.prompt));
+    if (t.attached && t.attached.length) node.append(attachedEl(t.attached));
+    node.append(meta, answerEl);
     if (t.notice) node.append(noticeEl(t, isLast));
     thread.append(node);
     return { node, meta, answerEl, text: t.answer || '' };
+  }
+
+  // Documents sent with a message, under it in the thread (a click opens the list).
+  function attachedEl(list) {
+    const box = el('div', 'q-att');
+    for (const a of list) {
+      const chip = el('button', 'att-name q-doc' + (a.error ? ' err' : ''), shortName(a));
+      chip.type = 'button';
+      chip.title = a.label;
+      chip.prepend(icon(SRC_ICON[a.kind] || SRC_ICON.file));
+      chip.addEventListener('click', openSources);
+      box.append(chip);
+    }
+    return box;
   }
 
   function renderThread(conversation) {
@@ -716,7 +732,11 @@
     }
     showNotice('');
     thread.querySelectorAll('.notice .rerun').forEach((b) => b.remove()); // only on the last turn
-    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode, prompt, answer: '', status: 'running', sources: sources.length }, false);
+    // The documents added since the last message go with this one: they leave the field.
+    const attached = sources.filter((x) => !x.sent).map((x) => ({ kind: x.kind, label: x.label, error: !!(srcInfo.get(x.key) || {}).error }));
+    sources = sources.map((x) => (x.sent ? x : { ...x, sent: true }));
+    renderAttach();
+    live = addTurn({ label: a.label, color: a.color, model: model !== undefined ? model : a.model, mode, prompt, answer: '', status: 'running', sources: sources.length, attached }, false);
     live.node.classList.add('live');
     turnCount += 1;
     panel.dataset.state = 'running';
@@ -989,7 +1009,8 @@
   }
 
   function setSources(list) {
-    const changed = list.map((x) => x.key).join('\n') !== sources.map((x) => x.key).join('\n');
+    const sig = (l) => l.map((x) => x.key + (x.sent ? '+' : '')).join('\n');
+    const changed = sig(list) !== sig(sources);
     sources = list;
     $('sources-count').textContent = list.length ? String(list.length) : '';
     $('sources').classList.toggle('on', list.length > 0);
@@ -1015,9 +1036,10 @@
   // The documents of the conversation, above the field: one chip each, with its ×.
   function renderAttach() {
     const bar = $('attach');
-    bar.hidden = !sources.length;
+    const pending = sources.filter((s) => !s.sent); // the ones already sent are in the thread
+    bar.hidden = !pending.length;
     bar.replaceChildren(
-      ...sources.map((s) => {
+      ...pending.map((s) => {
         const info = srcInfo.get(s.key);
         const chip = el('div', 'att' + (info && info.error ? ' err' : !info ? ' loading' : ''));
         chip.setAttribute('role', 'listitem');

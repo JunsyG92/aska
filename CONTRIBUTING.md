@@ -141,7 +141,8 @@ fork, gets two automatic comments, updated on every new commit
 (`.github/workflows/pr-review.yml`):
 
 - **Guards** (`scripts/ci/pr-guard.js`, no AI): fixed rules on the added lines.
-  They flag new network access (Aska makes none), reading secrets, the
+  They flag new network access (Aska itself only fetches the pages attached as
+  documents, in `src/main/sources.js`), reading secrets, the
   environment, the clipboard or the screen, obfuscated code or `eval`,
   invisible characters, a weaker Electron setup, a dependency or an
   `npm install` script, and any change to CI, install scripts or the files at
