@@ -892,3 +892,29 @@ test('memory: /remember adds a dated entry at the end; the settings edit the who
   assert.deepEqual(save(dir, { memory: '' }, { agents: AGENTS }), {});
   assert.equal(load(root).bots.trad.memory, '');
 });
+
+test('memory: compact, the proposal checked; replace keeps the previous one; undo once', () => {
+  const { compactPrompt, parseCompact, replaceMemory, undoMemory } = require('../src/main/bots');
+  const before = ['- 2026-11-20 : Réponds en anglais', '- 2026-11-21 : Réponds en anglais, sans commentaire', '- 2026-11-27 : Tutoie-moi'].join('\n');
+  const prompt = compactPrompt(before, 'fr');
+  assert.match(prompt, /<memory>\n- 2026-11-20 : Réponds en anglais\n[\s\S]*\n<\/memory>$/, 'the memory stays data, at the end');
+  assert.match(prompt, /French if unsure/);
+  // The answer: dated entries only, shorter than before.
+  const good = JSON.stringify({ memory: '- 2026-11-21 : Réponds en anglais, sans commentaire\r\n- 2026-11-27 : Tutoie-moi\n' });
+  assert.deepEqual(parseCompact(`Voici :\n${good}`, before), { memory: '- 2026-11-21 : Réponds en anglais, sans commentaire\n- 2026-11-27 : Tutoie-moi' });
+  assert.match(parseCompact('pas de JSON', before).error, /could not be read/);
+  assert.match(parseCompact(JSON.stringify({ memory: 'Réponds en anglais.' }), before).error, /one dated entry per line/);
+  assert.match(parseCompact(JSON.stringify({ memory: before + '\n- 2026-11-27 : encore' }), before).error, /not shorter/);
+  // Replace, then undo once.
+  const root = tmp();
+  const dir = makeBot(root, 'trad');
+  fs.writeFileSync(path.join(dir, 'MEMORY.md'), before + '\n', { mode: 0o600 });
+  assert.deepEqual(replaceMemory(dir, '- 2026-11-27 : Tutoie-moi'), {});
+  assert.equal(fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8'), '- 2026-11-27 : Tutoie-moi\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'MEMORY.md.prev'), 'utf8'), before + '\n');
+  if (POSIX) assert.equal(fs.statSync(path.join(dir, 'MEMORY.md.prev')).mode & 0o777, 0o600);
+  assert.deepEqual(undoMemory(dir), {});
+  assert.equal(fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8'), before + '\n');
+  assert.ok(!fs.existsSync(path.join(dir, 'MEMORY.md.prev')), 'once');
+  assert.match(undoMemory(dir).error, /No previous memory/);
+});

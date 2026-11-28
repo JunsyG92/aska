@@ -127,6 +127,7 @@
           avatar: { variant: b.avatar.variant || 0, shape: b.avatar.shape || 'auto', emblem: b.avatar.emblem || 'auto' },
         };
   let creating = null; // { label, describe, busy, proposal, error } while a new bot is being made
+  let compacting = null; // { botId, busy, proposal, error } while a memory is being compacted
   let removeArmed = null; // bot whose deletion waits for a second click
   const botList = () => (botData ? botData.bots : []);
   const draftOf = (b) => (botDrafts[b.id] = botDrafts[b.id] || botFields(b));
@@ -181,6 +182,36 @@
       if (!creating.label.trim()) creating.label = r.draft.label;
     }
     render();
+  }
+
+  // Compacting a bot's memory: one proposal at a time (shared with the drafts).
+  async function compactNow(b) {
+    if (compacting && compacting.busy) return;
+    compacting = { botId: b.id, busy: true };
+    render();
+    const r = await opts.api.compactMemory(b.id);
+    if (!compacting || compacting.botId !== b.id) return; // closed meanwhile
+    compacting = r.cancelled ? null : r.error ? { botId: b.id, error: r.error } : { botId: b.id, proposal: r };
+    render();
+  }
+
+  function stopCompact() {
+    if (compacting && compacting.busy) opts.api.cancelBotDraft();
+    compacting = null;
+    render();
+  }
+
+  // Replace (with the reviewed proposal) or undo: written at once, the list read again.
+  async function memoryChange(b, call, done) {
+    const r = await call();
+    if (r.error) return setMessage(r.error, 'err');
+    compacting = null;
+    botData = { ...botData, bots: r.bots };
+    const now = r.bots.find((x) => x.id === b.id);
+    if (botDrafts[b.id] && now) botDrafts[b.id].memory = now.memory || '';
+    opts.onSaved(r.state);
+    render();
+    setMessage(t(done), 'ok');
   }
 
   function stopCreating() {
@@ -518,6 +549,44 @@
     syncMemCount();
     const memoryBox = el('div', 'set-stack');
     memoryBox.append(memory, memCount);
+
+    // "Compact": the bot's agent proposes a shorter memory; nothing is written before "Replace".
+    const c = compacting && compacting.botId === b.id ? compacting : null;
+    const memRow = el('div', 'set-inline wrap');
+    if (c && c.busy) {
+      memRow.append(el('span', 'set-unit', t('settings.bots.compacting')), button(t('settings.cancel'), stopCompact));
+    } else {
+      const saved = (b.memory || '').trim();
+      const compact = button(t('settings.bots.compact'), () => compactNow(b), 'set-btn small' + (saved.length > MEMORY_SENT ? ' primary' : ''));
+      compact.dataset.action = 'compact';
+      // The saved memory is compacted: unsaved edits first.
+      compact.disabled = !saved || d.memory.trim() !== saved;
+      compact.title = d.memory.trim() !== saved ? t('settings.bots.compactSaveFirst') : '';
+      memRow.append(compact);
+      if (b.memoryPrev) {
+        const undo = button(t('settings.bots.memoryUndo'), () => memoryChange(b, () => opts.api.undoMemory(b.id), 'settings.bots.memoryRestored'));
+        undo.dataset.action = 'memory-undo';
+        memRow.append(undo);
+      }
+    }
+    memoryBox.append(memRow);
+    if (c && c.error) memoryBox.append(el('div', 'set-error', c.error));
+    if (c && c.proposal) {
+      const prop = el('textarea', 'set-textarea');
+      prop.rows = 6;
+      prop.readOnly = true;
+      prop.value = c.proposal.memory;
+      prop.dataset.focusKey = 'memory-proposal';
+      const line = el('div', 'set-inline wrap');
+      const replace = button(t('settings.bots.memoryReplace'), () => memoryChange(b, () => opts.api.replaceMemory(b.id, c.proposal.memory), 'settings.bots.memoryReplaced'), 'set-btn small primary');
+      replace.dataset.action = 'memory-replace';
+      line.append(
+        el('span', 'set-unit', t('settings.bots.compactResult', { before: c.proposal.before.toLocaleString(), after: c.proposal.after.toLocaleString(), agent: c.proposal.agent })),
+        replace,
+        button(t('settings.bots.memoryIgnore'), () => { compacting = null; render(); })
+      );
+      memoryBox.append(el('div', 'set-label', t('settings.bots.compactProposal')), prop, line);
+    }
 
     // What stays in the files: the agent, the ceiling, the folder.
     const filesBox = el('div', 'set-inline wrap');
@@ -884,7 +953,8 @@
     errors = {};
     botDrafts = {};
     botErrors = {};
-    if (creating && creating.busy) opts.api.cancelBotDraft();
+    if ((creating && creating.busy) || (compacting && compacting.busy)) opts.api.cancelBotDraft();
+    compacting = null;
     creating = null;
     removeArmed = null;
     message = { text: '', kind: '' };
@@ -906,6 +976,7 @@
     botDrafts = {};
     botErrors = {};
     creating = null;
+    compacting = null;
     removeArmed = null;
     if (!botList().some((b) => b.id === botSel)) botSel = botList()[0] ? botList()[0].id : null;
     capture = null;

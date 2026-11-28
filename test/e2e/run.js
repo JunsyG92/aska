@@ -1178,6 +1178,37 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.keyboard.press('Escape');
     await page.waitForSelector('#settings', { state: 'hidden' });
 
+    // ---------- settings: compact a bot's memory (nothing written before "Replace", one undo) ----------
+    for (const text of ['Réponds en anglais', 'Réponds en anglais, sans commentaire', 'Tutoie-moi']) await page.evaluate((x) => window.aska.remember('trad', x), text);
+    const tradMemory = path.join(P.bots, 'trad', 'MEMORY.md');
+    const memBefore = fs.readFileSync(tradMemory, 'utf8');
+    await page.keyboard.press('Control+,');
+    await page.waitForSelector('#settings:not([hidden]) .set-section');
+    await page.click('.set-tab[data-page="bots"]');
+    await page.click('.set-bot[data-bot="trad"]');
+    assert.match(await page.inputValue('[data-focus-key="bot-memory"]'), /Tutoie-moi$/);
+    const compactFrom = calls().length;
+    await page.click('[data-action="compact"]');
+    await page.waitForSelector('[data-focus-key="memory-proposal"]', { timeout: 20000 });
+    const compactCall = calls()[compactFrom];
+    assert.ok(compactCall.args.includes('plan'), 'the agent only reads');
+    assert.ok(!compactCall.args.includes('--append-system-prompt'), 'without the bot’s personality');
+    assert.match(compactCall.stdin, /<memory>\n- \d{4}-\d{2}-\d{2} : Réponds en anglais\n/);
+    assert.equal(fs.readFileSync(tradMemory, 'utf8'), memBefore, 'nothing written before "Replace"');
+    await page.locator('[data-focus-key="memory-proposal"]').scrollIntoViewIfNeeded();
+    await shot('17-settings-memory-compact-light');
+    await page.click('[data-action="memory-replace"]');
+    await page.waitForSelector('[data-action="memory-undo"]');
+    assert.match(fs.readFileSync(tradMemory, 'utf8'), /^- \d{4}-\d{2}-\d{2} : Tutoie-moi\n$/);
+    assert.equal(fs.readFileSync(tradMemory + '.prev', 'utf8'), memBefore, 'the previous one kept');
+    assert.match(await page.inputValue('[data-focus-key="bot-memory"]'), /^- \d{4}-\d{2}-\d{2} : Tutoie-moi$/);
+    await page.click('[data-action="memory-undo"]');
+    await page.waitForFunction(() => !document.querySelector('[data-action="memory-undo"]'));
+    assert.equal(fs.readFileSync(tradMemory, 'utf8'), memBefore, 'undone once');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#settings', { state: 'hidden' });
+    await page.evaluate(() => window.aska.saveBot('trad', { memory: '' })); // the next checks expect no memory
+
     // ---------- remote actions: confirmed before the request ----------
     assert.ok((await page.evaluate(() => window.aska.saveBot('trad', { allow: ['git add', 'git push'] }))).bots);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('aska:new-conversation'));

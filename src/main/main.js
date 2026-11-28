@@ -12,7 +12,7 @@ const { discoverModels } = require('./models');
 const src = require('./sources');
 const { shouldNotify, notificationContent, createNotifier } = require('./notify');
 const { Tabs } = require('./tabs');
-const { isRemote, addMemoryEntry, loadBots, saveBot, createBot, deleteBot, draftPrompt, parseDraft, DESCRIPTION_MAX, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
+const { isRemote, addMemoryEntry, compactPrompt, parseCompact, replaceMemory, undoMemory, loadBots, saveBot, createBot, deleteBot, draftPrompt, parseDraft, DESCRIPTION_MAX, seedBots, systemText, fingerprint, invocationFor, importAvatar, clearAvatar } = require('./bots');
 const sec = require('./security');
 const { runAgent } = require('./runner');
 const { resolveLaunch, buildCommand, extendedPath, commandLineExcess } = require('./launch');
@@ -1344,6 +1344,52 @@ function registerIpc() {
   handle('aska:bot-draft-cancel', () => {
     if (draftRun) draftRun.cancel();
   });
+  // "Compact": the bot's agent, read-only in Aska's empty folder, proposes a
+  // shorter memory. Nothing is written: the user replaces it (or not). One
+  // proposal at a time, shared with the drafts (cancelled the same way).
+  handle('aska:bot-compact', async (botId) => {
+    const bot = typeof botId === 'string' && Object.hasOwn(bots, botId) ? bots[botId] : null;
+    if (!bot) return { error: t('errors.unknownBot') };
+    const before = bot.memoryAll || '';
+    if (!before.trim()) return { error: t('bots.memory.nothingToCompact') };
+    if (draftRun) return { error: t('bots.draft.busy') };
+    const agent = agents[bot.agent];
+    if (!agent || !agent.binPath) return { error: t('errors.unknownAgent') };
+    let inv;
+    try {
+      inv = buildInvocation(agent, 'read', compactPrompt(before, getLanguage()), { model: modelOf(agent, bot), trusted: true });
+    } catch (e) {
+      return { error: e.message };
+    }
+    let answer = '';
+    const startedAt = new Date().toISOString();
+    draftRun = launchAgent(
+      agent,
+      inv.argv,
+      { cwd: fsRealWorkspace(), stdin: inv.stdin, output: agent.output, timeoutMs: Math.min(cfg.timeoutSec, 300) * 1000, maxBytes: 512 * 1024 },
+      (ev) => {
+        if (ev.type === 'text') answer += ev.text;
+      }
+    );
+    const res = await draftRun.done;
+    draftRun = null;
+    sec.appendAudit(P.audit, { ts: startedAt, compact: true, agent: agent.id, bot: bot.id, mode: 'read', argv: inv.logArgv, result: res.reason, durationMs: res.durationMs });
+    if (res.reason === 'cancel') return { cancelled: true };
+    if (!res.ok && !answer.trim()) return { error: t('bots.draft.failed', { agent: agent.label, error: res.error || (res.stderrTail || '').slice(-300) || res.reason }) };
+    const c = parseCompact(answer, before);
+    return c.error ? { error: c.error } : { memory: c.memory, before: before.length, after: c.memory.length, agent: agent.label };
+  });
+  // Replace the memory with the reviewed proposal (the previous one kept for one undo), or undo.
+  const memoryChange = (botId, fn) => {
+    const bot = typeof botId === 'string' && Object.hasOwn(bots, botId) ? bots[botId] : null;
+    if (!bot) return { error: t('errors.unknownBot') };
+    const r = fn(bot.dir);
+    if (r.error) return { error: r.error };
+    reloadBots();
+    return { bots: botsList(), state: publicState() };
+  };
+  handle('aska:bot-memory-replace', (req) => memoryChange(req && req.botId, (dir) => (typeof req.memory === 'string' ? replaceMemory(dir, req.memory) : { error: t('bots.memory.invalid') })));
+  handle('aska:bot-memory-undo', (botId) => memoryChange(botId, undoMemory));
   // Deleted for good is too much for a slip: the folder goes to the trash when the system has one.
   handle('aska:bot-delete', async (id) => {
     const bot = typeof id === 'string' && Object.hasOwn(bots, id) ? bots[id] : typeof id === 'string' && Object.hasOwn(offBots, id) ? offBots[id] : null;
@@ -1394,6 +1440,7 @@ function botsList() {
       image: b.image,
       soul: b.soul,
       memory: b.memoryAll || '',
+      memoryPrev: fs.existsSync(path.join(b.dir, 'MEMORY.md.prev')), // one undo of "Compact"
       cwd: b.cwd ? tilde(b.cwd) : null,
       enabled: true,
     };
