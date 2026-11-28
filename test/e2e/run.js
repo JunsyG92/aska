@@ -1462,11 +1462,22 @@ const samePath = (a, b) => (WIN ? a.toLowerCase() === b.toLowerCase() : a === b)
     await page.click('[data-action="propose"]');
     await page.waitForSelector('.tk-plan-item', { timeout: 20000 });
     await planItem(2).locator('.tk-check').uncheck();
+    await planItem(1).locator('textarea').fill('Lis le README [remember]');
     await page.click('[data-action="approve"]');
     await page.waitForSelector('.tk-sub[data-status="done"]', { timeout: 20000 });
     await page.click('.tk-sub [data-action="log"]');
     assert.match(await page.textContent('.tk-answer'), /Here are three points/);
     assert.equal(await page.locator('.tk-sub [data-action="keep"]').count(), 0, 'an existing bot: nothing to keep');
+    // A fact the bot proposes to remember: written into @trad's memory only on the click, once.
+    const tradMem = path.join(P.bots, 'trad', 'MEMORY.md');
+    const tradMemBefore = fs.existsSync(tradMem) ? fs.readFileSync(tradMem, 'utf8') : '';
+    assert.match(await page.textContent('.tk-remember'), /Les tests se lancent avec npm test/);
+    assert.equal(fs.existsSync(tradMem) ? fs.readFileSync(tradMem, 'utf8') : '', tradMemBefore, 'nothing written without the click');
+    await page.click('.tk-remember [data-action="remember"]');
+    await page.waitForSelector('.tk-remember .tk-remembered');
+    assert.match(fs.readFileSync(tradMem, 'utf8'), /- \d{4}-\d{2}-\d{2} : Les tests se lancent avec npm test\n$/);
+    assert.equal(await page.locator('.tk-remember [data-action="remember"]').count(), 0, 'once');
+    await page.evaluate(() => window.aska.saveBot('trad', { memory: '' }));
     await page.keyboard.press('Escape');
     await page.waitForSelector('.tk-item');
     assert.match(await page.textContent('.tk-item'), /Lire les README.*terminée/);

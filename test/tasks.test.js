@@ -141,7 +141,7 @@ test('task engine: one worktree each, the request limit shared, cancel, run agai
   await tick();
   assert.equal(s1.status, 'done', 'its report says done');
   assert.equal(s1.answer, report);
-  assert.deepEqual(s1.report, { status: 'done', summary: 'Node 26 en place.', commits: [], followUp: '' });
+  assert.deepEqual(s1.report, { status: 'done', summary: 'Node 26 en place.', commits: [], followUp: '', remember: [] });
   assert.deepEqual(s1.summary, { commits: [], changes: '', uncommitted: 0 });
   assert.equal(task.subtasks[3].status, 'running');
   // The tab finishes too: room for one more when the engine is pumped.
@@ -401,7 +401,11 @@ test('report: the last JSON object of the answer, cleaned; missing or broken: to
     '```',
     '{"status": "partial", "summary": "Node 26 dans .nvmrc.", "commits": ["abc123 chore: node 26", 42, ""], "followUp": "Mettre à jour la CI", "extra": true}',
   ].join('\n');
-  assert.deepEqual(parseReport(answer), { status: 'partial', summary: 'Node 26 dans .nvmrc.', commits: ['abc123 chore: node 26'], followUp: 'Mettre à jour la CI' });
+  assert.deepEqual(parseReport(answer), { status: 'partial', summary: 'Node 26 dans .nvmrc.', commits: ['abc123 chore: node 26'], followUp: 'Mettre à jour la CI', remember: [] });
+  // Facts proposed to remember: one line each, no duplicate, 3 at most.
+  const proposed = parseReport(JSON.stringify({ status: 'done', summary: 's', remember: ['Les tests :\n npm test', 'Les tests : npm test', 42, '', 'b', 'c', 'd'] }));
+  assert.deepEqual(proposed.remember, ['Les tests : npm test', 'b', 'c']);
+  assert.match(reportInstruction('fr'), /"remember": \["<a lasting fact[\s\S]*at most 3 short facts/);
   assert.equal(parseReport('Fini, tout va bien.'), null, 'missing');
   assert.equal(parseReport('{"status": "done", "summary": '), null, 'broken');
   assert.equal(parseReport('{"status": "great"}'), null, 'unknown status');
@@ -584,4 +588,26 @@ test('task engine: a next wave, one subtask continuing another on its branch; to
   await tick();
   assert.deepEqual(done, [1, 2]);
   assert.deepEqual(engine.cleanup(task.id), { ok: true });
+});
+
+// ---------- ticket 22: memory and tasks ----------
+
+test('memory and tasks: a copy knows the original memory, kept with it; the original untouched', () => {
+  const agents = installedAgents();
+  const src = tmp();
+  fs.writeFileSync(path.join(src, 'MEMORY.md'), '- 2026-11-27 : Les tests : npm test\n');
+  const bots = { up: { id: 'up', label: 'Updater', agent: 'claude', maxMode: 'edit', allow: [], soul: 'You update.', avatar: {}, dir: src, memoryAll: '- 2026-11-27 : Les tests : npm test' } };
+  const copy = checkTempBot({ copyOf: 'up', allow: [] }, 1, { bots, agents }).temp;
+  assert.equal(copy.memory, '- 2026-11-27 : Les tests : npm test');
+  // Made for the task: no memory.
+  assert.equal(checkTempBot({ label: 'Bumper', soul: 'You bump.' }, 2, { bots, agents, defaultAgent: 'claude' }).temp.memory, undefined);
+  const dir = path.join(tmp(), '1');
+  fs.mkdirSync(dir, { recursive: true });
+  writeTempBot(dir, copy);
+  const loaded = loadTempBot(dir, 1, { agents });
+  assert.equal(loaded.memory, '- 2026-11-27 : Les tests : npm test', 'sent with the copy');
+  const botsDir = tmp();
+  const kept = keepTempBot(dir, { botsDir, taken: [], agents });
+  assert.equal(fs.readFileSync(path.join(botsDir, kept.id, 'MEMORY.md'), 'utf8'), '- 2026-11-27 : Les tests : npm test\n', 'kept with the bot');
+  assert.equal(fs.readFileSync(path.join(src, 'MEMORY.md'), 'utf8'), '- 2026-11-27 : Les tests : npm test\n', 'the original untouched');
 });

@@ -1872,6 +1872,28 @@ function setupTaskIpc() {
     e.changed(task);
     return { task: publicTask(task), url: r.url, pushed: r.pushed, error: r.error };
   });
+  // "Remember for @bot": a fact proposed in a subtask's report, written into the
+  // bot's memory only on this click (a subtask never writes it). A temporary
+  // bot must have been kept first; each fact is retained once.
+  handle('aska:task-remember', (req) =>
+    engineOr((e) => {
+      const task = req && typeof req.id === 'string' ? e.get(req.id) : null;
+      const s = task && Number.isInteger(req.n) ? task.subtasks.find((x) => x.n === req.n) : null;
+      const fact = s && s.report && Array.isArray(s.report.remember) && Number.isInteger(req.i) ? s.report.remember[req.i] : null;
+      if (!fact) return { error: t('tasks.unknown') };
+      const target = s.botDir ? s.kept : s.botId;
+      if (!target) return { error: t('tasks.rememberKeepFirst') };
+      if (!Object.hasOwn(bots, target)) return { error: t('errors.unknownBot') };
+      s.remembered = Array.isArray(s.remembered) ? s.remembered : [];
+      if (s.remembered.includes(req.i)) return { error: t('tasks.rememberedAlready') };
+      const r = addMemoryEntry(bots[target].dir, fact);
+      if (r.error) return r;
+      s.remembered.push(req.i);
+      e.changed(task);
+      reloadBots();
+      return { task: publicTask(task), bot: bots[target] ? bots[target].label : target, state: publicState() };
+    })
+  );
   // Keeps a temporary bot: copied into ~/.aska/bots, offered with "@" from now on.
   handle('aska:task-keep-bot', (req) =>
     engineOr((e) => {

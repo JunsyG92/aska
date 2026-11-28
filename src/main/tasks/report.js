@@ -10,14 +10,17 @@ const STATUSES = ['done', 'partial', 'failed'];
 const LANG_NAMES = { en: 'English', fr: 'French' };
 const SUMMARY_MAX = 1000;
 const COMMITS_MAX = 20;
+const REMEMBER_MAX = 3;
+const { ENTRY_MAX } = require('../bots');
 
 /** Asked at the end of each subtask's instruction (the agent reads English). */
 function reportInstruction(lang = 'en') {
   const language = LANG_NAMES[lang] || 'English';
   return [
     'When you are done, end your answer with ONE JSON object, alone on its last lines, with nothing after it (no code fence):',
-    `{"status": "done" or "partial" or "failed", "summary": "what you did, in one to three sentences, in ${language}", "commits": ["<short hash> <subject>", ...], "followUp": "what is left to do, or an empty string"}`,
+    `{"status": "done" or "partial" or "failed", "summary": "what you did, in one to three sentences, in ${language}", "commits": ["<short hash> <subject>", ...], "followUp": "what is left to do, or an empty string", "remember": ["<a lasting fact worth remembering next time, in ${language}>", ...]}`,
     '"partial": part of the instruction is left; "failed": nothing could be done. Never push, merge or open a pull request unless the instruction asks for it.',
+    `"remember": at most ${REMEMBER_MAX} short facts that will still be true and useful next time (a convention of the repository, a command that must be used), or [] (usually). The user decides whether they are kept; never a secret.`,
   ].join('\n');
 }
 
@@ -46,6 +49,8 @@ function parseReport(answer) {
       summary: text(j.summary, SUMMARY_MAX),
       commits: (Array.isArray(j.commits) ? j.commits : []).map((c) => text(c, 200)).filter(Boolean).slice(0, COMMITS_MAX),
       followUp: text(j.followUp, SUMMARY_MAX),
+      // Facts the bot proposes to remember: one line each; written only when the user says so.
+      remember: [...new Set((Array.isArray(j.remember) ? j.remember : []).map((r) => text(r, ENTRY_MAX).replace(/\s+/g, ' ')).filter(Boolean))].slice(0, REMEMBER_MAX),
     };
   }
   return null;
